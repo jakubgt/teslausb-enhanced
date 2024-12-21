@@ -1,11 +1,17 @@
 #!/bin/bash
 
 echo "Making root partition writeable"
-mount / -o remount,rw
+# overlayroot check
+if egrep "overlayroot" /proc/mounts >/dev/null 2>&1; then
+  overlayroot-chroot
+  echo "Done. Make any changes needed, enter exit and reboot the device when ready."
+else
+  mount / -o remount,rw
 
-if findmnt /teslausb > /dev/null
-then
-  echo "Making boot/firmware partition writeable"
-  mount /teslausb -o remount,rw
+  if findmnt /teslausb > /dev/null
+  then
+    echo "Making boot/firmware partition writeable"
+    mount /teslausb -o remount,rw
+  fi
+  echo "Done. Make any changes needed, and reboot the Pi when ready."
 fi
-echo "Done. Make any changes needed, and reboot the Pi when ready."

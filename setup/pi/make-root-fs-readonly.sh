@@ -11,6 +11,12 @@ function log_progress () {
   echo "make-root-fs-readonly: $1"
 }
 
+# check for overlayroot existence
+if [ -x "$(command -v overlayroot-chroot)" ]
+  log_progress "Skipping - overlayroot is installed"
+  exit 0
+fi
+
 if [ "${SKIP_READONLY:-false}" = "true" ]
 then
   log_progress "Skipping"
