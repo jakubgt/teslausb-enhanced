@@ -13,6 +13,7 @@ function log_progress () {
 
 # check for overlayroot existence
 if [ -x "$(command -v overlayroot-chroot)" ]
+then
   log_progress "Skipping - overlayroot is installed"
   exit 0
 fi
