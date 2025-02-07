@@ -1,16 +1,39 @@
 #!/bin/bash -eu
 
+# Function to set Sentry Mode via TeslaFI
+function set_sentry_mode {
+  local sentry_mode=$1
+  curl -s -H "Authorization: Bearer $TESLAFI_API_TOKEN" "https://www.teslafi.com/feed.php?command=set_sentry_mode&sentryMode=$sentry_mode"
+}
+
 if [[ ( ( ! -x /root/bin/tesla_api.py) || ( ! -s /mutable/cache.json ) ) && ( -z "${TESLAFI_API_TOKEN:+x}" ) && ( -z "${TESSIE_API_TOKEN:+x}" ) ]]
 then
   exit
 fi
 
+# Check the initial state of Sentry Mode
+if [ -f /tmp/sentry_state ]; then
+  sentry_state=$(cat /tmp/sentry_state)
+  rm -f /tmp/sentry_state
+else
+  sentry_state="unknown"
+fi
+
 # If Sentry Mode was previously disabled, restore it to that state
-if [ -e /tmp/disable_sentry_after_archiving ]
-then
+if [ "$sentry_state" == "sentry_enabled" ]; then
   log "Restoring Sentry Mode to its previous state (disabled)..."
-  /root/bin/tesla_api.py disable_sentry_mode &>> "${LOG_FILE}"
-  rm -f /tmp/disable_sentry_after_archiving
+
+  if [ "$TESLAFI_WAKE_MODE" == "sentry" ]; then
+    set_sentry_mode false 
+    log "Sentry Mode disabled via TeslaFI."
+  else
+    /root/bin/tesla_api.py disable_sentry_mode &>> "${LOG_FILE}"
+    log "Sentry Mode disabled via Tesla API."
+  fi
+elif [ "$sentry_state" == "sentry_already_enabled" ]; then
+  log "Sentry Mode was already enabled, keeping it on."
+else
+  log "Warning: Could not determine initial Sentry Mode state."
 fi
 
 if [ -e /tmp/keep_awake_task_pid ]
