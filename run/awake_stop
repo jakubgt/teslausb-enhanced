@@ -35,10 +35,4 @@ if [ -e /tmp/keep_awake_task_pid ]; then
   log "Stopping wake car background task."
   kill "$(cat /tmp/keep_awake_task_pid)" || true
   rm -f /tmp/keep_awake_task_pid
-
-  # Initiate TeslaFi Sleep Mode
-  if [[ -n "${TESLAFI_API_TOKEN:+x}" ]]; then
-    curl -s -H "Authorization: Bearer $TESLAFI_API_TOKEN" "https://www.teslafi.com/feed.php?command=sleep"
-    log "Initiated TeslaFi Sleep Mode to allow the car to fall asleep."
-  fi
 fi

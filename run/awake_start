@@ -15,7 +15,7 @@ function set_sentry_mode {
   fi
 }
 
-# Ensure we have TeslaFi credentials
+# Ensure TeslaFi API token is available
 if [[ -z "${TESLAFI_API_TOKEN:+x}" ]]; then
   log "No TeslaFi API token available. Cannot check Sentry Mode status."
   exit 1
@@ -35,19 +35,24 @@ fi
 # If Sentry Mode is OFF, enable it via TeslaFi API
 if [ "$is_sentry_mode_enabled" = "false" ]; then
   log "Sentry Mode is OFF, enabling it via TeslaFi..."
-  set_sentry_mode true
-  echo "sentry_enabled" > /tmp/sentry_state
+  if set_sentry_mode true; then
+    echo "sentry_enabled" > /tmp/sentry_state
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "🚗 Sentry Mode enabled via TeslaFi to keep the car awake." start
+  else
+    log "⚠️ Failed to enable Sentry Mode via TeslaFi."
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "⚠️ Unable to enable Sentry Mode via TeslaFi. The car may enter sleep mode." start
+  fi
 else
   log "Sentry Mode is already enabled."
   echo "sentry_already_enabled" > /tmp/sentry_state
 fi
 
-# Start the background task to keep the car awake (if necessary)
-function ping {
+# Background process to keep the car awake (only necessary if TeslaFi isn't handling telemetry)
+function keep_awake {
   while true; do
     sleep 300  # No need to wake the car, as TeslaFi handles telemetry
   done
 }
 
-ping &  
+keep_awake &  
 echo $! > /tmp/keep_awake_task_pid
