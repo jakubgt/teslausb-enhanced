@@ -25,6 +25,11 @@ fi
 is_sentry_mode_enabled=$(curl -s -H "Authorization: Bearer $TESLAFI_API_TOKEN" \
   "https://www.teslafi.com/feed.php?command=" | jq -r '.carState')
 
+# Check if TeslaFi API returned a valid Sentry Mode status
+if [[ -z "$is_sentry_mode_enabled" ]]; then
+  log "⚠️ TeslaFi API did not return a valid Sentry Mode status. Fleet Telemetry may be disabled."
+fi
+
 # Convert to true/false
 if [[ "$is_sentry_mode_enabled" == "Sentry" ]]; then
   is_sentry_mode_enabled="true"
