@@ -26,21 +26,25 @@ fi
 function nm_get_wifi_client_device () {
   for i in {1..5}
   do
-    WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -c 17-)"
-    if [ -n "$WLAN" ]
-    then
-      break;
+    if nmcli device status | grep -q "wlan1.*connected"; then
+      WLAN="wlan1"
+      log_progress "Using wlan1 as primary Wi-Fi adapter."
+    elif nmcli device status | grep -q "wlan0.*connected"; then
+      WLAN="wlan0"
+      log_progress "Using wlan0 as fallback Wi-Fi adapter."
+    else
+      log_progress "No Wi-Fi adapter connected. Retrying..."
+      sleep 5
+      continue
     fi
-    log_progress "Waiting for wifi interface to come back up"
-    sleep 5
+    return 0
   done
 
-  [ -n "$WLAN" ] && return 0
-
-  log_progress "Couldn't determine wifi client device"
+  log_progress "Couldn't determine a working Wi-Fi interface"
   nmcli c show
   return 1
 }
+
 
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
