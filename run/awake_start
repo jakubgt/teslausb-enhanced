@@ -23,7 +23,7 @@ fi
 
 # Get current Sentry Mode status from TeslaFi (using carState)
 is_sentry_mode_enabled=$(curl -s -H "Authorization: Bearer $TESLAFI_API_TOKEN" \
-  "https://www.teslafi.com/feed.php?command=" | jq -r '.carState')
+  "https://www.teslafi.com/feed.php?command=" | grep -o '"carState":"[^"]*"' | sed 's/"carState":"//;s/"//')
 
 # Check if TeslaFi API returned a valid Sentry Mode status
 if [[ -z "$is_sentry_mode_enabled" ]]; then
@@ -48,7 +48,7 @@ if [ "$is_sentry_mode_enabled" = "false" ]; then
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "⚠️ Unable to enable Sentry Mode via TeslaFi. The car may enter sleep mode." start
   fi
 else
-  log "Sentry Mode is already enabled."
+  log "Sentry Mode is already enabled, continue archive process..."
   echo "sentry_already_enabled" > /tmp/sentry_state
 fi
 
