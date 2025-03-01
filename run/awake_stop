@@ -23,6 +23,7 @@ if [ -f /tmp/sentry_state ]; then
   if [ "$sentry_state" == "sentry_enabled" ]; then
     log "Disabling Sentry Mode via TeslaFi..."
     set_sentry_mode false
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "🚗 Sentry Mode disabled after archive/music sync completion." stop
   elif [ "$sentry_state" == "sentry_already_enabled" ]; then
     log "Sentry Mode was already enabled, leaving it on."
   else
