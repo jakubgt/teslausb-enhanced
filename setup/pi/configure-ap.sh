@@ -26,52 +26,30 @@ fi
 function nm_get_wifi_client_device () {
   for i in {1..5}
   do
-    # Get active WiFi interfaces, ignoring "p2p-dev-*" virtual interfaces
-    WLAN=$(nmcli device status | grep wifi | awk '{print $1}' | grep -v "p2p-dev-")
-
+    WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -c 17-)"
     if [ -n "$WLAN" ]
     then
-      log_progress "Detected active WiFi interface: $WLAN"
-      break
+      break;
     fi
-    log_progress "Waiting for WiFi interface to come back up..."
+    log_progress "Waiting for wifi interface to come back up"
     sleep 5
   done
 
-  if [ -z "$WLAN" ]; then
-    log_progress "ERROR: No active WiFi interface found!"
-    nmcli device status
-    return 1
-  fi
+  [ -n "$WLAN" ] && return 0
 
-  return 0
+  log_progress "Couldn't determine wifi client device"
+  nmcli c show
+  return 1
 }
-
 
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
-
-  # Find the correct interface by checking which one supports AP mode
-  for iface in wlan1 wlan0; do  # Force wlan1 first
-    if iw list | grep -A 10 "Supported interface modes" | grep -q "__ap"; then
-      WLAN="$iface"
-      break
-    fi
-  done
-
- log_progress "Checking AP mode support for: $WLAN"
-iw list | grep -A 10 "Supported interface modes" | log_progress
-log_progress "Trying to create AP on: $WLAN"
-iw dev "$WLAN" info | log_progress
-log_progress "Running: iw dev $WLAN interface add ap0 type __ap"
-iw dev "$WLAN" interface add ap0 type __ap 2>&1 | log_progress || log_progress "ERROR: Failed to create AP!"
 
   if ! iw dev ap0 info &> /dev/null
   then
     # create additional virtual interface for the wifi device
     iw dev "$WLAN" interface add ap0 type __ap || return 1
   fi
-
 
   # turn off power savings for both interfaces since they use
   # the same underlying hardware, and we don't want one to go
