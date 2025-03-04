@@ -26,20 +26,23 @@ fi
 function nm_get_wifi_client_device () {
   for i in {1..5}
   do
-    WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -c 17-)"
+    WLAN="$(nmcli device status | grep wifi | awk '{print $1}')"
     if [ -n "$WLAN" ]
     then
-      break;
+      log_progress "Detected WiFi interface: $WLAN"
+      break
     fi
-    log_progress "Waiting for wifi interface to come back up"
+    log_progress "Waiting for wifi interface to come back up..."
     sleep 5
   done
 
-  [ -n "$WLAN" ] && return 0
+  if [ -z "$WLAN" ]; then
+    log_progress "ERROR: No active WiFi interface found!"
+    nmcli device status
+    return 1
+  fi
 
-  log_progress "Couldn't determine wifi client device"
-  nmcli c show
-  return 1
+  return 0
 }
 
 function nm_add_ap () {
