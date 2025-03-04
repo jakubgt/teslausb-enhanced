@@ -52,14 +52,19 @@ function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
   # Find the correct interface by checking which one supports AP mode
-  for iface in $(nmcli device status | grep wifi | awk '{print $1}' | grep -v "p2p-dev-"); do
+  for iface in wlan1 wlan0; do  # Force wlan1 first
     if iw list | grep -A 10 "Supported interface modes" | grep -q "__ap"; then
       WLAN="$iface"
       break
     fi
   done
 
-  log_progress "Using WiFi interface: $WLAN for AP mode"
+ log_progress "Checking AP mode support for: $WLAN"
+iw list | grep -A 10 "Supported interface modes" | log_progress
+log_progress "Trying to create AP on: $WLAN"
+iw dev "$WLAN" info | log_progress
+log_progress "Running: iw dev $WLAN interface add ap0 type __ap"
+iw dev "$WLAN" interface add ap0 type __ap 2>&1 | log_progress || log_progress "ERROR: Failed to create AP!"
 
   if ! iw dev ap0 info &> /dev/null
   then
