@@ -26,13 +26,15 @@ fi
 function nm_get_wifi_client_device () {
   for i in {1..5}
   do
-    WLAN="$(nmcli device status | grep wifi | awk '{print $1}')"
+    # Get active WiFi interfaces, ignoring "p2p-dev-*" virtual interfaces
+    WLAN=$(nmcli device status | grep wifi | awk '{print $1}' | grep -v "p2p-dev-")
+
     if [ -n "$WLAN" ]
     then
-      log_progress "Detected WiFi interface: $WLAN"
+      log_progress "Detected active WiFi interface: $WLAN"
       break
     fi
-    log_progress "Waiting for wifi interface to come back up..."
+    log_progress "Waiting for WiFi interface to come back up..."
     sleep 5
   done
 
@@ -44,6 +46,7 @@ function nm_get_wifi_client_device () {
 
   return 0
 }
+
 
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
