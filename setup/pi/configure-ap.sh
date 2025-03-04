@@ -92,21 +92,21 @@ function nm_add_ap () {
 
   # Set up the AP
   cat <<- EOF > /etc/hostapd/hostapd.conf
-  ctrl_interface=/var/run/hostapd
-  ctrl_interface_group=0
-  interface=ap0
-  driver=nl80211
-  ssid=${AP_SSID}
-  hw_mode=${HW_MODE}
-  channel=${WLAN1_CHANNEL}
-  wmm_enabled=1
-  auth_algs=1
-  wpa=2
-  wpa_passphrase=${AP_PASS}
-  wpa_key_mgmt=WPA-PSK
-  wpa_pairwise=CCMP
-  rsn_pairwise=CCMP
-  EOF
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
+interface=ap0
+driver=nl80211
+ssid=${AP_SSID}
+hw_mode=${HW_MODE}
+channel=${WLAN1_CHANNEL}
+wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_passphrase=${AP_PASS}
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=CCMP
+rsn_pairwise=CCMP
+EOF
 
   log_progress "AP setup completed on $WLAN."
 }
