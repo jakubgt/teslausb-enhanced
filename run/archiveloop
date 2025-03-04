@@ -877,7 +877,9 @@ then
 
   set_time
 
-  /root/bin/awake_start || true
+  sleep "${ARCHIVE_DELAY:-20}"  # 🟢 Delay BEFORE checking Sentry Mode
+
+  /root/bin/awake_start || true  # 🟢 Now this runs AFTER waiting
 
   archive_clips
 
@@ -900,9 +902,9 @@ do
 
   set_time
 
-  /root/bin/awake_start || true
+  sleep "${ARCHIVE_DELAY:-20}"  # 🟢 Delay BEFORE checking Sentry Mode
 
-  sleep "${ARCHIVE_DELAY:-20}"
+  /root/bin/awake_start || true  # 🟢 Now this runs AFTER waiting
 
   # take a snapshot before archive_clips starts deleting files
   if has_cam_disk
