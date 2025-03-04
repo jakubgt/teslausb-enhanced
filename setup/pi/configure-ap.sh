@@ -51,11 +51,22 @@ function nm_get_wifi_client_device () {
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
+  # Find the correct interface by checking which one supports AP mode
+  for iface in $(nmcli device status | grep wifi | awk '{print $1}' | grep -v "p2p-dev-"); do
+    if iw list | grep -A 10 "Supported interface modes" | grep -q "__ap"; then
+      WLAN="$iface"
+      break
+    fi
+  done
+
+  log_progress "Using WiFi interface: $WLAN for AP mode"
+
   if ! iw dev ap0 info &> /dev/null
   then
     # create additional virtual interface for the wifi device
     iw dev "$WLAN" interface add ap0 type __ap || return 1
   fi
+
 
   # turn off power savings for both interfaces since they use
   # the same underlying hardware, and we don't want one to go
