@@ -16,6 +16,13 @@
 export SSID='your_ssid'
 export WIFIPASS='your_pass'
 
+# Wi-Fi connectivity check settings (optional)
+# pi will check wifi connectivity on a 60-seconds internal.
+# pi will reboot if SSID is in range, but not connected after WIFI_MAX_FAILS
+# If SSID and WIFI_MAX_FAILS are defined, Wi-Fi monitoring is enabled
+# If any one SSID or WIFI_MAX_FAILS is undefined or commented out, Wi-Fi monitoring is skipped
+#export WIFI_MAX_FAILS = 3 
+
 # Variables for CIFS (Windows/Mac file sharing) archiving.
 # If you want to use rsync or rclone, delete or comment out this section
 # and uncomment the rsync or rclone section below.
