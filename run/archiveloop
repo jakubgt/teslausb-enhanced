@@ -824,6 +824,45 @@ function wifichecker {
   }
 }
 
+function monitor_wifi_connectivity {
+  echo -n wificonnmonitor > /proc/self/comm
+  local FAIL_COUNT=0  # In-memory counter
+  while true
+  do
+    # Check only if both SSID and WIFI_MAX_FAILS are defined and non-empty
+    if [ -n "$SSID" ] && [ -n "$WIFI_MAX_FAILS" ]; then
+      # Force a fresh Wi-Fi scan
+      nmcli dev wifi rescan >/dev/null 2>&1 || log "Wi-Fi rescan failed"
+      sleep 2  # Give scan time to complete
+
+      # Get all active SSIDs (could be multiple)
+      ACTIVE_SSIDS=$(nmcli -t -f ACTIVE,SSID dev wifi | grep '^yes' | cut -d':' -f2)
+
+      # Check if $SSID is in range using terse output
+      if nmcli -t -f SSID dev wifi list | grep -q "^$SSID$"; then
+        # Log visible SSIDs as comma-space-separated list
+        VISIBLE_SSIDS=$(nmcli -t -f SSID dev wifi | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
+        # Check if $SSID is among the active SSIDs
+        if echo "$ACTIVE_SSIDS" | grep -q "^$SSID$"; then
+          FAIL_COUNT=0
+          log "$SSID in range and connected. Counter reset."
+        else
+          FAIL_COUNT=$((FAIL_COUNT + 1))
+          log "$SSID in range but not connected (active SSIDs: ${ACTIVE_SSIDS:-none}, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
+          if [ "$FAIL_COUNT" -ge "$WIFI_MAX_FAILS" ]; then
+            log "$WIFI_MAX_FAILS consecutive failures. Rebooting..."
+            reboot
+          fi
+        fi
+      else
+        FAIL_COUNT=0
+        log "$SSID not in range. Counter reset."
+      fi
+    fi
+    sleep 60
+  done
+}
+
 function set_sys_param() {
   local -r parampath="$1"
   local -r var="$2"
@@ -858,6 +897,7 @@ then
 fi
 logrotator &
 wifichecker &
+monitor_wifi_connectivity &
 
 fix_errors_in_images
 # always remove files that fsck recoverd
