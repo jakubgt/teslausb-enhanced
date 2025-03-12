@@ -829,28 +829,28 @@ function monitor_wifi_connectivity {
   local FAIL_COUNT=0  # In-memory counter
   while true
   do
-    # Check only if both SSID and WIFI_MAX_FAILS are defined and non-empty
-    if [ -n "$SSID" ] && [ -n "$WIFI_MAX_FAILS" ]; then
+    # Check only if both SSID and MAX_FAILS are defined and non-empty
+    if [ -n "$SSID" ] && [ -n "$MAX_FAILS" ]; then
       # Force a fresh Wi-Fi scan
       nmcli dev wifi rescan >/dev/null 2>&1 || log "Wi-Fi rescan failed"
       sleep 2  # Give scan time to complete
 
-      # Get all active SSIDs (could be multiple)
-      ACTIVE_SSIDS=$(nmcli -t -f ACTIVE,SSID dev wifi | grep '^yes' | cut -d':' -f2)
+      # Set the host to ping (default to 8.8.8.8 if not defined)
+      : "${PING_HOST:=8.8.8.8}"
 
       # Check if $SSID is in range using terse output
       if nmcli -t -f SSID dev wifi list | grep -q "^$SSID$"; then
         # Log visible SSIDs as comma-space-separated list
         VISIBLE_SSIDS=$(nmcli -t -f SSID dev wifi | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
-        # Check if $SSID is among the active SSIDs
-        if echo "$ACTIVE_SSIDS" | grep -q "^$SSID$"; then
+        # Ping the host to test connectivity (1 packet, 2-second timeout)
+        if ping -c 1 -W 2 "$PING_HOST" >/dev/null 2>&1; then
           FAIL_COUNT=0
-          log "$SSID in range and connected. Counter reset."
+          log "$SSID in range and connected (ping to $PING_HOST succeeded). Counter reset."
         else
           FAIL_COUNT=$((FAIL_COUNT + 1))
-          log "$SSID in range but not connected (active SSIDs: ${ACTIVE_SSIDS:-none}, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
-          if [ "$FAIL_COUNT" -ge "$WIFI_MAX_FAILS" ]; then
-            log "$WIFI_MAX_FAILS consecutive failures. Rebooting..."
+          log "$SSID in range but not connected (ping to $PING_HOST failed, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
+          if [ "$FAIL_COUNT" -ge "$MAX_FAILS" ]; then
+            log "$MAX_FAILS consecutive failures. Rebooting..."
             reboot
           fi
         fi
