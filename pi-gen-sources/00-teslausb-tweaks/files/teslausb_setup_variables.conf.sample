@@ -20,7 +20,7 @@ export WIFIPASS='your_pass'
 # Wi-Fi monitoring requires SSID and MAX_FAILS; PING_HOST is optional
 # TeslaUSB will check wifi connectivity on a 60-seconds internal.
 # TeslaUSB will reboot if SSID is in range, but ping failed after WIFI_MAX_FAILS
-#export WIFI_MAX_FAILS = 3
+#export MAX_FAILS  = 3
 #export PING_HOST="192.168.1.1"    # Host to ping for connectivity; defaults to 8.8.8.8 if unset
 
 # Variables for CIFS (Windows/Mac file sharing) archiving.
