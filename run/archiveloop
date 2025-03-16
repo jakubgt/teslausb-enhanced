@@ -827,37 +827,66 @@ function wifichecker {
 function monitor_wifi_connectivity {
   echo -n wificonnmonitor > /proc/self/comm
   local FAIL_COUNT=0  # In-memory counter
+
+  # Check if SSID, WIFI_MAX_FAILS, and PING_HOST are defined and non-empty
+  if [ -z "$SSID" ] || [ -z "$WIFI_MAX_FAILS" ] || [ -z "$PING_HOST" ]
+  then
+    log "Wifi monitoring disabled: SSID, WIFI_MAX_FAILS, and PING_HOST must all be defined (SSID=$SSID, WIFI_MAX_FAILS=$WIFI_MAX_FAILS, PING_HOST=$PING_HOST)"
+    return
+  fi
+
+  # Determine wifi management tool
+  local WIFI_TOOL=""
+  if command -v nmcli >/dev/null 2>&1
+  then
+    WIFI_TOOL="nmcli"
+  elif command -v wpa_cli >/dev/null 2>&1
+  then
+    WIFI_TOOL="wpa_cli"
+  else
+    log "Wifi management tool not found (nmcli or wpa_cli required)"
+    return
+  fi
+
+  log "Wifi monitoring enabled: SSID=$SSID, WIFI_MAX_FAILS=$WIFI_MAX_FAILS, PING_HOST=$PING_HOST using $WIFI_TOOL"
+
   while true
   do
-    # Check only if both SSID and MAX_FAILS are defined and non-empty
-    if [ -n "$SSID" ] && [ -n "$MAX_FAILS" ]; then
-      # Force a fresh Wi-Fi scan
-      nmcli dev wifi rescan >/dev/null 2>&1 || log "Wi-Fi rescan failed"
-      sleep 2  # Give scan time to complete
+    # Perform wifi scan based on tool
+    if [ "$WIFI_TOOL" = "nmcli" ]
+    then
+      nmcli dev wifi rescan >/dev/null 2>&1 || log "Wifi rescan failed with NetworkManager"
+      sleep 2
+      IN_RANGE=$(nmcli -t -f SSID dev wifi list | grep -q "^$SSID$" && echo "yes" || echo "no")
+      VISIBLE_SSIDS=$(nmcli -t -f SSID dev wifi | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
+    elif [ "$WIFI_TOOL" = "wpa_cli" ]
+    then
+      wpa_cli scan >/dev/null 2>&1 || log "Wifi rescan failed with wpa_supplicant"
+      sleep 2
+      IN_RANGE=$(wpa_cli scan_results | tail -n +3 | grep -q "$SSID" && echo "yes" || echo "no")
+      VISIBLE_SSIDS=$(wpa_cli scan_results | tail -n +3 | awk '{print $5}' | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
+    fi
 
-      # Set the host to ping (default to 8.8.8.8 if not defined)
-      : "${PING_HOST:=8.8.8.8}"
-
-      # Check if $SSID is in range using terse output
-      if nmcli -t -f SSID dev wifi list | grep -q "^$SSID$"; then
-        # Log visible SSIDs as comma-space-separated list
-        VISIBLE_SSIDS=$(nmcli -t -f SSID dev wifi | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
-        # Ping the host to test connectivity (1 packet, 2-second timeout)
-        if ping -c 1 -W 2 "$PING_HOST" >/dev/null 2>&1; then
-          FAIL_COUNT=0
-          log "$SSID in range and connected (ping to $PING_HOST succeeded). Counter reset."
-        else
-          FAIL_COUNT=$((FAIL_COUNT + 1))
-          log "$SSID in range but not connected (ping to $PING_HOST failed, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
-          if [ "$FAIL_COUNT" -ge "$MAX_FAILS" ]; then
-            log "$MAX_FAILS consecutive failures. Rebooting..."
-            reboot
-          fi
-        fi
-      else
+    # Check if SSID is in range
+    if [ "$IN_RANGE" = "yes" ]
+    then
+      # Test connectivity with ping
+      if ping -c 1 -W 2 "$PING_HOST" >/dev/null 2>&1
+      then
         FAIL_COUNT=0
-        log "$SSID not in range. Counter reset."
+        log "$SSID in range and connected (ping to $PING_HOST succeeded). Counter reset."
+      else
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        log "$SSID in range but not connected (ping to $PING_HOST failed, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
+        if [ "$FAIL_COUNT" -ge "$WIFI_MAX_FAILS" ]
+        then
+          log "$WIFI_MAX_FAILS consecutive failures. Rebooting..."
+          reboot
+        fi
       fi
+    else
+      FAIL_COUNT=0
+      log "$SSID not in range. Counter reset."
     fi
     sleep 60
   done
