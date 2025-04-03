@@ -856,6 +856,8 @@ function monitor_wifi_connectivity {
     WIFI_TOOL="wpa_cli"  # Use wpa_cli if nmcli isn’t available
   fi
 
+  log "Wifi monitoring enabled: SSID=$SSID, WIFI_MAX_FAILS=$WIFI_MAX_FAILS, PING_HOST=${PING_HOST:-default gateway} using $WIFI_TOOL"
+
   while true
   do
     # Perform wifi scan based on current tool
