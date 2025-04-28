@@ -824,148 +824,81 @@ function wifichecker {
   }
 }
 
-function monitor_wifi_connectivity {
+function monitor_wifi_connectivity() {
   echo -n wificonnmonitor > /proc/self/comm
-  local FAIL_COUNT=0  # In-memory counter
+  set +e  # Don't die on non-zero exit codes unless explicitly handled
+  local fail_count=0
+  local wifi_disconnect_monitor=0
 
-  # Check if SSID and WIFI_MAX_FAILS are defined and non-empty
+  trap 'ec=$?; if [ $ec -ne 0 ]; then log "Wifi Monitoring: Script terminated unexpectedly with exit code $ec."; else log "Wifi Monitoring: Script exiting cleanly."; fi' EXIT
+  trap 'log "Wifi Monitoring: Received SIGTERM. Exiting."; exit 1' SIGTERM
+  trap 'log "Wifi Monitoring: Received SIGINT. Exiting."; exit 1' SIGINT
+
+  # Check if required variables are set
   if [ -z "$SSID" ] || [ -z "$WIFI_MAX_FAILS" ]
   then
-    log "Wifi monitoring disabled: SSID and WIFI_MAX_FAILS must be defined (SSID=$SSID, WIFI_MAX_FAILS=$WIFI_MAX_FAILS)"
-    return
+    log "Wifi Monitoring: SSID or WIFI_MAX_FAILS not set. Wifi monitoring disabled."
+    return 0
   fi
 
-  # Determine available wifi management tools and set initial tool
-  local NMCLI_AVAILABLE=""
-  local WPA_CLI_AVAILABLE=""
-  local WIFI_TOOL="nmcli"  # Default to nmcli
-  if command -v nmcli >/dev/null 2>&1
+  # Ensure 'iw' is available
+  if ! command -v iw >/dev/null 2>&1
   then
-    NMCLI_AVAILABLE="yes"
-  fi
-  if command -v wpa_cli >/dev/null 2>&1
-  then
-    WPA_CLI_AVAILABLE="yes"
-  fi
-  if [ -z "$NMCLI_AVAILABLE" ] && [ -z "$WPA_CLI_AVAILABLE" ]
-  then
-    log "Wifi management tool not found (nmcli or wpa_cli required)"
-    return
-  elif [ -z "$NMCLI_AVAILABLE" ]
-  then
-    WIFI_TOOL="wpa_cli"  # Use wpa_cli if nmcli isn’t available
+    log "ERROR: 'iw' command not found. Exiting."
+    return 1
   fi
 
-  log "Wifi monitoring enabled: SSID=$SSID, WIFI_MAX_FAILS=$WIFI_MAX_FAILS, PING_HOST=${PING_HOST:=default} using $WIFI_TOOL"
-
-  #Start of monitoring
   while true
   do
-    # Perform wifi scan based on current tool
-    if [ "$WIFI_TOOL" = "nmcli" ]
-    then
-      if nmcli dev wifi rescan >/dev/null 2>&1
-      then
-        sleep 2
-        IN_RANGE=$(nmcli -t -f SSID dev wifi list | grep -q "^$SSID$" && echo "yes" || echo "no")
-        VISIBLE_SSIDS=$(nmcli -t -f SSID dev wifi | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
-      else
-        log "Wifi rescan failed with NetworkManager, switching to wpa_supplicant"
-        if [ -n "$WPA_CLI_AVAILABLE" ]
-        then
-          WIFI_TOOL="wpa_cli"
-        fi
-        IN_RANGE="no"  # Assume not in range on scan failure
-        VISIBLE_SSIDS=""
-      fi
-    elif [ "$WIFI_TOOL" = "wpa_cli" ]
-    then
-      if wpa_cli scan >/dev/null 2>&1
-      then
-        sleep 2
-        IN_RANGE=$(wpa_cli scan_results | tail -n +3 | grep -q "$SSID" && echo "yes" || echo "no")
-        VISIBLE_SSIDS=$(wpa_cli scan_results | tail -n +3 | awk '{print $5}' | grep -v '^$' | tr '\n' ',' | sed 's/,/, /g; s/, $//')
-      else
-        log "Wifi rescan failed with wpa_supplicant, switching to NetworkManager"
-        if [ -n "$NMCLI_AVAILABLE" ]
-        then
-          WIFI_TOOL="nmcli"
-        fi
-        IN_RANGE="no"  # Assume not in range on scan failure
-        VISIBLE_SSIDS=""
-      fi
-    fi
-
-log "In LOOP: Wifi monitoring enabled: SSID=$SSID, WIFI_MAX_FAILS=$WIFI_MAX_FAILS, PING_HOST=${PING_HOST:-default} using $WIFI_TOOL inrange $IN_RANGE"
-    # Check if SSID is in range
-    if [ "$IN_RANGE" = "yes" ]
-    then
-      # Determine ping target (PING_HOST or default gateway)
-      #local PING_TARGET="$PING_HOST"
-      local PING_TARGET=""
-log "IN RANGE IF"
-      if [ "${PING_HOST:-default}" = "default" ]
-#      if [ -z "$PING_HOST" ]
-      then
-log "Ping Target before ip route: $PING_TARGET"
-        PING_TARGET=$(ip route | grep default | awk '{print $3}' | head -n 1)
-log "Ping Target after ip route: $PING_TARGET"
-        if [ "$PING_TARGET" = "" ]
-        then
-          PING_TARGET="unreachable"
-          FAIL_COUNT=$((FAIL_COUNT + 1))
-          log "$SSID in range but unable to resolve default gateway, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
-          if [ "$FAIL_COUNT" -ge "$WIFI_MAX_FAILS" ]
-          then
-            log "$WIFI_MAX_FAILS consecutive failures. Rebooting..."
-            reboot
-          fi
-        else
-          log "SSID in range. ping target $PING_TARGET"
-        fi
-      fi
-
-      # Test connectivity with ping (skip if PING_TARGET is unreachable)
-      if [ "$PING_TARGET" != "unreachable" ]
-      then
-        # Test connectivity with ping
-        if ping -c 1 -W 2 "$PING_TARGET" >/dev/null 2>&1
-        then
-          FAIL_COUNT=0
-          log "$SSID in range and connected (ping to $PING_TARGET succeeded). Counter reset."
-        else
-          # Attempt to connect to the SSID
-          if [ "$WIFI_TOOL" = "nmcli" ]
-          then
-            nmcli dev wifi connect "$SSID" >/dev/null 2>&1 && log "Attempted to connect to $SSID with NetworkManager" || log "Failed to connect to $SSID with NetworkManager"
-            WIFI_TOOL="wpa_cli" # Attempt to use the other WIFI_TOOL next time if not connected
-          elif [ "$WIFI_TOOL" = "wpa_cli" ]
-          then
-            NETWORK_ID=$(wpa_cli list_networks | awk -v ssid="^$SSID$" '$2 ~ ssid {print $1}')
-            if [ -n "$NETWORK_ID" ]
-            then
-              wpa_cli select_network "$NETWORK_ID" >/dev/null 2>&1 && log "Attempted to connect to $SSID (network ID $NETWORK_ID) with wpa_supplicant" || log "Failed to connect to $SSID (network ID $NETWORK_ID) with wpa_supplicant"
-              WIFI_TOOL="nmcli" # Attempt to use the other WIFI_TOOL next time if not connected
-            else
-              log "No network ID found for $SSID in wpa_supplicant configuration"
-            fi
-          fi
-
-          FAIL_COUNT=$((FAIL_COUNT + 1))
-          log "$SSID in range but not connected (ping to $PING_TARGET failed, visible SSIDs: ${VISIBLE_SSIDS:-none}). Fail count: $FAIL_COUNT"
-          if [ "$FAIL_COUNT" -ge "$WIFI_MAX_FAILS" ]
-          then
-            log "$WIFI_MAX_FAILS consecutive failures. Rebooting..."
-            reboot
-          fi
-        fi
-      fi
-    else
-      FAIL_COUNT=0
-      log "$SSID not in range. Counter reset."
-    fi
- #   log "sleep"
     sleep 60
+
+    # Perform the scan once and store results in a variable
+    local scan_output
+    scan_output=$(timeout 10s iw dev wlan0 scan 2>/dev/null | awk -F'SSID: ' '/SSID:/ {print $2}')
+
+    # Check if SSID is in range
+    local ssid_in_range=0
+    if echo "$scan_output" | grep -Fxq "$SSID"
+    then
+      ssid_in_range=1
+    fi
+
+    # Find default gateway
+    local gateway=""
+    gateway=$(timeout 5s ip route | awk '/default/ {print $3}' | head -n1)
+
+    # Check connectivity
+    local connected=0
+    if [ -n "$gateway" ]
+    then
+      if timeout 5s ping -c 1 -W 5 "$gateway" >/dev/null 2>&1
+      then
+        connected=1
+      fi
+    fi
+
+    # Handle wifi conditions
+    if [ "$connected" -eq 1 ]
+    then
+      wifi_disconnect_monitor=1
+      fail_count=0
+      log "Wifi Monitoring: SSID '$SSID' connected."
+    elif [ "$connected" -eq 0 ] && [ "$ssid_in_range" -eq 1 ]
+    then
+      ((fail_count++))
+      log "Wifi Monitoring: Fail $fail_count of $WIFI_MAX_FAILS. SSID '$SSID' in range but not connected."
+    elif [ "$connected" -eq 0 ] && [ "$wifi_disconnect_monitor" -eq 1 ]
+  	then
+      ((fail_count++))
+      log "Wifi Monitoring: Fail $fail_count of $WIFI_MAX_FAILS. SSID '$SSID' disconnected."
+    fi
+
+    if [ "$fail_count" -ge "$WIFI_MAX_FAILS" ]
+	  then
+      log "Wifi Monitoring: Persistent wifi failure detected. Wait for idle and reboot."
+      /root/bin/waitforidle || true
+      reboot
+    fi
   done
 }
 
