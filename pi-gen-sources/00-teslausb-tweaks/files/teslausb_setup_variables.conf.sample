@@ -17,14 +17,12 @@ export SSID='your_ssid'
 export WIFIPASS='your_pass'
 
 # Wifi connectivity check settings (optional)
-# If SSID, WIFI_MAX_FAILS are defined, Wi-Fi monitoring is enabled.
-# If any out of the 2 are not defined or commented out, Wi-Fi monitoring is disabled.
-# PING_HOST is optional. If not specified, default gateway will be used.
-# Ensure default gateway (or PING_HOST) responses to ping request.
-# Wifi connectivity will performed check every 60 seconds.
-# TeslaUSB will reboot if it detects SSID in range, but PING_HOST is unreachable after WIFI_MAX_FAILS
-#export WIFI_MAX_FAILS=3
-#export PING_HOST='192.168.1.1'
+# If SSID, WIFI_MAX_FAILS are defined, Wi-Fi monitoring is enabled
+# If any out of the 2 are not defined or commented out, Wifi monitoring is disabled
+# Wifi monitoring will check connectivity every 60 secs. It will reboot teslausb when
+# SSID is in range but not connected after WIFI_MAX_FAILS
+# SSID was connected but disconnected for WIFI_MAX_FAILS
+export WIFI_MAX_FAILS=3
 
 # Variables for CIFS (Windows/Mac file sharing) archiving.
 # If you want to use rsync or rclone, delete or comment out this section
