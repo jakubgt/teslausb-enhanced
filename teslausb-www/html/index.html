@@ -928,7 +928,7 @@ video {
             <div class="dropdownitem layoutitem" onclick="setLayout(3)">Side and rear on bottom, looking back</div>
             <div class="dropdownitem layoutitem" onclick="setLayout(4)">Mobile layout,<br>mirrored</div>
             <div class="dropdownitem layoutitem" onclick="setLayout(5)">Mobile layout,<br>looking back</div>
-            <div class="dropdownitem layoutitem" onclick="setLayout(6)">Side and rear on bottom, mirrored，with pillar cams</div>
+            <div class="dropdownitem layoutitem" onclick="setLayout(6)">map and info on top, mirrored back</div>
           </div>
         </div>
       </div>
@@ -1116,9 +1116,9 @@ function setLayout(layout) {
     backview.classList.remove("flipped");
     videogrid.classList="videoholder layout5";
   } else if (layout == 6) {
-    // map-front-info on top, mirrorleft-mirrorrear-mirrorright on bottom
-    leftrepeaterview.classList.add("flipped");
-    rightrepeaterview.classList.add("flipped");
+    // map-front-info on top, mirrored back 
+    //leftrepeaterview.classList.add("flipped");
+    //rightrepeaterview.classList.add("flipped");
     backview.classList.add("flipped");
     videogrid.classList="videoholder layout6";
   } else {
