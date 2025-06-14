@@ -304,6 +304,7 @@ function fix_errors_in_images () {
 
 function disconnect_usb_drives_from_host () {
   log "Disconnecting usb from host..."
+  /root/bin/waitforidle || true
   if /root/bin/disable_gadget.sh
   then
     fix_errors_in_images
@@ -907,6 +908,7 @@ do
   # take a snapshot before archive_clips starts deleting files
   if has_cam_disk
   then
+    /root/bin/waitforidle || true
     /root/bin/make_snapshot.sh
   fi
 
