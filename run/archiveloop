@@ -753,7 +753,7 @@ function snapshotloop {
 function freespacemanager {
   echo -n freespacemanager > /proc/self/comm
   # 10G
-  local reserve=10737418240
+  local reserve="${RESERVE_SIZE:-10737418240}"
   local threepctoftotalspace
   threepctoftotalspace=$(eval "$(stat --file-system --format="echo \$((%b*%S/33))" /backingfiles/cam_disk.bin)")
   reserve=$((reserve+threepctoftotalspace))
