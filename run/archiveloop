@@ -704,7 +704,7 @@ function archive_clips () {
 
   log "$(vcgencmd measure_temp)"
 
-/root/bin/disconnect-archive.sh
+  /root/bin/disconnect-archive.sh
 }
 
 function slowblink () {
