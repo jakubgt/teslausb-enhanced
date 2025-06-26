@@ -633,7 +633,6 @@ function archive_teslacam_clips () {
       cat /tmp/archive-error.log >> ${LOG_FILE}
       rm /tmp/archive-error.log
     fi
-    log "$(vcgencmd measure_temp)"
   fi
 
   # overlayfs behavior is undefined if the lower is changed while the overlay is active, so umount first
@@ -688,6 +687,8 @@ function archive_clips () {
     log "Archiving failed."
   fi
 
+  log "$(vcgencmd measure_temp)"
+
   if timeout 5 [ -d "$MUSIC_ARCHIVE_MOUNT" -a -d "$MUSIC_MOUNT" ]
   then
     log "Copying music..."
@@ -701,7 +702,9 @@ function archive_clips () {
     log "Music archive not configured or unreachable"
   fi
 
-  /root/bin/disconnect-archive.sh
+  log "$(vcgencmd measure_temp)"
+
+/root/bin/disconnect-archive.sh
 }
 
 function slowblink () {
