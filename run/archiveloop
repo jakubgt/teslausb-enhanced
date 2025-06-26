@@ -633,9 +633,7 @@ function archive_teslacam_clips () {
       cat /tmp/archive-error.log >> ${LOG_FILE}
       rm /tmp/archive-error.log
     fi
-
-    log $(vcgencmd measure_temp)
-
+    log "$(vcgencmd measure_temp)"
   fi
 
   # overlayfs behavior is undefined if the lower is changed while the overlay is active, so umount first
@@ -750,7 +748,7 @@ function snapshotloop {
     sleep "${SNAPSHOT_INTERVAL:-3480}"
     /root/bin/waitforidle || true
     /root/bin/make_snapshot.sh
-    log $(vcgencmd measure_temp)
+    log "$(vcgencmd measure_temp)"
   done
 }
 
@@ -855,7 +853,7 @@ set_sys_param /proc/sys/vm/dirty_background_bytes DIRTY_BACKGROUND_BYTES 65536
 set_sys_param /proc/sys/vm/dirty_ratio DIRTY_RATIO 80
 set_sys_param /sys/devices/system/cpu/cpufreq/policy0/scaling_governor CPU_GOVERNOR conservative
 
-log $(vcgencmd measure_temp)
+log "$(vcgencmd measure_temp)"
 
 if has_cam_disk
 then
