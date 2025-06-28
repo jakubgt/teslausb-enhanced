@@ -35,7 +35,7 @@ then
   
       if [[ "$result2" = "true" ]]
       then
-        log "TeslaFi: Sentry Mode Disabled. Current TeslaFi monthly command counter = $commands"
+        log "TeslaFi: Sentry Mode Disabled. Monthly command counter = $commands."
       else
         log "TeslaFi: Failed to set Sentry Mode. Response data: $response_body"
       fi
