@@ -193,6 +193,11 @@ function check_at_most_one_wake_api () {
 function check_teslafi_api () {
   if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
   then
+    if ! command -v jq &>/dev/null
+      then
+        log_progress "Installing required package for TeslaFi API: jq"
+        DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install jq
+    fi
     log_progress "TeslaFi API enabled."
   else
     log_progress "TeslaFi API not enabled because no TeslaFi credential was provided."
