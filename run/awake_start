@@ -27,6 +27,7 @@ else
           "https://www.teslafi.com/feed.php?command=set_sentry_mode&sentryMode=true&noWake=true")
 
         log "TeslaFi: Command sent to enable Sentry Mode."
+
         # Extract HTTP status code
         http_status="${http_response: -3}"
                 
@@ -52,7 +53,7 @@ else
 
             if [[ "$result2" = "true" ]]
             then
-              log "TeslaFi: Sentry Mode Enabled. Current TeslaFi monthly command counter = $commands"
+              log "TeslaFi: Sentry Mode Enabled. Monthly command counter = $commands."
             else
               log "TeslaFi: Failed to set Sentry Mode. Response data: $response_body"
             fi
