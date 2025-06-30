@@ -243,104 +243,121 @@ export CAM_SIZE=40G
 ################################################################################
 # !!!!!!!!!!!!!!!!!!!!!! IMPORTANT KEEP CAR AWAKE CHANGES !!!!!!!!!!!!!!!!!!!!!!
 #
-# Recent car firmware turns off USB ports shortly after you exit the car,
-# affecting the ability for TeslaUSB to finish archiving.
+# Recent car firmware turns off USB ports shortly after you exit the car, when
+# the car goes to sleep. This can affect the ability for TeslaUSB to finsih
+# archiving in time. Tesla later introduced the "Keep Accessory Power On"
+# feature, however, it is not applicable to the data port that is used for
+# Dashcam/TeslaUSB.
 #
-# To keep the car from sleeping, several methods are supported. The unofficial
-# Tesla API is now deprecated in favor of the official Tesla Fleet API (a paid
-# service for 3rd-party developers). While TeslaFi and Tessie will continue to
-# work, the number of free calls per month is limited. Some adjustments need to
-# be made for TeslaFi and Tessie subscribers. Please read those sections
-# carefully.
+# In order to keep the car awake, several methods have been implemented:
+# Blutooth Low Energy (BLE), TeslaFi, and Tessie. Note, previous (unofficial)
+# Tesla API was deprecated, since Tesla superceded with the official Fleet API
+# (a paid service). Subsquently, TeslaFi and Tessie now enforce a monthly
+# quotas to limit commands sent. As the result, the entire keep car awake
+# framework have been refactored to send considerably less requests and now
+# leverages Sentry Mode exclusively. All 3 methods (BLE, TeslaFi, and Tessie)
+# use the same framework and thus behave the same.
 #
-# The most direct method is to use Tesla's new BLE interface to pair TeslaUSB as
-# a BLE key to your vehicle. This allows TeslaUSB to turn Sentry Mode on before
-# archiving and off afterwards. This is known to work on Raspberry Pi 4 and Pi
-# Zero 2 W, but currently does not work on the Pi Zero W. For other platforms,
-# please test and this compatibility note can be updated.
+# There are pros and cons to consider in selecting which methods works best for
+# you. 
 #
-# All methods of remotely controlling the car have security implications. The
-# keys and/or tokens stored on TeslaUSB could be used to unlock and drive your
-# car if the device is stolen. Enabling PIN-to-Drive is encouraged. If the
-# device is stolen or compromised, immediately delete the key from the car and
-# change associated passwords.
+# BLE Pros/Cons:
+#  ++ Direct connection to the car
+#  - Added complexity to configure initially
+#  - Increased security vulnerability (vs TeslaFi/Tessie)
+#  - Only supports Pi 4 and Pi Zero 2 W. Pi Zero W. is not supported at this
+#    time. For other platforms, please test and let us know.
 #
-# Other ways to keep the USB ports powered for TeslaUSB to finish archiving
-# involve manually turning on Sentry Mode or Camp Mode from the Tesla App.
-# However, neither are great solutions as they keep the car on indefinitely,
-# thus unnecessarily consuming the car’s high-voltage battery. For that reason,
-# it’s a good idea to setup notification mechanisms (see preceding sections) so
-# you know when to manually turn Off Sentry/Camp Mode from the Tesla App.
+# TeslaFi/Tessie Pros/Cons:
+#  + Straightforward to configure initially
+#  + Remote monitoring and management
+#  - Some security vulnerability
+#  - Requires paid 3rd-party service from TeslaFi or Tessie
+#
+# DISCLAIMER: All 3 methods have some level of security implications. For BLE,
+#  the keypair is stored on the device, and it is not possible to manage/delete
+#  it remotely. For TeslaFi/Tessie, the access token (not service login) is in
+#  the config file, however, it can easily be revoked/changed remotely at
+#  anytime. Having said that, the offender would require physical access to the
+#  device and technical knowledge. This is an unlikely scenario, but also not
+#  impossible in the ever evolving cybersecurity landscape.
+#
+# Other ways to keep the data port powered through sleep is to manually turning
+# on Sentry Mode or Camp Mode from the Tesla App. However, neither are great
+# solutions as they keep the car awake indefinitely, thus unnecessarily
+# consuming the car’s high-voltage battery. For that reason, it’s a good idea
+# to setup notification mechanisms (see preceding sections) so you know when to
+# manually turn Off Sentry/Camp Mode from the Tesla App.
 #
 # Another alternative is using a power bank or UPS hat to keep TeslaUSB powered
 # independent of the power state of the car's USB ports. See the TeslaUSB wiki
-# for more info. Finally, 2025.14.1 adds an option to keep 12V accessory power
-# on when the car is not asleep. Depending how your Pi is powered, this may be
-# sufficient.
+# for more info.
 #
-# !!! IMPORTANT: Only ONE control API should be used at a time. Do not include
-#                API tokens for both TeslaFi and Tessie, or combine BLE with
-#                either service.
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# 1st, determine your Sentry Mode use case (or preference), while referring to
+# your in-car settings menu: Safety -> Sentry Mode.
 #
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# Tesla BLE setup: Provide the VIN of the vehicle to control here.
-# export TESLA_BLE_VIN=
+#  Case 1: If you want Sentry Mode On everywhere, except when parked safely
+#          at home.
 #
-# After setup is complete, place TeslaUSB in/near the vehicle and use the
-# Tools > Pair BLE with Car option in the web UI.
-#
-# To pair by command line, SSH into Tesla USB and run the following command:
-#
-# sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
-#
-# After initiating pairing, you will need to promptly tap an authorized keycard
-# on the center console in order to authorize the new key.
-#
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# TeslaFi and Tessie users, define the variables below according to your
-# Sentry Mode use case. Check your in-car settings menu: Safety -> Sentry Mode.
-#
-# Case 1: You want Sentry Mode On everywhere, except when parked safely at home.
-#
-#         !!! IMPORTANT: Verify your in-car Sentry Mode setting is set to ON
-#                        and uncheck 'Exclude Home'.
+#         !!! IMPORTANT: Set your in-car Sentry Mode setting to ON,
+#                        and UNCHECK 'Exclude Home'.
 #
 #         Upon arriving home, Sentry Mode will remain ON to power TeslaUSB
 #         through archiving. Once archiving completes, a command will be sent
 #         to turn OFF Sentry Mode, thus allowing the car to go back to sleep.
 #         Whenever you leave home, Sentry will re-arm itself by default.
 #
-# Case 2: You don't want Sentry Mode anywhere, unless archiving.
+#  Case 2: You DON'T want Sentry Mode anywhere, unless archiving.
 #
-#         !!! IMPORTANT: Verify your in-car Sentry Mode setting is set to OFF.
+#         !!! IMPORTANT: Set your in-car Sentry Mode setting to OFF.
 #
 #         Upon arriving home, TeslaUSB will send a command to turn ON Sentry
 #         Mode. Once archiving completes, a command will be sent to turn OFF
 #         Sentry Mode, thus allow the car to go back to sleep.
 #         Whenever you leave home, Sentry will not re-arm itself by default.
 #
+# Provide your use case here:
 #export SENTRY_CASE=1
 #
-# Additional Tessie & TeslaFi Requirements:
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# 2nd, Choose and configure 1 method of control.
+#      !!! IMPORTANT: Only ONE control API should be used at a time.
+#                     Do not include parameters for both TeslaFi and Tessie,
+#                     or combine BLE with either services.
+# .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+# For BLE, provide the VIN of the vehicle to control here.
+#export TESLA_BLE_VIN=5YJ3E1EA4JF000001
 #
-# How to generate TeslaFi API Tokens:
-#   Log into your TeslaFi account.
-#   Navigate to Settings -> Tesla API -> API Token (tab).
+#  After setup is complete, place TeslaUSB in/near the vehicle and use the
+#  Web UI: Tools > Pair BLE with Car
 #
-# Enable TeslaFi API Command:
-#   Navigate to Settings -> Tesla API -> Commands (tab).
-#   Verify 'Sentry Mode' command is checked (enabled).
+#  To pair by command line, SSH into Tesla USB and run the following command:
+#   sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
 #
-# How to generate Tessie API Tokens
-#   Log into your Tessie account.
-#   Navigate to Settings -> Developer API -> Generate access token.
+#  After initiating pairing, you will need to promptly tap an authorized
+#  keycard on the center console in order to authorize the new key.
+#
+# .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+# For TeslaFi, provide your API token here:
 #export TESLAFI_API_TOKEN='YOUR_TESLAFI_API_TOKEN_GOES_HERE'
-#export TESSIE_API_TOKEN='YOUR_TESSIE_API_TOKEN_GOES_HERE'
 #
-# Tessie API ONLY (Do not configure if using TeslaFi API):
-#   The Tessie API requires the vehicle's VIN number to issue commands to it,
-#   regardless of whether you only have one vehicle on the account or not.
+#   How to generate TeslaFi API Tokens:
+#     Log into your TeslaFi account.
+#     Navigate to Settings -> Tesla API -> API Token (tab).
+#
+#   Enable TeslaFi API Command:
+#     Navigate to Settings -> Tesla API -> Commands (tab).
+#     Verify 'Sentry Mode' command is checked (enabled).
+#
+# .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+# For Tessie, provide your API token and vechicle VIN here:
+#export TESSIE_API_TOKEN='YOUR_TESSIE_API_TOKEN_GOES_HERE'
 #export TESSIE_VIN=5YJ3E1EA4JF000001
+#
+#   How to generate Tessie API Tokens
+#     Log into your Tessie account.
+#     Navigate to Settings -> Developer API -> Generate access token.
 ################################################################################
 
 
