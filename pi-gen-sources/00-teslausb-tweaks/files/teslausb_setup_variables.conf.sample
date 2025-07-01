@@ -295,9 +295,9 @@ export CAM_SIZE=40G
 #
 # For BLE, TeslaFi, or Tessie:
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# 1st, Determine what is your Sentry Mode preference (choose one below. Then
-# make a 1-time settings change, if applicable, in your in-car settings menu:
-# Safety -> Sentry Mode.
+# 1st, Determine what is your Sentry Mode preference (choose one case). Then
+# make a 1-time settings change (set and forget), if applicable, in your in-car
+# settings menu: Safety -> Sentry Mode.
 #
 #  Case 1: You want Sentry Mode turned On everywhere, except when parked safely
 #          at home.
