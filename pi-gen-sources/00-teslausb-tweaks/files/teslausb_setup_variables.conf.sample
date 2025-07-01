@@ -265,8 +265,8 @@ export CAM_SIZE=40G
 #  ++ Direct connection to the car
 #  - Added complexity to configure initially
 #  - Increased security vulnerability (vs TeslaFi/Tessie)
-#  - Only supports Pi 4 and Pi Zero 2 W. Pi Zero W. is not supported at this
-#    time. For other platforms, please test and let us know.
+#  - Only supports Pi 4 and Pi Zero 2 W. (Pi Zero W. is not supported at this
+#    time. For other platforms, please test and let us know.)
 #
 # TeslaFi/Tessie Pros/Cons:
 #  + Straightforward to configure initially
