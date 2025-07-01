@@ -250,13 +250,13 @@ export CAM_SIZE=40G
 # Dashcam/TeslaUSB.
 #
 # In order to keep the car awake, several methods have been implemented:
-# Blutooth Low Energy (BLE), TeslaFi, and Tessie. Note, previous (unofficial)
-# Tesla API was deprecated, since Tesla superceded with the official Fleet API
-# (a paid service). Subsquently, TeslaFi and Tessie now enforce a monthly
-# quotas to limit commands sent. As the result, the entire keep car awake
-# framework have been refactored to send considerably less requests and now
-# leverages Sentry Mode exclusively. All 3 methods (BLE, TeslaFi, and Tessie)
-# use the same framework and thus behave the same.
+# Blutooth Low Energy (BLE), TeslaFi, and Tessie. Note, previous use of the
+# (unofficial) Tesla API was deprecated, since Tesla superceded it with the
+# official Fleet API (a paid service). Subsquently, TeslaFi and Tessie now
+# enforce a monthly quotas to limit commands sent. As the result, the entire
+# keep car awake framework have been refactored to use considerably less
+# requests and now leverages Sentry Mode exclusively. All 3 methods (BLE,
+# TeslaFi, and Tessie) use the same framework and thus behave the same.
 #
 # There are pros and cons to consider in selecting which methods works best for
 # you. 
@@ -293,50 +293,56 @@ export CAM_SIZE=40G
 # independent of the power state of the car's USB ports. See the TeslaUSB wiki
 # for more info.
 #
+# For BLE, TeslaFi, or Tessie:
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# 1st, determine your Sentry Mode use case (or preference), while referring to
-# your in-car settings menu: Safety -> Sentry Mode.
+# 1st, Determine what is your Sentry Mode preference (choose one below. Then
+# make a 1-time settings change, if applicable, in your in-car settings menu:
+# Safety -> Sentry Mode.
 #
-#  Case 1: If you want Sentry Mode On everywhere, except when parked safely
+#  Case 1: You want Sentry Mode turned On everywhere, except when parked safely
 #          at home.
 #
-#         !!! IMPORTANT: Set your in-car Sentry Mode setting to ON,
-#                        and UNCHECK 'Exclude Home'.
+#          Mode of operation: Upon arriving home, Sentry Mode will already be
+#          ON to power TeslaUSB through archiving. Once archiving completes, a
+#          command will be sent to turn OFF Sentry Mode, thus allowing the car
+#          to go back to sleep. Whenever you start a new drive, Sentry will
+#          re-arm itself by default.
 #
-#         Upon arriving home, Sentry Mode will remain ON to power TeslaUSB
-#         through archiving. Once archiving completes, a command will be sent
-#         to turn OFF Sentry Mode, thus allowing the car to go back to sleep.
-#         Whenever you leave home, Sentry will re-arm itself by default.
+#          IMPORTANT: Verify your in-car Sentry Mode is set to ON, and
+#                     'Exclude Home' is UNCHECKED.
 #
-#  Case 2: You DON'T want Sentry Mode anywhere, unless archiving.
+#  Case 2: You DON'T want Sentry Mode turned on anywhere, unless archiving.
 #
-#         !!! IMPORTANT: Set your in-car Sentry Mode setting to OFF.
+#          Mode of operation: Upon arriving home, TeslaUSB will send a command
+#          to turn ON Sentry Mode. Once archiving completes, a command will be
+#          sent to turn OFF Sentry Mode, thus allow the car to go back to sleep.
+#          Sentry mode to remain OFF from that point forward until the next
+#          archiving activity.
 #
-#         Upon arriving home, TeslaUSB will send a command to turn ON Sentry
-#         Mode. Once archiving completes, a command will be sent to turn OFF
-#         Sentry Mode, thus allow the car to go back to sleep.
-#         Whenever you leave home, Sentry will not re-arm itself by default.
+#          IMPORTANT: Verify your in-car Sentry Mode is set to OFF.
 #
-# Provide your use case here:
+# 2nd, Provide your use case (from above) here:
 #export SENTRY_CASE=1
 #
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# 2nd, Choose and configure 1 method of control.
+# 3rd, Choose and configure 1 method of control.
 #      !!! IMPORTANT: Only ONE control API should be used at a time.
 #                     Do not include parameters for both TeslaFi and Tessie,
 #                     or combine BLE with either services.
+#
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
-# For BLE, provide the VIN of the vehicle to control here.
+# For BLE, provide your vehicle VIN here:
 #export TESLA_BLE_VIN=5YJ3E1EA4JF000001
 #
 #  After setup is complete, place TeslaUSB in/near the vehicle and use the
-#  Web UI: Tools > Pair BLE with Car
+#  TeslaUSB Web UI: Tools > Pair BLE with Car
 #
-#  To pair by command line, SSH into Tesla USB and run the following command:
+#  To pair by command line, SSH into TeslaUSB and run the following command:
 #   sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
 #
 #  After initiating pairing, you will need to promptly tap an authorized
-#  keycard on the center console in order to authorize the new key.
+#  keycard on the center console in order to authorize the new key. Note, this
+#  does not behave like leaving your paired phone key in the car and allows an
+#  unauthorized person to open your door.
 #
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
 # For TeslaFi, provide your API token here:
@@ -348,7 +354,8 @@ export CAM_SIZE=40G
 #
 #   Enable TeslaFi API Command:
 #     Navigate to Settings -> Tesla API -> Commands (tab).
-#     Verify 'Sentry Mode' command is checked (enabled).
+#     Verify 'Sentry Mode' command is checked (enabled). You may also disable
+#     any command(s) you don't want (e.g. 'Unlock' for added security.)
 #
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
 # For Tessie, provide your API token and vechicle VIN here:
