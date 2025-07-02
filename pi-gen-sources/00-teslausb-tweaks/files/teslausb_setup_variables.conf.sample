@@ -250,13 +250,14 @@ export CAM_SIZE=40G
 # Dashcam/TeslaUSB.
 #
 # In order to keep the car awake, several methods have been implemented:
-# Blutooth Low Energy (BLE), TeslaFi, and Tessie. Note, previous use of the
-# (unofficial) Tesla API was deprecated, since Tesla superceded it with the
-# official Fleet API (a paid service). Subsquently, TeslaFi and Tessie now
-# enforce a monthly quotas to limit commands sent. As the result, the entire
-# keep car awake framework have been refactored to use considerably less
-# requests and now leverages Sentry Mode exclusively. All 3 methods (BLE,
-# TeslaFi, and Tessie) use the same framework and thus behave the same.
+# Blutooth Low Energy (BLE), TeslaFi, and Tessie. Note, previous implementation
+# using the (unofficial) Tesla API was deprecated, since Tesla superceded it
+# with the official Fleet API (a paid service for developers). Subsquently,
+# TeslaFi and Tessie now enforce a monthly quotas to limit number of commands
+# sent. As the result, the entire Keep Car Awake framework have been refactored
+# to use considerably less requests and now leverages Sentry Mode exclusively.
+# All 3 methods (BLE, TeslaFi, and Tessie) use the same framework and thus behave
+# the same -- the difference is how Sentry Mode is commanded.
 #
 # There are pros and cons to consider in selecting which methods works best for
 # you. 
