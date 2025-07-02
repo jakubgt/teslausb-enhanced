@@ -305,10 +305,10 @@ export CAM_SIZE=40G
 #          Mode of operation: Upon arriving home, Sentry Mode will already be
 #          ON to power TeslaUSB through archiving. Once archiving completes, a
 #          command will be sent to turn OFF Sentry Mode, thus allowing the car
-#          to go back to sleep. Whenever you start a new drive, Sentry will
-#          re-arm itself by default.
+#          to go back to sleep. Whenever you start a new drive, car will default
+#          Sentry Mode to ON by default, per your in-car setting.
 #
-#          IMPORTANT: Verify your in-car Sentry Mode is set to ON, and
+#     >>>> IMPORTANT: Verify your in-car Sentry Mode is set to ON, and
 #                     'Exclude Home' is UNCHECKED.
 #
 #  Case 2: You DON'T want Sentry Mode turned on anywhere, unless archiving.
@@ -316,19 +316,19 @@ export CAM_SIZE=40G
 #          Mode of operation: Upon arriving home, TeslaUSB will send a command
 #          to turn ON Sentry Mode. Once archiving completes, a command will be
 #          sent to turn OFF Sentry Mode, thus allow the car to go back to sleep.
-#          Sentry mode to remain OFF from that point forward until the next
+#          Sentry Mode will remain OFF from this point forward until the next
 #          archiving activity.
 #
-#          IMPORTANT: Verify your in-car Sentry Mode is set to OFF.
+#     >>>> IMPORTANT: Verify your in-car Sentry Mode is set to OFF.
 #
 # 2nd, Provide your use case (from above) here:
 #export SENTRY_CASE=1
 #
 # 3rd, Choose and configure 1 method of control.
-#      !!! IMPORTANT: Only ONE control API should be used at a time.
-#                     Do not include parameters for both TeslaFi and Tessie,
-#                     or combine BLE with either services.
 #
+#  !!! IMPORTANT: Only ONE control API should be used at a time.
+#                 Do not include parameters for both TeslaFi and Tessie, or
+#                 combine BLE with either services.
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
 # For BLE, provide your vehicle VIN here:
 #export TESLA_BLE_VIN=5YJ3E1EA4JF000001
