@@ -256,8 +256,8 @@ export CAM_SIZE=40G
 # TeslaFi and Tessie now enforce a monthly quotas to limit number of commands
 # sent. As the result, the entire Keep Car Awake framework have been refactored
 # to use considerably less requests and now leverages Sentry Mode exclusively.
-# All 3 methods (BLE, TeslaFi, and Tessie) use the same framework and thus behave
-# the same -- the difference is how Sentry Mode is commanded.
+# All 3 methods (BLE, TeslaFi, and Tessie) use the same framework and thus
+# behave the same -- the difference is how Sentry Mode is commanded.
 #
 # There are pros and cons to consider in selecting which methods works best for
 # you. 
@@ -268,6 +268,8 @@ export CAM_SIZE=40G
 #  - Increased security vulnerability (vs TeslaFi/Tessie)
 #  - Only supports Pi 4 and Pi Zero 2 W. (Pi Zero W. is not supported at this
 #    time. For other platforms, please test and let us know.)
+#  * Note: Tesla has a limit of 3 BLE devices (e.g. Phone, earable, key FOB.)
+#          Manage the number of your BLE devices accordingly.
 #
 # TeslaFi/Tessie Pros/Cons:
 #  + Straightforward to configure initially
