@@ -268,8 +268,11 @@ export CAM_SIZE=40G
 #  - Increased security vulnerability (vs TeslaFi/Tessie)
 #  - Only supports Pi 4 and Pi Zero 2 W. (Pi Zero W. is not supported at this
 #    time. For other platforms, please test and let us know.)
-#  * Note: Tesla has a limit of 3 BLE devices (e.g. Phone, earable, key FOB.)
-#          Manage the number of your BLE devices accordingly.
+#  * Note: Tesla is limited to 3 simultaneous BLE connections for passive
+#          functions. So manage your BLE devices (phone key, wearable key, key
+#          fob, etc.) accordingly. This is independent of how many key pairs
+#          are allowed. BLE is also not to be confused with standard Bluetooth
+#          connections.
 #
 # TeslaFi/Tessie Pros/Cons:
 #  + Straightforward to configure initially
