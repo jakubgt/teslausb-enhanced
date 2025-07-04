@@ -244,29 +244,30 @@ export CAM_SIZE=40G
 # !!!!!!!!!!!!!!!!!!!!!! IMPORTANT KEEP CAR AWAKE CHANGES !!!!!!!!!!!!!!!!!!!!!!
 #
 # Recent car firmware turns off USB ports shortly after you exit the car, when
-# the car goes to sleep. This can affect the ability for TeslaUSB to finsih
+# the car goes to sleep. This can affect the ability for TeslaUSB to finish
 # archiving in time. Tesla later introduced the "Keep Accessory Power On"
-# feature, however, it is not applicable to the data port that is used for
+# feature; however, it is not applicable to the data port that is used for
 # Dashcam/TeslaUSB.
 #
 # In order to keep the car awake, several methods have been implemented:
-# Blutooth Low Energy (BLE), TeslaFi, and Tessie. Note, previous implementation
-# using the (unofficial) Tesla API was deprecated, since Tesla superceded it
-# with the official Fleet API (a paid service for developers). Subsquently,
-# TeslaFi and Tessie now enforce a monthly quotas to limit number of commands
-# sent. As the result, the entire Keep Car Awake framework have been refactored
-# to use considerably less requests and now leverages Sentry Mode exclusively.
-# All 3 methods (BLE, TeslaFi, and Tessie) use the same framework and thus
-# behave the same -- the difference is how Sentry Mode is commanded.
+# Bluetooth Low Energy (BLE), TeslaFi, and Tessie. Note, the previous
+# implementation using the (unofficial) Tesla API was deprecated since Tesla
+# superseded it with the official Fleet API (a paid service for developers).
+# Subsequently, TeslaFi and Tessie now enforce monthly quotas to limit the
+# number of commands sent. As a result, the entire Keep Car Awake framework
+# has been refactored to use considerably fewer requests and now leverages
+# Sentry Mode exclusively. All 3 methods (BLE, TeslaFi, and Tessie) use the same
+# framework and thus behave the same -- the difference is how Sentry Mode is
+# commanded.
 #
-# There are pros and cons to consider in selecting which methods works best for
+# There are pros and cons to consider in selecting which method works best for
 # you. 
 #
 # BLE Pros/Cons:
 #  ++ Direct connection to the car
 #  - Added complexity to configure initially
 #  - Increased security vulnerability (vs TeslaFi/Tessie)
-#  - Only supports Pi 4 and Pi Zero 2 W. (Pi Zero W. is not supported at this
+#  - Only supports Pi 4 and Pi Zero 2 W. (Pi Zero W is not supported at this
 #    time. For other platforms, please test and let us know.)
 #  * Note: Tesla is limited to 3 simultaneous BLE connections for passive
 #          functions. So manage your BLE devices (phone key, wearable key, key
@@ -281,18 +282,19 @@ export CAM_SIZE=40G
 #  - Requires paid 3rd-party service from TeslaFi or Tessie
 #
 # DISCLAIMER: All 3 methods have some level of security implications. For BLE,
-#  the keypair is stored on the device, and it is not possible to manage/delete
-#  it remotely. For TeslaFi/Tessie, the access token (not service login) is in
-#  the config file, however, it can easily be revoked/changed remotely at
+#  key pairs are stored on the device, and it is not possible to manage/delete
+#  them remotely. For TeslaFi/Tessie, the API access token (not service login)
+#  is in the config file; however, it can easily be revoked/changed remotely at
 #  anytime. Having said that, the offender would require physical access to the
-#  device and technical knowledge. This is an unlikely scenario, but also not
-#  impossible in the ever evolving cybersecurity landscape.
+#  device and technical knowledge. That is likely an uncommon scenario, but also
+#  not impossible in the ever-evolving cybersecurity landscape. User discretion
+#  advised.
 #
 # Other ways to keep the data port powered through sleep is to manually turning
 # on Sentry Mode or Camp Mode from the Tesla App. However, neither are great
 # solutions as they keep the car awake indefinitely, thus unnecessarily
 # consuming the car’s high-voltage battery. For that reason, it’s a good idea
-# to setup notification mechanisms (see preceding sections) so you know when to
+# to set up notification mechanisms (see preceding sections) so you know when to
 # manually turn Off Sentry/Camp Mode from the Tesla App.
 #
 # Another alternative is using a power bank or UPS hat to keep TeslaUSB powered
@@ -364,7 +366,7 @@ export CAM_SIZE=40G
 #     any command(s) you don't want (e.g. 'Unlock' for added security.)
 #
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
-# For Tessie, provide your API token and vechicle VIN here:
+# For Tessie, provide your API token and vehicle VIN here:
 #export TESSIE_API_TOKEN='YOUR_TESSIE_API_TOKEN_GOES_HERE'
 #export TESSIE_VIN=5YJ3E1EA4JF000001
 #
