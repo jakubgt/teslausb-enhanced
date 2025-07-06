@@ -301,8 +301,9 @@ export CAM_SIZE=40G
 # independent of the power state of the car's USB ports. See the TeslaUSB wiki
 # for more info.
 #
-# For BLE, TeslaFi, or Tessie:
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# For BLE, TeslaFi, or Tessie:
+#
 # 1st, Determine what is your Sentry Mode preference (choose one case). Then
 # make a 1-time settings change (set and forget), if applicable, in your in-car
 # settings menu: Safety -> Sentry Mode.
@@ -332,27 +333,35 @@ export CAM_SIZE=40G
 # 2nd, Provide your use case (from above) here:
 #export SENTRY_CASE=1
 #
-# 3rd, Choose and configure 1 method of control.
+# 3rd, Choose and configure 1 method of control below.
 #
 #  !!! IMPORTANT: Only ONE control API should be used at a time.
 #                 Do not include parameters for both TeslaFi and Tessie, or
 #                 combine BLE with either services.
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+#
 # For BLE, provide your vehicle VIN here:
 #export TESLA_BLE_VIN=5YJ3E1EA4JF000001
 #
-#  After setup is complete, place TeslaUSB in/near the vehicle and use the
-#  TeslaUSB Web UI: Tools > Pair BLE with Car
+#   Pairing TeslaUSB as a BLE device:
+#   
+#   1.  Ensure the TeslaUSB device is inside the vehicle and powered.
 #
-#  To pair by command line, SSH into TeslaUSB and run the following command:
-#   sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
+#   2a. From the TeslaUSB Web UI: Menu > Tools > Pair BLE with Car
+#   2b. Alternatively, if Web UI was not enabled, from the SSH command line:
+#       sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
 #
-#  After initiating pairing, you will need to promptly tap an authorized
-#  keycard on the center console in order to authorize the new key. Note, this
-#  does not behave like leaving your paired phone key in the car and allows an
-#  unauthorized person to open your door.
+#   3.  Shortly after initiating pairing, a prompt is shown on the in-car
+#       screen requesting for an authorized key card. Please tap key card on
+#       the center console promptly.
 #
+#   4.  If done successfully, you'll see an "Unkown Key" (can be renamed) entry
+#       under the in-car Locks screen.
+#       Note, this does not behave like an actual key card or phone key. An
+#       authroized key (card, phone, fob) is still required to unlock and start
+#       a drive.
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+#
 # For TeslaFi, provide your API token here:
 #export TESLAFI_API_TOKEN='YOUR_TESLAFI_API_TOKEN_GOES_HERE'
 #
@@ -364,8 +373,8 @@ export CAM_SIZE=40G
 #     Navigate to Settings -> Tesla API -> Commands (tab).
 #     Verify 'Sentry Mode' command is checked (enabled). You may also disable
 #     any command(s) you don't want (e.g. 'Unlock' for added security.)
-#
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+#
 # For Tessie, provide your API token and vehicle VIN here:
 #export TESSIE_API_TOKEN='YOUR_TESSIE_API_TOKEN_GOES_HERE'
 #export TESSIE_VIN=5YJ3E1EA4JF000001
