@@ -231,7 +231,7 @@ function check_and_configure_tesla_ble () {
   then
     if dpkg-query -W --showformat='${db:Status-Status}\n' "bluez" 2>/dev/null | grep -q '^installed$'
     then
-      echo "Skip required package for Tesla BLE API: bluez already installed."
+      echo "Skipping required package for Tesla BLE API: bluez already installed."
     else
       echo "Installing required package for Tesla BLE API: bluez"
       DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install bluez
@@ -239,7 +239,7 @@ function check_and_configure_tesla_ble () {
 
     if dpkg-query -W --showformat='${db:Status-Status}\n' "pi-bluetooth" 2>/dev/null | grep -q '^installed$'
     then
-      echo "Skip required package for Tesla BLE API: pi-bluetooth already installed."
+      echo "Skipping required package for Tesla BLE API: pi-bluetooth already installed."
     else
       echo "Installing required package for Tesla BLE API: pi-bluetooth"
       DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install pi-bluetooth
@@ -274,6 +274,10 @@ function check_and_configure_tesla_ble () {
     then
       log_progress "Please visit the web UI after TeslaUSB is in the car to pair the key."
     fi
+
+    log_progress "Tesla BLE API enabled."
+  else
+    log_progress "Tesla BLE API not enabled because no Tesla BLE VIN was provided."
   fi
 }
 
