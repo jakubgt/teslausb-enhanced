@@ -264,9 +264,9 @@ export CAM_SIZE=40G
 # you. 
 #
 # BLE Pros/Cons:
-#   ++ Direct connection to the car
+#   ++ Direct connection to the car; unlimited.
 #   - Added complexity to configure initially
-#   - Increased security vulnerability (vs TeslaFi/Tessie)
+#   - Some security vulnerability
 #   - Only supports Pi 4 and Pi Zero 2 W. (Pi Zero W is not supported at this
 #     time. For other platforms, please test and let us know.)
 #   * Note: Tesla is limited to 3 simultaneous BLE connections for passive
@@ -278,17 +278,27 @@ export CAM_SIZE=40G
 # TeslaFi/Tessie Pros/Cons:
 #   + Straightforward to configure initially
 #   + Remote monitoring and management
-#   - Slight security vulnerability
+#   - Some security vulnerability
 #   - Requires paid 3rd-party service from TeslaFi or Tessie
 #
-# DISCLAIMER: All 3 methods have some level of security implications. For BLE,
-#   key pairs are stored on the device, and it is not possible to manage/delete
-#   them remotely. For TeslaFi/Tessie, the API access token (not the main login)
-#   is in the config file; however, it can easily be revoked/changed remotely
-#   at anytime. Having said that, the offender would require physical access to
-#   the device and technical knowledge. User discretion advised. Ensure your
-#   TeslaUSB login password has been changed from default. Enabling Tesla's
-#   pin-to-drive is also recommended.
+# DISCLAIMER:
+#   All 3 methods have some level of security implications. For BLE,
+#   key pair is stored on the device. For TeslaFi/Tessie, the API access token
+#   (not the main login) is in the config file. Having said that, the offender
+#   would require physical access to the device and the technical knowledge to
+#   compromise your vehicle. User discretion advised.
+#
+#   Good Security Practices:
+#     * Change your TeslaUSB user passwords (pi and root)
+#     * Set user/password for the TeslaUSB AP (if enabled)
+#     * Enable Tesla's pin-to-drive
+#     * If your TeslaUSB has been compromise, immediately change your Tesla.com
+#       password, which will invalidate all 3rd-party app access.
+#       Followed by ...
+#         Tesla BLE: Login to your Tesla account and remove the BLE key pair.
+#         TeslaFi: Login to your TeslaFi account and revoke API token.
+#         Tessie: Login to your Tessie account and revoke API token.
+#         Server/WiFi: Change your login credentials.
 #
 # Other ways to keep the data port powered through sleep is to manually turning
 # on Sentry Mode or Camp Mode from the Tesla App. However, neither are great
