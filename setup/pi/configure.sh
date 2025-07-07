@@ -193,6 +193,11 @@ function check_at_most_one_wake_api () {
 function check_teslafi_api () {
   if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
   then
+    if ! command -v jq &>/dev/null
+      then
+        log_progress "Installing required package for TeslaFi API: jq"
+        DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install jq
+    fi
     log_progress "TeslaFi API enabled."
   else
     log_progress "TeslaFi API not enabled because no TeslaFi credential was provided."
@@ -224,7 +229,23 @@ function check_and_configure_tesla_ble () {
   local install_path="$1"
   if [[ ( -n "${TESLA_BLE_VIN:+x}" ) ]]
   then
-    log_progress "Tesla BLE enabled for VIN ${TESLA_BLE_VIN^^}."
+    if dpkg-query -W --showformat='${db:Status-Status}\n' "bluez" 2>/dev/null | grep -q '^installed$'
+    then
+      echo "Skipping required package for Tesla BLE API: bluez already installed."
+    else
+      echo "Installing required package for Tesla BLE API: bluez"
+      DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install bluez
+    fi
+
+    if dpkg-query -W --showformat='${db:Status-Status}\n' "pi-bluetooth" 2>/dev/null | grep -q '^installed$'
+    then
+      echo "Skipping required package for Tesla BLE API: pi-bluetooth already installed."
+    else
+      echo "Installing required package for Tesla BLE API: pi-bluetooth"
+      DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install pi-bluetooth
+    fi
+
+    log_progress "Installing required package for Tesla BLE API: Tesla binaries"
     install_tesla_ble_packages "$install_path"
 
     local pairing_needed=true
@@ -253,6 +274,10 @@ function check_and_configure_tesla_ble () {
     then
       log_progress "Please visit the web UI after TeslaUSB is in the car to pair the key."
     fi
+
+    log_progress "Tesla BLE API enabled."
+  else
+    log_progress "Tesla BLE API not enabled because no Tesla BLE VIN was provided."
   fi
 }
 
