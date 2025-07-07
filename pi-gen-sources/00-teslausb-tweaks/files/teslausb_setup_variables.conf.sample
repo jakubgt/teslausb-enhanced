@@ -243,22 +243,21 @@ export CAM_SIZE=40G
 ################################################################################
 # !!!!!!!!!!!!!!!!!!!!!! IMPORTANT KEEP CAR AWAKE CHANGES !!!!!!!!!!!!!!!!!!!!!!
 #
-# Recent car firmware turns off USB ports shortly after you exit the car, when
-# the car goes to sleep. This can affect the ability for TeslaUSB to finish
-# archiving in time. Tesla later introduced the "Keep Accessory Power On"
-# feature; however, it is not applicable to the data port that is used for
-# Dashcam/TeslaUSB.
+# Recent car firmware has deactivated the power ports when the vehicle enters a
+# sleep state. This restriction can hinder the completion of the archiving
+# process by TeslaUSB. Tesla subsequently introduced the “Keep Accessory Power
+# On” feature, but is not applicable to the data port utilized by Dashcam and
+# TeslaUSB.
 #
 # In order to keep the car awake, several methods have been implemented:
 # Bluetooth Low Energy (BLE), TeslaFi, and Tessie. Note, the previous
-# implementation using the (unofficial) Tesla API was deprecated since Tesla
+# implementation using the (unofficial) Tesla API was deprecated after Tesla
 # superseded it with the official Fleet API (a paid service for developers).
 # Subsequently, TeslaFi and Tessie now enforce monthly quotas to limit the
-# number of commands sent. As a result, the entire Keep Car Awake framework
-# has been refactored to use considerably fewer requests and now leverages
-# Sentry Mode exclusively. All 3 methods (BLE, TeslaFi, and Tessie) use the
-# same framework and thus behave the same -- the difference is how Sentry Mode
-# is commanded.
+# number of commands used. As a result, the entire Keep Car Awake framework has
+# been refactored to use considerably fewer requests and now leverages Sentry
+# Mode exclusively for TeslaFi and Tessie. The BLE implementation uses a
+# different method to keep the car awake without using Sentry Mode.
 #
 # There are pros and cons to consider in selecting which method works best for
 # you. 
@@ -273,7 +272,7 @@ export CAM_SIZE=40G
 #           functions. So manage your BLE devices (phone key, wearable key, key
 #           fob, etc.) accordingly. This is independent of how many key pairs
 #           are allowed. BLE is also not to be confused with standard Bluetooth
-#           connections.
+#           connections (e.g. audio streaming)
 #
 # TeslaFi/Tessie Pros/Cons:
 #   + Straightforward to configure initially
@@ -312,10 +311,38 @@ export CAM_SIZE=40G
 # for more info.
 #
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# For BLE, TeslaFi, or Tessie:
+#  !!! IMPORTANT: Only ONE control API should be used at a time.
+#                 Do not include parameters for both TeslaFi and Tessie, or
+#                 combine BLE with either services.
+# .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
 #
-# 1st, Determine what is your Sentry Mode preference (choose one case). Then
-# make a 1-time settings change (set and forget), if applicable, in your in-car
+# For BLE, provide your vehicle VIN here:
+#export TESLA_BLE_VIN=5YJ3E1EA4JF000001
+#
+#   Pairing TeslaUSB as a BLE device:
+#   
+#    1.  Ensure the TeslaUSB device is inside the vehicle and powered.
+#
+#    2a. From the TeslaUSB Web UI: Menu > Tools > Pair BLE with Car
+#    2b. Alternatively, if Web UI was not enabled, from the SSH command line:
+#        sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
+#
+#    3.  Shortly after initiating pairing, a prompt is shown on the in-car
+#        screen requesting for an authorized key card. Please tap key card on
+#        the center console promptly.
+#
+#    4.  If done successfully, you'll see an "Unkown Key" (can be renamed)
+#        entry under the in-car Locks screen.
+#
+#        Note: this does not prevent the car from locking, nor does it allows
+#        someone to readily unlock or drive the car. An authroized key (card,
+#        phone, fob) is still required.
+# .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+#
+# For TeslaFi, or Tessie:
+#
+# Determine what is your Sentry Mode preference (choose one case). Then make a
+# 1-time settings change (set and forget), if applicable, in your in-car
 # settings menu: Safety -> Sentry Mode.
 #
 #  Case 1: You want Sentry Mode turned On everywhere, except when parked safely
@@ -340,37 +367,9 @@ export CAM_SIZE=40G
 #
 #     >>>> IMPORTANT: Verify your in-car Sentry Mode is set to OFF.
 #
-# 2nd, Provide your use case (from above) here:
+# Provide your use case (from above) here:
 #export SENTRY_CASE=1
 #
-# 3rd, Choose and configure 1 method of control below.
-#
-#  !!! IMPORTANT: Only ONE control API should be used at a time.
-#                 Do not include parameters for both TeslaFi and Tessie, or
-#                 combine BLE with either services.
-# .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
-#
-# For BLE, provide your vehicle VIN here:
-#export TESLA_BLE_VIN=5YJ3E1EA4JF000001
-#
-#   Pairing TeslaUSB as a BLE device:
-#   
-#   1.  Ensure the TeslaUSB device is inside the vehicle and powered.
-#
-#   2a. From the TeslaUSB Web UI: Menu > Tools > Pair BLE with Car
-#   2b. Alternatively, if Web UI was not enabled, from the SSH command line:
-#       sudo /root/bin/tesla-control -ble -vin <your VIN> add-key-request /root/.ble/key_public.pem owner cloud_key
-#
-#   3.  Shortly after initiating pairing, a prompt is shown on the in-car
-#       screen requesting for an authorized key card. Please tap key card on
-#       the center console promptly.
-#
-#   4.  If done successfully, you'll see an "Unkown Key" (can be renamed) entry
-#       under the in-car Locks screen.
-#
-#       Note: this does not prevent the car from locking, nor does it allows
-#       someone to readily unlock or drive the car. An authroized key (card,
-#       phone, fob) is still required.
 # .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
 #
 # For TeslaFi, provide your API token here:
@@ -394,7 +393,6 @@ export CAM_SIZE=40G
 #     Log into your Tessie account.
 #     Navigate to Settings -> Developer API -> Generate access token.
 ################################################################################
-
 
 # Uncomment if you want to increase the size of the root
 # filesystem so there's extra space for installing additional
