@@ -687,7 +687,7 @@ function archive_clips () {
     log "Archiving failed."
   fi
 
-  log "$(vcgencmd measure_temp)"
+  log_coretemp
 
   if timeout 5 [ -d "$MUSIC_ARCHIVE_MOUNT" -a -d "$MUSIC_MOUNT" ]
   then
@@ -702,7 +702,7 @@ function archive_clips () {
     log "Music archive not configured or unreachable"
   fi
 
-  log "$(vcgencmd measure_temp)"
+  log_coretemp
 
   /root/bin/disconnect-archive.sh
 }
@@ -751,7 +751,7 @@ function snapshotloop {
     sleep "${SNAPSHOT_INTERVAL:-3480}"
     /root/bin/waitforidle || true
     /root/bin/make_snapshot.sh
-    log "$(vcgencmd measure_temp)"
+    log_coretemp
   done
 }
 
@@ -843,6 +843,13 @@ function set_sys_param() {
   fi
 }
 
+function log_coretemp() {
+  local core_temp=$(cat /sys/class/thermal/thermal_zone0/temp)
+  local core_temp1=$((core_temp / 1000))
+  local core_temp2=$((core_temp % 1000))
+  log "Core Temperature = ${core_temp1}.${core_temp2} °C"
+}
+
 export -f mount_mountpoint
 export -f ensure_mountpoint_is_mounted
 export -f retry
@@ -856,7 +863,7 @@ set_sys_param /proc/sys/vm/dirty_background_bytes DIRTY_BACKGROUND_BYTES 65536
 set_sys_param /proc/sys/vm/dirty_ratio DIRTY_RATIO 80
 set_sys_param /sys/devices/system/cpu/cpufreq/policy0/scaling_governor CPU_GOVERNOR conservative
 
-log "$(vcgencmd measure_temp)"
+log_coretemp
 
 if has_cam_disk
 then
