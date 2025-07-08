@@ -844,9 +844,13 @@ function set_sys_param() {
 }
 
 function log_coretemp() {
-  local core_temp=$(cat /sys/class/thermal/thermal_zone0/temp)
-  local core_temp1=$((core_temp / 1000))
-  local core_temp2=$((core_temp % 1000))
+  local core_temp
+  local core_temp1
+  local core_temp2
+
+  core_temp=$(cat /sys/class/thermal/thermal_zone0/temp)
+  core_temp1=$((core_temp / 1000))
+  core_temp2=$((core_temp % 1000))
   log "Core Temperature = ${core_temp1}.${core_temp2} °C"
 }
 
