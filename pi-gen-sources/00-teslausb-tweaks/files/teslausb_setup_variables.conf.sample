@@ -396,7 +396,7 @@ export CAM_SIZE=40G
 #    4.  If done successfully, you'll see an "Unknown Key" (can be renamed)
 #        entry under the in-car Locks screen.
 #
-#        Note: this does not prevent the car from locking, nor does it allows
+#        Note: This does not prevent the car from locking, nor does it allow
 #        someone to readily unlock or drive the car. An authroized key (card,
 #        phone, fob) is still required.
 ################################################################################
