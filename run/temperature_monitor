@@ -34,8 +34,8 @@ then
 fi
 
 counter=0
-flag_warning=0
-flag_caution=0
+set_warning=0
+set_caution=0
 timestamp=$(date +"%Y-%m-%d %H:%M:%S")
 raw_temp=$(cat /sys/class/thermal/thermal_zone0/temp)
 peak_time=$timestamp
@@ -55,16 +55,13 @@ do
   then
     if [[ "$raw_temp" -lt $((TEMPERATURE_WARNING - 3)) ]] #Clear Warning flag if below threshold - 3 (hysteresis)
     then
-      flag_warning=0
-
-    elif [[ "$raw_temp" -gt "$TEMPERATURE_WARNING" ]]
+      set_warning=0
+    fi
+    if [[ ("$raw_temp" -gt "$TEMPERATURE_WARNING") && ("$set_warning" -eq 0) ]]
     then
-      if [[ "$flag_warning" -eq 0 ]]
-      then
-        flag_warning=1
-        message="Temperature Monitor: WARNING threshold exceeded ($(readable "$TEMPERATURE_WARNING"))!!!"
-        /root/bin/send-push-message "$NOTIFICATION_TITLE:" "$message" || log "failed to send push message; likely no internet connection."
-      fi
+      set_warning=1
+      message="Temperature Monitor: WARNING threshold exceeded ($(readable "$TEMPERATURE_WARNING"))!!!"
+      /root/bin/send-push-message "$NOTIFICATION_TITLE:" "$message" || log "Temperature Monitor: Failed to send push message; likely no internet connection presently."
     fi
   fi
 
@@ -73,16 +70,13 @@ do
   then
     if [[ "$raw_temp" -lt $((TEMPERATURE_CAUTION - 3)) ]] #Clear Caution flag if below threshold - 3 (hysteresis)
     then
-      flag_caution=0
-
-    elif [[ "$raw_temp" -gt "$TEMPERATURE_CAUTION" ]]
+      set_caution=0
+    fi
+    if [[ ("$raw_temp" -gt "$TEMPERATURE_CAUTION") && ("$set_caution" -eq 0) ]]
     then
-      if [[ "$flag_caution" -eq 0 ]]
-        then
-          flag_caution=1
-          message="Temperature Monitor: CAUTION threshold exceeded ($(readable "$TEMPERATURE_CAUTION"))!!!"
-          /root/bin/send-push-message "$NOTIFICATION_TITLE:" "$message" || log "failed to send push message; likely no internet connection."
-      fi
+      set_caution=1
+      message="Temperature Monitor: CAUTION threshold exceeded ($(readable "$TEMPERATURE_CAUTION"))!!!"
+      /root/bin/send-push-message "$NOTIFICATION_TITLE:" "$message" || log "Temperature Monitor: Failed to send push message; likely no internet connection presently."
     fi
   fi
 
@@ -101,7 +95,7 @@ do
   then
     rm /tmp/flag_post_archive #Clear flag
     message="Temperature Monitor: $(readable "$raw_temp") (max=$(readable "$peak_temp") $peak_time)"
-    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "$message" || log "failed to send push message."
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "$message" || log "Temperature Monitor: Failed to send push message."
   fi
 
   sleep 60
