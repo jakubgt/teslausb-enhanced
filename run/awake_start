@@ -41,7 +41,7 @@ else
       elif [[ -n "${TESLA_BLE_VIN:+x}" ]]
       # Use Tesla BLE API to nudge the car
       then
-        BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "5YJSA1E68MF453833" charge-port-close 2>&1)
+        BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
 
         if [[ ( "$BLE_response" == *"already closed"* ) || ( "$BLE_response" == *"cable connected"* ) || ( -z "$BLE_response" ) ]]
         # Acceptable BLE responses
