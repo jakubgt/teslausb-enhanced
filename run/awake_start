@@ -35,6 +35,7 @@ else
             continue
           else
             log "Tessie: Connection to the internet likely broken."
+            break
           fi
         fi
       fi
