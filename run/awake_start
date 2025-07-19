@@ -5,7 +5,7 @@ then
   log "Not configured to keep car awake."
 else
   function nudge {
-    local retry=0
+    local retry=1
 
     while true
     do
@@ -31,39 +31,45 @@ else
           then
             log "Tessie: Retrying again in 60s in case the connection was bad."
             retry=$((retry+1))
-            sleep 60
+            sleep 30
             continue
           else
             log "Tessie: Connection to the internet likely broken."
           fi
         fi
+      fi
 
-      elif [[ -n "${TESLA_BLE_VIN:+x}" ]]
-      # Use Tesla BLE API to nudge the car
+      if [[ -n "${TESLA_BLE_VIN:+x}" ]]
+      #Use Tesla BLE API to nudge the car
       then
-        BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
-
-        if [[ ( "$BLE_response" == *"already closed"* ) || ( "$BLE_response" == *"cable connected"* ) || ( $? -eq 0 ) ]]
-        # Acceptable BLE responses
+        if BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
         then
-           log "Tesla BLE: Successfully nudged the car to stay awake."
-        else
-          # Log error and retry
+          #BLE success
+          log "Tesla BLE: Successfully nudged the car to stay awake."
+
+        elif [[ ( "$BLE_response" == *"already closed"* ) || ( "$BLE_response" == *"cable connected"* ) ]]
+          #Acceptable false-negative BLE responses
+          then
+          log "Tesla BLE: Successfully nudged the car to stay awake."
+        
+        else  
+          #Log error and retry
           log "Tesla BLE: Failed to nudge the car. There may be an issue with the BLE communication."
           if [ "$retry" -lt "3" ]
           then
-            log "Tesla BLE: Retrying again in 60s in case the communication issue was temporary."
+            log "Tesla BLE: Retrying again in 30s in case the communication issue was temporary."
             retry=$((retry+1))
-            sleep 60
+            sleep 30
             continue
           else
             log "Tesla BLE: $BLE_response"
+            break
           fi
         fi
       fi
 
       sleep 300
-      retry=0
+      retry=1
     done
   }
 
