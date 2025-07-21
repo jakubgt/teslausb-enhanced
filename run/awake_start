@@ -29,7 +29,7 @@ else
           log "Tessie: Failed to send command. Check your TESSIE_API_TOKEN and TESSIE_VIN are set correctly. If they are, your car may be offline or asleep."
           if [ "$retry" -lt "3" ]
           then
-            log "Tessie: Retrying again in 60s in case the connection was bad."
+            log "Tessie: Retrying after 30s in case the connection was poor."
             retry=$((retry+1))
             sleep 30
             continue
@@ -58,7 +58,7 @@ else
           log "Tesla BLE: Failed to nudge the car. There may be an issue with the BLE communication."
           if [ "$retry" -lt "3" ]
           then
-            log "Tesla BLE: Retrying again in 30s in case the communication issue was temporary."
+            log "Tesla BLE: Retrying after 30s in case the connection was poor."
             retry=$((retry+1))
             sleep 30
             continue
