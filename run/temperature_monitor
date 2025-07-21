@@ -53,7 +53,7 @@ do
   #Log Warning threshold exceeded
   if [[ ! ( -z "${TEMPERATURE_WARNING:+x}" ) ]]
   then
-    if [[ "$raw_temp" -lt $((TEMPERATURE_WARNING - 3)) ]] #Clear Warning flag if below threshold - 3 (hysteresis)
+    if [[ "$raw_temp" -lt $((TEMPERATURE_WARNING - 5)) ]] #Clear Warning flag if below threshold - 5 (hysteresis)
     then
       set_warning=0
     fi
@@ -68,7 +68,7 @@ do
   #Log Caution threshold exceeded
   if [[ ! ( -z "${TEMPERATURE_CAUTION:+x}" ) ]]
   then
-    if [[ "$raw_temp" -lt $((TEMPERATURE_CAUTION - 3)) ]] #Clear Caution flag if below threshold - 3 (hysteresis)
+    if [[ "$raw_temp" -lt $((TEMPERATURE_CAUTION - 5)) ]] #Clear Caution flag if below threshold - 5 (hysteresis)
     then
       set_caution=0
     fi
