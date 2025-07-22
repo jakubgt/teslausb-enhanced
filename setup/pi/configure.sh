@@ -269,7 +269,7 @@ function check_and_install_temperature_monitor () {
     log_progress "STOP: You're trying to set up a temperature Caution threshold that is not an integer."
     return 1
   fi
-  if [[ ! -z "${TEMPERATURE_INTERVAL+x}" || ! "$TEMPERATURE_INTERVAL" =~ ^[0-9]+$ || "$TEMPERATURE_INTERVAL" -lt 1 ]]
+  if [[ -n "${TEMPERATURE_INTERVAL:+x}" && ! "$TEMPERATURE_INTERVAL" =~ ^[0-9]+$ && "$TEMPERATURE_INTERVAL" -lt 1 ]]
   then
     log_progress "STOP: You're trying to set up a fixed-interval temperature logging time that is not a positive integer of at least 1 minute."
     return 1
