@@ -16,23 +16,6 @@ function readable() {
   echo "${temp1}.${temp2}°C"
 }
 
-if [[ ! ( -z "${TEMPERATURE_WARNING:+x}"  ) ]]
-then
-  log "Temperature Monitor: Warning threshold logging is set [$(readable "$TEMPERATURE_WARNING")]"
-fi
-if [[ ! ( -z "${TEMPERATURE_CAUTION:+x}" ) ]]
-then
-  log "Temperature Monitor: Caution threshold logging is set [$(readable "$TEMPERATURE_CAUTION")]"
-fi
-if [[ ! ( -z "${TEMPERATURE_INTERVAL:+x}"  ) ]]
-then
-  log "Temperature Monitor: Fixed-interval logging is set [$TEMPERATURE_INTERVAL min.]"
-fi
-if [ "${TEMPERATURE_POSTARCHIVE:-false}" = "true" ]
-then
-  log "Temperature Monitor: Post-archive logging is set."
-fi
-
 counter=0
 set_warning=0
 set_caution=0
