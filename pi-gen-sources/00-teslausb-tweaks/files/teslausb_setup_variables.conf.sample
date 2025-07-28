@@ -408,8 +408,8 @@ export CAM_SIZE=40G
 #   the system will begin to throttle the processor when it reaches 80°C to
 #   prevent damage. Anecdotally, other sub-components may become unstable at
 #   lower thresholds (e.g., Wi-Fi). As a general best practice, keep the
-#   temperature below 70 C. Start monitoring closely when it regularly reaches
-#   above 60 C. Differences between manufacurer, model, and revisions should
+#   temperature below 70°C. Start monitoring closely when it regularly reaches
+#   above 60°C. Differences between manufacurer, model, and revisions should
 #   also be considered.
 #
 #   Uncommenting any of the following parameters will activate TeslaUSB's
