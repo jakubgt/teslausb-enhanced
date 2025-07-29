@@ -414,7 +414,7 @@ export CAM_SIZE=40G
 #
 #   Uncommenting any of the following parameters will activate TeslaUSB's
 #   temperature monitoring, which checks temperature once a minute and retains
-#   the maximum value for the powered-on period in-between each archive.
+#   the maximum value until the device is reset or powered-off.
 #
 #   The following parameters determine when log entries and push messages, if
 #   configured, are triggered. The fixed-interval case will only log entries,
