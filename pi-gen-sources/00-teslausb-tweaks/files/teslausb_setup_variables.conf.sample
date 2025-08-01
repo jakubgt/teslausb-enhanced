@@ -266,9 +266,9 @@ export CAM_SIZE=40G
 #   ++ Direct connection to the car; unlimited.
 #   - Added complexity to configure initially
 #   - Some security vulnerability
-#   - BLE hardware compatibility: Does not currently support Raspberry Pi 0W.
-#              Verified (so far): Raspberry Pi 4, 5, 0W2. Rock Pi 4C+.
-#                                 (please test and let us know if others work)
+#   - BLE support verified (so far): Raspberry Pi 4, 5, 0W^, 02W^, Rock Pi 4C+. 
+#     (please test and let us know if other models work)
+#     ^ = requires Debian 12 'Bookworm' to work
 #   * Note: Tesla is limited to 3 simultaneous BLE connections for passive
 #           functions. So manage your BLE devices (phone key, wearable key, key
 #           fob, etc.) accordingly. This is independent of how many key pairs
