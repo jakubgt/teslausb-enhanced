@@ -65,11 +65,8 @@ if [ -z "${ARCHIVE_SERVER+x}" ]
 then
   case "${ARCHIVE_SYSTEM:-none}" in
     cifs)
-      export ARCHIVE_MOUNT=/mnt/archive
-      if [ -n "${MUSIC_SHARE_NAME:-}" ]
-      then
-        export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
-      fi
+      [ -n "${SHARE_NAME:-}" ] && export ARCHIVE_MOUNT=/mnt/archive
+      [ -n "${MUSIC_SHARE_NAME:-}" ] && export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
       ;;
     rsync)
       export ARCHIVE_SERVER="$RSYNC_SERVER"
