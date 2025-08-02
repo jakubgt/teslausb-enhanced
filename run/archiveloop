@@ -66,7 +66,7 @@ then
   case "${ARCHIVE_SYSTEM:-none}" in
     cifs)
       export ARCHIVE_MOUNT=/mnt/archive
-      if [ -n "{$MUSIC_SHARE_NAME:-}" ]
+      if ! [ -n "${MUSIC_SHARE_NAME:-}" ]
       then
         export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
       fi
