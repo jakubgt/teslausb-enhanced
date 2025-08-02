@@ -266,14 +266,8 @@ export CAM_SIZE=40G
 #   ++ Direct connection to the car; unlimited.
 #   - Added complexity to configure initially
 #   - Some security vulnerability
-#   - BLE support verified (so far): Raspberry Pi 4, 5, 0W^, 02W^, Rock Pi 4C+. 
-#     (please test and let us know if other models work)
-#     ^ = requires Debian 12 'Bookworm' to work
-#   * Note: Tesla is limited to 3 simultaneous BLE connections for passive
-#           functions. So manage your BLE devices (phone key, wearable key, key
-#           fob, etc.) accordingly. This is independent of how many key pairs
-#           are allowed. BLE is also not to be confused with standard Bluetooth
-#           connections (e.g. audio streaming)
+#   * See Hardware wiki for more BLE hardware & software support notes:
+#     https://github.com/marcone/teslausb/wiki/Hardware
 #
 # TeslaFi/Tessie Pros/Cons:
 #   + Straightforward to configure initially
