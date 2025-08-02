@@ -46,8 +46,6 @@ fi
 
 export CAM_MOUNT=/mnt/cam
 export MUSIC_MOUNT=/mnt/music
-export ARCHIVE_MOUNT=/mnt/archive
-export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
 
 # read the setup variables and define other environment variables and functions
 source /root/bin/envsetup.sh
@@ -66,6 +64,13 @@ fi
 if [ -z "${ARCHIVE_SERVER+x}" ]
 then
   case "${ARCHIVE_SYSTEM:-none}" in
+    cifs)
+      export ARCHIVE_MOUNT=/mnt/archive
+      if [ -n "{$MUSIC_SHARE_NAME:-}" ]
+      then
+        export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
+      fi
+      ;;
     rsync)
       export ARCHIVE_SERVER="$RSYNC_SERVER"
       ;;
