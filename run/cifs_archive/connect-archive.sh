@@ -1,28 +1,22 @@
 #!/bin/bash -eu
 
-function ensure_archive_is_mounted () {
-  if [ -e "$ARCHIVE_MOUNT" ]
+function mount_if_set() {
+  local mount_point=$1
+  if [ -n "$mount_point" ]
   then
-    log "Ensuring cam archive is mounted..."
-    if ensure_mountpoint_is_mounted_with_retry "$ARCHIVE_MOUNT"
+    if findmnt --mountpoint "$mount_point" > /dev/null
     then
-      log "Ensured cam archive is mounted."
+      log "$mount_point is already mounted."
     else
-      log "Failed to mount cam archive."
-      return 1
-    fi
-  fi
-  if [ -e "$MUSIC_ARCHIVE_MOUNT" ]
-  then
-    log "Ensuring music archive is mounted..."
-    if ensure_mountpoint_is_mounted_with_retry "$MUSIC_ARCHIVE_MOUNT"
-    then
-      log "Ensured music archive is mounted."
-    else
-      log "Failed to mount music archive."
-      return 1
+      if timeout 10 mount "$mount_point" >> "$LOG_FILE" 2>&1
+      then
+        log "Mounted $mount_point."
+      else
+        log "Failed to umount $mount_point."
+      fi
     fi
   fi
 }
 
-ensure_archive_is_mounted
+mount_if_set "${ARCHIVE_MOUNT:-}"
+mount_if_set "${MUSIC_ARCHIVE_MOUNT:-}"
