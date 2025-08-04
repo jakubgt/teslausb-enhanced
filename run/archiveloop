@@ -61,28 +61,25 @@ then
   modprobe ledtrig-heartbeat || log "heartbeat LED trigger unavailable" 
 fi
 
-if [ -z "${ARCHIVE_SERVER+x}" ]
-then
-  case "${ARCHIVE_SYSTEM:-none}" in
-    cifs)
-      [ -n "${SHARE_NAME:-}" ] && export ARCHIVE_MOUNT=/mnt/archive
-      [ -n "${MUSIC_SHARE_NAME:-}" ] && export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
-      ;;
-    rsync)
-      export ARCHIVE_SERVER="$RSYNC_SERVER"
-      ;;
-    rclone)
-      export ARCHIVE_SERVER="8.8.8.8"
-      ;;
-    none)
-      export ARCHIVE_SERVER=localhost
-      ;;
-    *)
-      log "ARCHIVE_SERVER not set"
-      exit 1
-      ;;
-  esac
-fi
+case "${ARCHIVE_SYSTEM:-none}" in
+  cifs)
+    [ -n "${SHARE_NAME:-}" ] && export ARCHIVE_MOUNT=/mnt/archive
+    [ -n "${MUSIC_SHARE_NAME:-}" ] && export MUSIC_ARCHIVE_MOUNT=/mnt/musicarchive
+    ;;
+  rsync)
+    export ARCHIVE_SERVER="$RSYNC_SERVER"
+    ;;
+  rclone)
+    export ARCHIVE_SERVER="8.8.8.8"
+    ;;
+  none)
+    export ARCHIVE_SERVER=localhost
+    ;;
+  *)
+    log "ARCHIVE_SERVER not set"
+    exit 1
+    ;;
+esac
 
 function timestamp () {
   local prefix=${1:-}
