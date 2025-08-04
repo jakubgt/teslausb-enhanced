@@ -15,9 +15,9 @@ unmount_if_set() {
     then
       if timeout 10 umount -f -l "$mount_point" >> "$LOG_FILE" 2>&1
       then
-        log "Mounted $mount_point."
+        log "Unmounted $mount_point."
       else
-        log "Failed to umount $mount_point."
+        log "Failed to unmount $mount_point."
       fi
     else
       log "$mount_point already unmounted."
