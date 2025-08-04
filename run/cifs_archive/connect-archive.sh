@@ -12,7 +12,7 @@ function mount_if_set() {
       then
         log "Mounted $mount_point."
       else
-        log "Failed to umount $mount_point."
+        log "Failed to mount $mount_point."
       fi
     fi
   fi
