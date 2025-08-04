@@ -675,7 +675,7 @@ function archive_clips () {
 
   if ! /root/bin/connect-archive.sh
   then
-    log "Couldn't connect archive, skipping archive step"
+    log "Server mount(s) is unreachable. Skipping archive and/or music sync steps."
     return
   fi
 
