@@ -6,7 +6,7 @@ function mount_if_set() {
   then
     if ! ensure_mountpoint_is_mounted "$mount_point"
     then
-      exit 1
+      return 1
     fi
   fi
 }
