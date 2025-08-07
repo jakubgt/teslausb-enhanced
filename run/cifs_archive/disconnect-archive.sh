@@ -25,7 +25,5 @@ unmount_if_set() {
   fi
 }
 
-{
-  unmount_if_set "${ARCHIVE_MOUNT:-}"
-  unmount_if_set "${MUSIC_ARCHIVE_MOUNT:-}"
-} &
+unmount_if_set "${ARCHIVE_MOUNT:-}" &
+unmount_if_set "${MUSIC_ARCHIVE_MOUNT:-}" &
