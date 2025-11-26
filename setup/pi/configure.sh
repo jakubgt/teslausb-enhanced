@@ -171,6 +171,9 @@ function get_archive_module () {
         cifs)
             echo "run/cifs_archive"
             ;;
+         nfs)
+            echo "run/nfs_archive"
+            ;;
         none)
             echo "run/none_archive"
             ;;
