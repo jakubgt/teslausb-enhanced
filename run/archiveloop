@@ -78,7 +78,7 @@ then
       exit 1
       ;;
   esac
-elif [ "${ARCHIVE_SYSTEM:-none}" = "cifs" ]
+elif [ "${ARCHIVE_SYSTEM:-none}" = "cifs" ] || [ "${ARCHIVE_SYSTEM:-none}" = "nfs" ]
 then
   # For CIFS 
   [[ -n "${SHARE_NAME:-}" && -f /backingfiles/cam_disk.bin ]] && export ARCHIVE_MOUNT=/mnt/archive
