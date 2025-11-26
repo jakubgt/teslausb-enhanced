@@ -139,6 +139,14 @@ function check_archive_configs () {
             check_variable "ARCHIVE_SERVER"
             check_rsync
             ;;
+         nfs)
+            if [ -e /backingfiles/cam_disk.bin ]
+            then
+              check_variable "SHARE_NAME"
+            fi
+            check_variable "ARCHIVE_SERVER"
+            check_rsync
+            ;;
         none)
             export ARCHIVE_SERVER=localhost
             ;;
