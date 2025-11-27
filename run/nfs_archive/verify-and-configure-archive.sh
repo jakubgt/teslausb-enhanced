@@ -117,8 +117,6 @@ function configure_archive () {
     mkdir "$archive_path"
   fi
 
-  # Clean up old credentials if they exist (not needed for NFS)
-  sed -i "/^.*\.teslaCamArchiveCredentials.*$/ d" /etc/fstab
   # Remove existing NFS entries to prevent duplicates
   sed -i "/^.* nfs .*$/ d" /etc/fstab
 
