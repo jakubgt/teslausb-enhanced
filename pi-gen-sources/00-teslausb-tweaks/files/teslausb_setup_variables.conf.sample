@@ -51,7 +51,7 @@ export SHARE_PASSWORD='password'
 # Variables for NFS archiving
 # Note: SHARE_NAME must be the exact export path on the NAS (e.g. /volume1/TeslaCam)
 #export ARCHIVE_SYSTEM=nfs
-#export ARCHIVE_SERVER=192.168.1.10
+#export ARCHIVE_SERVER=hostname_or_ip
 #export SHARE_NAME='/volume1/TeslaCam'
 
 # The DATA_DRIVE option (formerly USB_DRIVE) is used to specify that you want
