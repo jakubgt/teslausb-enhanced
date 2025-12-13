@@ -45,7 +45,7 @@ fi
 # between Chrome and Tesla's recordings
 g++ -o /root/cttseraser -D_FILE_OFFSET_BITS=64 "$SOURCE_DIR/teslausb-www/cttseraser.cpp" -lstdc++ -lfuse
 
-# install new UI (compiled js/css files)
+# install new UI (compiled js/css files) - Vue UI at /new/
 curlwrapper -L -o /tmp/webui.tgz https://github.com/marcone/teslausb-webui/releases/latest/download/teslausb-ui.tgz
 tar -C /var/www/html -xf /tmp/webui.tgz
 if [ -d /var/www/html/new ] && ! [ -e /var/www/html/new/favicon.ico ]
@@ -53,6 +53,9 @@ then
   ln -s /var/www/html/favicon.ico /var/www/html/new/favicon.ico
 fi
 
+# install React UI at /react/ - alternative interface with real-time sync progress
+curlwrapper -L -o /tmp/reactui.tgz https://github.com/oaquique/teslausb-www-react/releases/latest/download/teslausb-react-ui.tgz
+tar -C /var/www/html -xf /tmp/reactui.tgz
 
 cat > /sbin/mount.ctts << EOF
 #!/bin/bash -eu

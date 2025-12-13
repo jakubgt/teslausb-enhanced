@@ -54,9 +54,10 @@ function do_music_sync {
 
   connectionmonitor $$ &
 
+  # --info=progress2 enables real-time progress output for web UI status display
   if ! rsync -rum --no-human-readable --exclude=.fseventsd/*** --exclude=*.DS_Store --exclude=.metadata_never_index \
                 --exclude="System Volume Information/***" \
-                --delete --modify-window=2 --info=stats2 "$SRC/" "$DST" &> "$LOG"
+                --delete --modify-window=2 --info=progress2,stats2 "$SRC/" "$DST" &> "$LOG"
   then
     log "rsync failed with error $?"
   fi
