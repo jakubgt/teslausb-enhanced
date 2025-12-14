@@ -53,6 +53,9 @@ then
   ln -s /var/www/html/favicon.ico /var/www/html/new/favicon.ico
 fi
 
+# install React UI at /react/ - alternative interface with real-time sync progress
+mkdir -p /var/www/html/react
+cp -r "$SOURCE_DIR/teslausb-www-react/dist/"* /var/www/html/react/
 
 cat > /sbin/mount.ctts << EOF
 #!/bin/bash -eu

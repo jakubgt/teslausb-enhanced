@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output - included in repo for teslausb integration
+# dist/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Session notes (local development only)
+SESSION-NOTES.md
+
+# Release artifacts
+teslausb-react-ui.tgz
