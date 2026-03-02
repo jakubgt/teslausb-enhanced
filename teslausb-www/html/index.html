@@ -446,7 +446,8 @@ video {
   font-size: 13px;
 }
 
-.sourcepicker.unavailable select option[value="cloud"] {
+.sourcepicker.unavailable select option[value="gcs"],
+.sourcepicker.unavailable select option[value="s3"] {
   color: #999;
 }
 
@@ -981,7 +982,8 @@ video {
 	          <label for="videosource">Source</label>
 	          <select id="videosource" onchange="onVideoSourceChanged(this.value)">
 	            <option value="local">Local</option>
-	            <option value="cloud">GCS</option>
+	            <option value="gcs" hidden>GCS</option>
+	            <option value="s3" hidden>S3</option>
 	          </select>
 	        </div>
 
@@ -2593,15 +2595,49 @@ class VideoSequence {
 }
 
 const VIEWER_SOURCE_LOCAL = "local";
-const VIEWER_SOURCE_CLOUD = "cloud";
+const VIEWER_SOURCE_GCS = "gcs";
+const VIEWER_SOURCE_S3 = "s3";
+const LEGACY_VIEWER_SOURCE_CLOUD = "cloud";
 const VIEWER_SOURCE_KEY = "viewersource";
 var currentViewerSource = VIEWER_SOURCE_LOCAL;
-var cloudViewerConfigured = false;
-var cloudViewerAvailable = false;
+var cloudViewerConfiguredSources = [];
+var cloudViewerAvailableBySource = {};
+var defaultCloudViewerSource = null;
+
+function isCloudViewerSource(source) {
+  return source == VIEWER_SOURCE_GCS || source == VIEWER_SOURCE_S3;
+}
+
+function cloudViewerLabelForProvider(provider) {
+  if (provider == VIEWER_SOURCE_GCS) {
+    return "GCS";
+  }
+  if (provider == VIEWER_SOURCE_S3) {
+    return "S3";
+  }
+  return "Cloud";
+}
+
+function isCloudViewerConfigured(source) {
+  return cloudViewerConfiguredSources.includes(source);
+}
+
+function isCloudViewerAvailable(source) {
+  return cloudViewerAvailableBySource[source] === true;
+}
+
+function firstAvailableCloudViewerSource() {
+  for (var source of cloudViewerConfiguredSources) {
+    if (isCloudViewerAvailable(source)) {
+      return source;
+    }
+  }
+  return null;
+}
 
 function buildViewerMediaUrl(relativePath, download) {
-  if (currentViewerSource == VIEWER_SOURCE_CLOUD) {
-    var url = "api/v1/cloud/stream?path=" + encodeURIComponent(relativePath);
+  if (isCloudViewerSource(currentViewerSource)) {
+    var url = "api/v1/cloud/stream?provider=" + encodeURIComponent(currentViewerSource) + "&path=" + encodeURIComponent(relativePath);
     if (download === true) {
       url += "&download=1";
     }
@@ -2611,8 +2647,8 @@ function buildViewerMediaUrl(relativePath, download) {
 }
 
 function getVideoListUrlForSource(source) {
-  if (source == VIEWER_SOURCE_CLOUD) {
-    return "api/v1/cloud/videolist";
+  if (isCloudViewerSource(source)) {
+    return "api/v1/cloud/videolist?provider=" + encodeURIComponent(source);
   }
   return "cgi-bin/videolist.sh";
 }
@@ -2631,28 +2667,46 @@ function updateVideoSourceSelector() {
   if (select == null || picker == null) {
     return;
   }
-  if (!cloudViewerConfigured) {
+  var gcsOption = select.querySelector("option[value='" + VIEWER_SOURCE_GCS + "']");
+  var s3Option = select.querySelector("option[value='" + VIEWER_SOURCE_S3 + "']");
+
+  if (gcsOption != null) {
+    gcsOption.textContent = cloudViewerLabelForProvider(VIEWER_SOURCE_GCS);
+    gcsOption.hidden = !isCloudViewerConfigured(VIEWER_SOURCE_GCS);
+    gcsOption.disabled = isCloudViewerConfigured(VIEWER_SOURCE_GCS) && !isCloudViewerAvailable(VIEWER_SOURCE_GCS);
+  }
+  if (s3Option != null) {
+    s3Option.textContent = cloudViewerLabelForProvider(VIEWER_SOURCE_S3);
+    s3Option.hidden = !isCloudViewerConfigured(VIEWER_SOURCE_S3);
+    s3Option.disabled = isCloudViewerConfigured(VIEWER_SOURCE_S3) && !isCloudViewerAvailable(VIEWER_SOURCE_S3);
+  }
+
+  if (cloudViewerConfiguredSources.length == 0) {
     picker.style.display = "none";
     currentViewerSource = VIEWER_SOURCE_LOCAL;
     select.value = currentViewerSource;
     return;
   }
+
   picker.style.display = "flex";
-  var cloudOption = select.querySelector("option[value='cloud']");
-  cloudOption.disabled = !cloudViewerAvailable;
-  picker.classList.toggle("unavailable", !cloudViewerAvailable);
-  if (currentViewerSource == VIEWER_SOURCE_CLOUD && !cloudViewerAvailable) {
-    currentViewerSource = VIEWER_SOURCE_LOCAL;
+  picker.classList.toggle("unavailable", firstAvailableCloudViewerSource() == null);
+
+  if (isCloudViewerSource(currentViewerSource)) {
+    if (!isCloudViewerConfigured(currentViewerSource) || !isCloudViewerAvailable(currentViewerSource)) {
+      var fallback = firstAvailableCloudViewerSource();
+      currentViewerSource = fallback == null ? VIEWER_SOURCE_LOCAL : fallback;
+    }
   }
+
   select.value = currentViewerSource;
 }
 
 function onVideoSourceChanged(newSource) {
-  if (newSource == VIEWER_SOURCE_CLOUD && !cloudViewerAvailable) {
-    updateVideoSourceSelector();
+  if (newSource != VIEWER_SOURCE_LOCAL && !isCloudViewerSource(newSource)) {
     return;
   }
-  if (newSource != VIEWER_SOURCE_LOCAL && newSource != VIEWER_SOURCE_CLOUD) {
+  if (isCloudViewerSource(newSource) && (!isCloudViewerConfigured(newSource) || !isCloudViewerAvailable(newSource))) {
+    updateVideoSourceSelector();
     return;
   }
   if (newSource == currentViewerSource) {
@@ -2690,18 +2744,67 @@ function checkCloudViewerAvailability(callback) {
     callback: function(value) {
       try {
         var health = JSON.parse(value);
-        cloudViewerConfigured = (health.enabled === true);
-        cloudViewerAvailable = cloudViewerConfigured;
+        cloudViewerConfiguredSources = [];
+        cloudViewerAvailableBySource = {};
+        defaultCloudViewerSource = null;
+
+        if (health.enabled === true) {
+          var configuredProviders = [];
+          if (Array.isArray(health.configured_providers)) {
+            configuredProviders = health.configured_providers;
+          } else if (typeof health.provider === "string") {
+            configuredProviders = [health.provider];
+          }
+
+          for (var source of configuredProviders) {
+            if (!isCloudViewerSource(source)) {
+              continue;
+            }
+            if (!cloudViewerConfiguredSources.includes(source)) {
+              cloudViewerConfiguredSources.push(source);
+            }
+          }
+
+          if (typeof health.default_provider === "string" && isCloudViewerSource(health.default_provider) &&
+            cloudViewerConfiguredSources.includes(health.default_provider)) {
+            defaultCloudViewerSource = health.default_provider;
+          } else if (typeof health.provider === "string" && isCloudViewerSource(health.provider) &&
+            cloudViewerConfiguredSources.includes(health.provider)) {
+            defaultCloudViewerSource = health.provider;
+          }
+
+          var healthyProviders = [];
+          if (Array.isArray(health.healthy_providers)) {
+            healthyProviders = health.healthy_providers;
+          } else if (typeof health.provider === "string" && health.healthy !== false) {
+            healthyProviders = [health.provider];
+          }
+
+          for (var source2 of cloudViewerConfiguredSources) {
+            var healthy = healthyProviders.includes(source2);
+            if (!healthy && typeof health.providers === "object" && health.providers != null &&
+              typeof health.providers[source2] === "object" && health.providers[source2] != null) {
+              healthy = (health.providers[source2].healthy === true);
+            }
+            if (!healthy && healthyProviders.length == 0 &&
+              !(typeof health.providers === "object" && health.providers != null && source2 in health.providers)) {
+              healthy = true;
+            }
+            cloudViewerAvailableBySource[source2] = healthy;
+          }
+        }
       } catch (err) {
-        cloudViewerConfigured = false;
-        cloudViewerAvailable = false;
+        cloudViewerConfiguredSources = [];
+        cloudViewerAvailableBySource = {};
+        defaultCloudViewerSource = null;
       }
       updateVideoSourceSelector();
       callback();
     },
     onerror: function() {
-      cloudViewerConfigured = false;
-      cloudViewerAvailable = false;
+      cloudViewerConfiguredSources = [];
+      cloudViewerAvailableBySource = {};
+      defaultCloudViewerSource = null;
       updateVideoSourceSelector();
       callback();
     }
@@ -2930,8 +3033,8 @@ function ensureAppInitialized() {
 function loadViewerClips() {
   clearViewerData();
   var nr = document.querySelector(".noclips");
-  if (currentViewerSource == VIEWER_SOURCE_CLOUD) {
-    nr.innerHTML = "Loading cloud recordings...";
+  if (isCloudViewerSource(currentViewerSource)) {
+    nr.innerHTML = "Loading " + cloudViewerLabelForProvider(currentViewerSource) + " recordings...";
   } else {
     nr.innerHTML = "Loading...";
   }
@@ -2939,13 +3042,19 @@ function loadViewerClips() {
     url: getVideoListUrlForSource(currentViewerSource),
     callback: parseVideoList,
     onerror: function(request) {
-      if (currentViewerSource == VIEWER_SOURCE_CLOUD) {
-        cloudViewerAvailable = false;
-        currentViewerSource = VIEWER_SOURCE_LOCAL;
-        localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
-        updateVideoSourceSelector();
-        loadViewerClips();
-        return;
+      if (isCloudViewerSource(currentViewerSource)) {
+        cloudViewerAvailableBySource[currentViewerSource] = false;
+        var fallbackSource = firstAvailableCloudViewerSource();
+        if (fallbackSource == null) {
+          fallbackSource = VIEWER_SOURCE_LOCAL;
+        }
+        if (currentViewerSource != fallbackSource) {
+          currentViewerSource = fallbackSource;
+          localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+          updateVideoSourceSelector();
+          loadViewerClips();
+          return;
+        }
       }
       nr.innerHTML = "No recordings";
       ensureAppInitialized();
@@ -3084,13 +3193,29 @@ function parseVideoList(value) {
 
 function initializeViewerSources() {
   var rememberedSource = localStorageGet(VIEWER_SOURCE_KEY);
-  if (rememberedSource == VIEWER_SOURCE_LOCAL || rememberedSource == VIEWER_SOURCE_CLOUD) {
+  var legacyCloudRemembered = (rememberedSource == LEGACY_VIEWER_SOURCE_CLOUD);
+
+  if (rememberedSource == VIEWER_SOURCE_LOCAL || rememberedSource == VIEWER_SOURCE_GCS || rememberedSource == VIEWER_SOURCE_S3) {
     currentViewerSource = rememberedSource;
   }
   updateVideoSourceSelector();
   checkCloudViewerAvailability(function() {
-    if (currentViewerSource == VIEWER_SOURCE_CLOUD && !cloudViewerAvailable) {
-      currentViewerSource = VIEWER_SOURCE_LOCAL;
+    if (legacyCloudRemembered) {
+      if (defaultCloudViewerSource != null && isCloudViewerAvailable(defaultCloudViewerSource)) {
+        currentViewerSource = defaultCloudViewerSource;
+      } else {
+        var firstCloud = firstAvailableCloudViewerSource();
+        currentViewerSource = firstCloud == null ? VIEWER_SOURCE_LOCAL : firstCloud;
+      }
+    }
+
+    if (isCloudViewerSource(currentViewerSource) &&
+      (!isCloudViewerConfigured(currentViewerSource) || !isCloudViewerAvailable(currentViewerSource))) {
+      var fallback = firstAvailableCloudViewerSource();
+      currentViewerSource = fallback == null ? VIEWER_SOURCE_LOCAL : fallback;
+    }
+
+    if (localStorageGet(VIEWER_SOURCE_KEY) != currentViewerSource) {
       localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
     }
     updateVideoSourceSelector();

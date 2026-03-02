@@ -23,7 +23,12 @@ func main() {
 	}()
 
 	log.Printf("cloudviewer-api listening on %s", cfg.addr)
-	log.Printf("cloud enabled=%t bucket=%q prefix=%q local_root=%q", cfg.cloudEnabled(), cfg.bucket, cfg.prefix, cfg.localRoot)
+	log.Printf("cloud enabled=%t default_provider=%q providers=%v local_root=%q",
+		cfg.cloudEnabled(),
+		cfg.defaultProvider,
+		cfg.configuredProviders(),
+		cfg.localRoot,
+	)
 
 	if err := http.ListenAndServe(cfg.addr, app.routes()); err != nil {
 		log.Fatalf("serve: %v", err)

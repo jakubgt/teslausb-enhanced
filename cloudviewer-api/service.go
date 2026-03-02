@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	awsv2 "github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"io"
 	"io/fs"
 	"math"
@@ -23,16 +26,27 @@ import (
 )
 
 type app struct {
-	cfg           config
-	storageClient *storage.Client
-	signerEmail   string
-	signerPrivKey []byte
-	httpClient    *http.Client
+	cfg             config
+	gcsStorage      *storage.Client
+	gcsSignerEmail  string
+	gcsSignerKey    []byte
+	s3Client        *s3.Client
+	s3PresignClient *s3.PresignClient
+	httpClient      *http.Client
 }
 
 type serviceAccountKey struct {
 	ClientEmail string `json:"client_email"`
 	PrivateKey  string `json:"private_key"`
+}
+
+type cloudProviderHealth struct {
+	provider cloudProvider
+	label    string
+	bucket   string
+	prefix   string
+	healthy  bool
+	err      string
 }
 
 func newApp(ctx context.Context, cfg config) (*app, error) {
@@ -43,35 +57,56 @@ func newApp(ctx context.Context, cfg config) (*app, error) {
 		},
 	}
 
-	if !cfg.cloudEnabled() {
-		return result, nil
+	if cfg.gcs != nil {
+		if err := result.initGCS(ctx, cfg.gcs); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.s3 != nil {
+		if err := result.initS3(ctx, cfg.s3); err != nil {
+			return nil, err
+		}
 	}
 
-	if cfg.keyFile == "" {
-		return nil, fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS is required when GCS_BUCKET is set")
-	}
+	return result, nil
+}
 
+func (a *app) initGCS(ctx context.Context, gcsCfg *gcsConfig) error {
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create storage client: %w", err)
+		return fmt.Errorf("create gcs client: %w", err)
 	}
-	result.storageClient = storageClient
+	a.gcsStorage = storageClient
 
-	keyBytes, err := os.ReadFile(cfg.keyFile)
+	keyBytes, err := os.ReadFile(gcsCfg.keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("read service-account key: %w", err)
+		return fmt.Errorf("read service-account key: %w", err)
 	}
 	var key serviceAccountKey
 	if err := json.Unmarshal(keyBytes, &key); err != nil {
-		return nil, fmt.Errorf("parse service-account key: %w", err)
+		return fmt.Errorf("parse service-account key: %w", err)
 	}
 	if strings.TrimSpace(key.ClientEmail) == "" || strings.TrimSpace(key.PrivateKey) == "" {
-		return nil, fmt.Errorf("service-account key missing client_email/private_key")
+		return fmt.Errorf("service-account key missing client_email/private_key")
 	}
-	result.signerEmail = key.ClientEmail
-	result.signerPrivKey = []byte(key.PrivateKey)
+	a.gcsSignerEmail = key.ClientEmail
+	a.gcsSignerKey = []byte(key.PrivateKey)
+	return nil
+}
 
-	return result, nil
+func (a *app) initS3(ctx context.Context, s3Cfg *s3Config) error {
+	awsConfig, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(s3Cfg.region))
+	if err != nil {
+		return fmt.Errorf("load aws config: %w", err)
+	}
+	a.s3Client = s3.NewFromConfig(awsConfig, func(options *s3.Options) {
+		options.UsePathStyle = s3Cfg.forcePathStyle
+		if s3Cfg.endpoint != "" {
+			options.BaseEndpoint = awsv2.String(s3Cfg.endpoint)
+		}
+	})
+	a.s3PresignClient = s3.NewPresignClient(a.s3Client)
+	return nil
 }
 
 func (a *app) routes() http.Handler {
@@ -87,47 +122,182 @@ func (a *app) routes() http.Handler {
 }
 
 func (a *app) close() error {
-	if a.storageClient != nil {
-		return a.storageClient.Close()
+	if a.gcsStorage != nil {
+		return a.gcsStorage.Close()
 	}
 	return nil
 }
 
-func (a *app) handleCloudHealth(w http.ResponseWriter, _ *http.Request) {
+func (a *app) handleCloudHealth(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"enabled": a.cfg.cloudEnabled(),
-		"bucket":  a.cfg.bucket,
-		"prefix":  strings.TrimSuffix(a.cfg.prefix, "/"),
 	}
 	if !a.cfg.cloudEnabled() {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	it := a.storageClient.Bucket(a.cfg.bucket).Objects(ctx, &storage.Query{Prefix: a.cfg.prefix})
-	if _, err := it.Next(); err != nil && !errors.Is(err, iterator.Done) {
-		resp["healthy"] = false
-		resp["error"] = err.Error()
-		writeJSON(w, http.StatusOK, resp)
-		return
+	configuredProviders := a.cfg.configuredProviders()
+	configuredProviderNames := make([]string, 0, len(configuredProviders))
+	healthyProviderNames := make([]string, 0, len(configuredProviders))
+	providerPayload := make(map[string]any, len(configuredProviders))
+	statusByProvider := make(map[cloudProvider]cloudProviderHealth, len(configuredProviders))
+
+	for _, provider := range configuredProviders {
+		status := a.cloudProviderStatus(context.Background(), provider)
+		statusByProvider[provider] = status
+		configuredProviderNames = append(configuredProviderNames, string(provider))
+		if status.healthy {
+			healthyProviderNames = append(healthyProviderNames, string(provider))
+		}
+
+		payload := map[string]any{
+			"configured": true,
+			"label":      status.label,
+			"bucket":     status.bucket,
+			"prefix":     status.prefix,
+			"healthy":    status.healthy,
+		}
+		if status.err != "" {
+			payload["error"] = status.err
+		}
+		providerPayload[string(provider)] = payload
 	}
 
-	resp["healthy"] = true
+	resp["configured_providers"] = configuredProviderNames
+	resp["healthy_providers"] = healthyProviderNames
+	resp["providers"] = providerPayload
+
+	defaultProvider, hasDefault := a.cfg.effectiveDefaultProvider()
+	if hasDefault {
+		resp["default_provider"] = string(defaultProvider)
+	}
+
+	summaryProvider, hasSummaryProvider, err := a.summaryProviderFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+	if hasSummaryProvider {
+		status, ok := statusByProvider[summaryProvider]
+		if ok {
+			resp["provider"] = string(status.provider)
+			resp["label"] = status.label
+			resp["bucket"] = status.bucket
+			resp["prefix"] = status.prefix
+			resp["healthy"] = status.healthy
+			if status.err != "" {
+				resp["error"] = status.err
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (a *app) handleCloudVideoList(w http.ResponseWriter, _ *http.Request) {
+func (a *app) summaryProviderFromRequest(r *http.Request) (cloudProvider, bool, error) {
+	rawProvider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	if rawProvider != "" {
+		provider, err := a.cfg.resolveProvider(rawProvider)
+		if err != nil {
+			return "", false, err
+		}
+		return provider, true, nil
+	}
+	provider, ok := a.cfg.effectiveDefaultProvider()
+	return provider, ok, nil
+}
+
+func (a *app) cloudProviderFromRequest(r *http.Request) (cloudProvider, error) {
+	return a.cfg.resolveProvider(r.URL.Query().Get("provider"))
+}
+
+func (a *app) cloudProviderStatus(parentCtx context.Context, provider cloudProvider) cloudProviderHealth {
+	status := cloudProviderHealth{
+		provider: provider,
+		label:    cloudProviderLabel(provider),
+		bucket:   a.cfg.providerBucket(provider),
+		prefix:   strings.TrimSuffix(a.cfg.providerPrefix(provider), "/"),
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+	defer cancel()
+	if err := a.cloudHealth(ctx, provider); err != nil {
+		status.healthy = false
+		status.err = err.Error()
+		return status
+	}
+	status.healthy = true
+	return status
+}
+
+func (a *app) handleCloudVideoList(w http.ResponseWriter, r *http.Request) {
 	if !a.cfg.cloudEnabled() {
 		writeError(w, http.StatusNotFound, "cloud_disabled", "cloud viewer is not configured")
 		return
 	}
 
+	provider, err := a.cloudProviderFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	lines, err := a.listCloudMedia(ctx, provider)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "cloud_list_failed", err.Error())
+		return
+	}
+	writeTextLines(w, lines)
+}
 
-	it := a.storageClient.Bucket(a.cfg.bucket).Objects(ctx, &storage.Query{Prefix: a.cfg.prefix})
+func (a *app) cloudHealth(ctx context.Context, provider cloudProvider) error {
+	switch provider {
+	case cloudProviderGCS:
+		if a.cfg.gcs == nil || a.gcsStorage == nil {
+			return fmt.Errorf("provider %q is not configured", provider)
+		}
+		it := a.gcsStorage.Bucket(a.cfg.gcs.bucket).Objects(ctx, &storage.Query{Prefix: a.cfg.gcs.prefix})
+		if _, err := it.Next(); err != nil && !errors.Is(err, iterator.Done) {
+			return err
+		}
+		return nil
+
+	case cloudProviderS3:
+		if a.cfg.s3 == nil || a.s3Client == nil {
+			return fmt.Errorf("provider %q is not configured", provider)
+		}
+		_, err := a.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:  awsv2.String(a.cfg.s3.bucket),
+			Prefix:  awsv2.String(a.cfg.s3.prefix),
+			MaxKeys: awsv2.Int32(1),
+		})
+		return err
+
+	default:
+		return fmt.Errorf("unsupported cloud provider %q", provider)
+	}
+}
+
+func (a *app) listCloudMedia(ctx context.Context, provider cloudProvider) ([]string, error) {
+	switch provider {
+	case cloudProviderGCS:
+		return a.listGCSMedia(ctx)
+	case cloudProviderS3:
+		return a.listS3Media(ctx)
+	default:
+		return nil, fmt.Errorf("unsupported cloud provider %q", provider)
+	}
+}
+
+func (a *app) listGCSMedia(ctx context.Context) ([]string, error) {
+	if a.cfg.gcs == nil || a.gcsStorage == nil {
+		return nil, fmt.Errorf("provider %q is not configured", cloudProviderGCS)
+	}
+
+	it := a.gcsStorage.Bucket(a.cfg.gcs.bucket).Objects(ctx, &storage.Query{Prefix: a.cfg.gcs.prefix})
 	lines := make([]string, 0, 4096)
 	for {
 		attrs, err := it.Next()
@@ -135,19 +305,44 @@ func (a *app) handleCloudVideoList(w http.ResponseWriter, _ *http.Request) {
 			break
 		}
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "gcs_list_failed", err.Error())
-			return
+			return nil, err
 		}
 		if attrs == nil {
 			continue
 		}
-		if rel, ok := relativeFromObjectName(a.cfg.prefix, attrs.Name); ok {
+		if rel, ok := relativeFromObjectName(a.cfg.gcs.prefix, attrs.Name); ok {
 			lines = append(lines, rel)
 		}
 	}
+	return sortedUniqueLines(lines), nil
+}
 
-	lines = sortedUniqueLines(lines)
-	writeTextLines(w, lines)
+func (a *app) listS3Media(ctx context.Context) ([]string, error) {
+	if a.cfg.s3 == nil || a.s3Client == nil {
+		return nil, fmt.Errorf("provider %q is not configured", cloudProviderS3)
+	}
+
+	paginator := s3.NewListObjectsV2Paginator(a.s3Client, &s3.ListObjectsV2Input{
+		Bucket: awsv2.String(a.cfg.s3.bucket),
+		Prefix: awsv2.String(a.cfg.s3.prefix),
+	})
+	lines := make([]string, 0, 4096)
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range page.Contents {
+			if object.Key == nil {
+				continue
+			}
+			if rel, ok := relativeFromObjectName(a.cfg.s3.prefix, awsv2.ToString(object.Key)); ok {
+				lines = append(lines, rel)
+			}
+		}
+	}
+	return sortedUniqueLines(lines), nil
 }
 
 func (a *app) handleLocalVideoList(w http.ResponseWriter, _ *http.Request) {
@@ -235,6 +430,12 @@ func (a *app) handleCloudObjectURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	provider, err := a.cloudProviderFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
 	relPath, err := normalizeRelativePath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error())
@@ -242,7 +443,7 @@ func (a *app) handleCloudObjectURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	download := r.URL.Query().Get("download") == "1"
-	signedURL, expiresAt, err := a.signObjectURL(relPath, download)
+	signedURL, expiresAt, err := a.signObjectURL(provider, relPath, download)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "sign_failed", err.Error())
 		return
@@ -260,13 +461,19 @@ func (a *app) handleCloudStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	provider, err := a.cloudProviderFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
 	relPath, err := normalizeRelativePath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_path", err.Error())
 		return
 	}
 	download := r.URL.Query().Get("download") == "1"
-	signedURL, _, err := a.signObjectURL(relPath, download)
+	signedURL, _, err := a.signObjectURL(provider, relPath, download)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "sign_failed", err.Error())
 		return
@@ -309,17 +516,31 @@ func (a *app) handleCloudStream(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (a *app) signObjectURL(relativePath string, download bool) (string, time.Time, error) {
-	if a.signerEmail == "" || len(a.signerPrivKey) == 0 {
+func (a *app) signObjectURL(provider cloudProvider, relativePath string, download bool) (string, time.Time, error) {
+	switch provider {
+	case cloudProviderGCS:
+		return a.signGCSObjectURL(relativePath, download)
+	case cloudProviderS3:
+		return a.signS3ObjectURL(relativePath, download)
+	default:
+		return "", time.Time{}, fmt.Errorf("unsupported cloud provider %q", provider)
+	}
+}
+
+func (a *app) signGCSObjectURL(relativePath string, download bool) (string, time.Time, error) {
+	if a.cfg.gcs == nil || a.gcsStorage == nil {
+		return "", time.Time{}, fmt.Errorf("provider %q is not configured", cloudProviderGCS)
+	}
+	if a.gcsSignerEmail == "" || len(a.gcsSignerKey) == 0 {
 		return "", time.Time{}, fmt.Errorf("service-account signer is not initialized")
 	}
 
-	objectName := path.Join(a.cfg.prefix, relativePath)
-	expiresAt := time.Now().Add(a.cfg.signTTL)
+	objectName := path.Join(a.cfg.gcs.prefix, relativePath)
+	expiresAt := time.Now().Add(a.cfg.gcs.signTTL)
 	opts := &storage.SignedURLOptions{
-		GoogleAccessID: a.signerEmail,
+		GoogleAccessID: a.gcsSignerEmail,
 		Method:         http.MethodGet,
-		PrivateKey:     a.signerPrivKey,
+		PrivateKey:     a.gcsSignerKey,
 		Scheme:         storage.SigningSchemeV4,
 		Expires:        expiresAt,
 	}
@@ -329,11 +550,36 @@ func (a *app) signObjectURL(relativePath string, download bool) (string, time.Ti
 			"response-content-disposition": []string{fmt.Sprintf("attachment; filename=%q", base)},
 		}
 	}
-	url, err := storage.SignedURL(a.cfg.bucket, objectName, opts)
+	url, err := storage.SignedURL(a.cfg.gcs.bucket, objectName, opts)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	return url, expiresAt, nil
+}
+
+func (a *app) signS3ObjectURL(relativePath string, download bool) (string, time.Time, error) {
+	if a.cfg.s3 == nil || a.s3PresignClient == nil {
+		return "", time.Time{}, fmt.Errorf("provider %q is not configured", cloudProviderS3)
+	}
+
+	objectName := path.Join(a.cfg.s3.prefix, relativePath)
+	input := &s3.GetObjectInput{
+		Bucket: awsv2.String(a.cfg.s3.bucket),
+		Key:    awsv2.String(objectName),
+	}
+	if download {
+		base := path.Base(relativePath)
+		input.ResponseContentDisposition = awsv2.String(fmt.Sprintf("attachment; filename=%q", base))
+	}
+
+	expiresAt := time.Now().Add(a.cfg.s3.signTTL)
+	presigned, err := a.s3PresignClient.PresignGetObject(context.Background(), input, func(options *s3.PresignOptions) {
+		options.Expires = a.cfg.s3.signTTL
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return presigned.URL, expiresAt, nil
 }
 
 func writeTextLines(w http.ResponseWriter, lines []string) {
