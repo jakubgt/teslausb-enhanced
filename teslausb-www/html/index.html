@@ -977,13 +977,13 @@ video {
           <div id="SentryClips" class="subnav-content"></div>
         </div>
 
-        <div class="sourcepicker" id="sourcepicker">
-          <label for="videosource">Source</label>
-          <select id="videosource" onchange="onVideoSourceChanged(this.value)">
-            <option value="local">Local</option>
-            <option value="cloud">Cloud</option>
-          </select>
-        </div>
+	        <div class="sourcepicker" id="sourcepicker" style="display:none;">
+	          <label for="videosource">Source</label>
+	          <select id="videosource" onchange="onVideoSourceChanged(this.value)">
+	            <option value="local">Local</option>
+	            <option value="cloud">GCS</option>
+	          </select>
+	        </div>
 
         <div class="subnav layoutbtn" style="float:right;">
           <svg class="layoutsvg" width="52" height="26" viewBox="0 0 26 13">
@@ -2596,6 +2596,7 @@ const VIEWER_SOURCE_LOCAL = "local";
 const VIEWER_SOURCE_CLOUD = "cloud";
 const VIEWER_SOURCE_KEY = "viewersource";
 var currentViewerSource = VIEWER_SOURCE_LOCAL;
+var cloudViewerConfigured = false;
 var cloudViewerAvailable = false;
 
 function buildViewerMediaUrl(relativePath, download) {
@@ -2630,6 +2631,13 @@ function updateVideoSourceSelector() {
   if (select == null || picker == null) {
     return;
   }
+  if (!cloudViewerConfigured) {
+    picker.style.display = "none";
+    currentViewerSource = VIEWER_SOURCE_LOCAL;
+    select.value = currentViewerSource;
+    return;
+  }
+  picker.style.display = "flex";
   var cloudOption = select.querySelector("option[value='cloud']");
   cloudOption.disabled = !cloudViewerAvailable;
   picker.classList.toggle("unavailable", !cloudViewerAvailable);
@@ -2682,14 +2690,17 @@ function checkCloudViewerAvailability(callback) {
     callback: function(value) {
       try {
         var health = JSON.parse(value);
-        cloudViewerAvailable = (health.enabled === true);
+        cloudViewerConfigured = (health.enabled === true);
+        cloudViewerAvailable = cloudViewerConfigured;
       } catch (err) {
+        cloudViewerConfigured = false;
         cloudViewerAvailable = false;
       }
       updateVideoSourceSelector();
       callback();
     },
     onerror: function() {
+      cloudViewerConfigured = false;
       cloudViewerAvailable = false;
       updateVideoSourceSelector();
       callback();

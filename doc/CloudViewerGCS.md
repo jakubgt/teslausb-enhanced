@@ -1,15 +1,15 @@
 # Cloud Viewer (GCS) - Additive to Existing Local Viewer
 
-This adds a **Cloud** source to the existing TeslaUSB Viewer while keeping the current local file flow intact.
+This adds a **GCS** source to the existing TeslaUSB Viewer while keeping the current local file flow intact.
 
 - `Local` source: existing behavior (`TeslaCam/` files local to runtime)
-- `Cloud` source: files loaded from a Google Cloud Storage bucket via signed URLs
+- `GCS` source: files loaded from a Google Cloud Storage bucket via signed URLs
 - Both sources can be switched in the same Viewer UI.
 
 ## What this does
 
 - Keeps existing TeslaUSB local viewer capability.
-- Adds optional cloud browsing/playback for archived clips in GCS.
+- Adds optional GCS browsing/playback for archived clips.
 - Supports running on a local computer via Docker Compose (not on-car Pi only).
 
 ## Prerequisites
@@ -57,10 +57,10 @@ Open:
 
 - `http://127.0.0.1:${CLOUD_VIEWER_PORT}` (default `18080`)
 
-In Viewer tab, choose source from the new `Source` selector:
+In Viewer tab, choose source from the `Source` selector (shown only when GCS is configured):
 
 - `Local`
-- `Cloud` (enabled only when cloud health check succeeds)
+- `GCS`
 
 ## API endpoints added
 
@@ -74,6 +74,6 @@ In Viewer tab, choose source from the new `Source` selector:
 
 ## Notes
 
-- `Cloud` source is read-only.
-- If cloud endpoint is unavailable, UI falls back to `Local`.
+- `GCS` source is read-only.
+- If GCS endpoint is unavailable, UI falls back to `Local`.
 - Existing TeslaUSB Pi setup and `cgi-bin/videolist.sh` local path remain unchanged.
