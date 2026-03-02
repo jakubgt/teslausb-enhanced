@@ -423,6 +423,33 @@ video {
   margin: 0;
 }
 
+.sourcepicker {
+  float: right;
+  color: white;
+  padding: 8px 10px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sourcepicker label {
+  color: #d0d0d0;
+  font-size: 12px;
+}
+
+.sourcepicker select {
+  background: #222;
+  color: white;
+  border: 1px solid #666;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 13px;
+}
+
+.sourcepicker.unavailable select option[value="cloud"] {
+  color: #999;
+}
+
 .noclips {
   color: grey;
 }
@@ -950,6 +977,14 @@ video {
           <div id="SentryClips" class="subnav-content"></div>
         </div>
 
+        <div class="sourcepicker" id="sourcepicker">
+          <label for="videosource">Source</label>
+          <select id="videosource" onchange="onVideoSourceChanged(this.value)">
+            <option value="local">Local</option>
+            <option value="cloud">Cloud</option>
+          </select>
+        </div>
+
         <div class="subnav layoutbtn" style="float:right;">
           <svg class="layoutsvg" width="52" height="26" viewBox="0 0 26 13">
             <path d="M 2 6 L 8 6 L 8 2 L 2 2 z M 10 6 L 16 6 L 16 2 L 10 2 z M 18 6 L 24 6 L 24 2 L 18 2 z M 2 12 L 8 12 L 8 8 L 2 8 z M 10 12 L 16 12 L 16 8 L 10 8 z M 18 12 L 24 12 L 24 8 L 18 8 z"/>
@@ -1226,7 +1261,10 @@ function download(filename, text) {
 }
 
 function cachebustingurl(url) {
-  return url + '?' + Math.random();
+  if (url.includes("?")) {
+    return url + '&_cb=' + Math.random();
+  }
+  return url + '?_cb=' + Math.random();
 }
 
 function isElementVisible(elem) {
@@ -1312,30 +1350,37 @@ function readyState(state) {
   }
 }
 
-function readfile({url, callback, callbackarg, pre, tail, button}) {
+function readfile({url, callback, callbackarg, pre, tail, button, onerror}) {
   var request = new XMLHttpRequest();
   request.open('GET', cachebustingurl(url));
   log("reading " + url);
   request.onreadystatechange = function () {
     log(`read ${url}, result: ${request.status}, state: ${readyState(request.readyState)}`);
-    if (request.readyState === 4 && request.status === 200) {
-      var type = request.getResponseHeader('Content-Type');
-      if (type.indexOf("text") !== 1) {
-        if (callback != null) {
-          callback(request.responseText, callbackarg);
+    if (request.readyState !== 4) {
+      return;
+    }
+    if (request.status === 200) {
+      if (callback != null) {
+        callback(request.responseText, callbackarg);
+      }
+      if (pre != null) {
+        var preobj = document.getElementById(pre);
+        preobj.textContent=request.responseText;
+        if (tail === true) {
+          preobj.scrollTo(0,preobj.scrollHeight);
+          starttailing({url:url, pre:preobj, button:button});
         }
-        if (pre != null) {
-          var preobj = document.getElementById(pre);
-          preobj.textContent=request.responseText;
-          if (tail === true) {
-            preobj.scrollTo(0,preobj.scrollHeight);
-            starttailing({url:url, pre:preobj, button:button});
-          }
-        }
-        if (button != null) {
-          var btn = document.getElementById(button);
-          btn.disabled=false;
-        }
+      }
+      if (button != null) {
+        var btn = document.getElementById(button);
+        btn.disabled=false;
+      }
+    } else if (onerror != null) {
+      onerror(request);
+    } else {
+      if (pre != null) {
+        var preobj = document.getElementById(pre);
+        preobj.textContent = `Request failed: ${request.status}`;
       }
     }
   }
@@ -2088,39 +2133,15 @@ class VideoSegment {
   }
 
   select() {
-    var prefix = "TeslaCam/" + this.group + "/" + this.sequence + "/";
+    var prefix = this.group + "/" + this.sequence + "/";
     log("===== segment =====");
     freezeVideoElems();
-    if (this.leftrepeater != undefined) {
-      videoelems[0].src = cachebustingurl(prefix + this.leftrepeater);
-    } else {
-      videoelems[0].removeAttribute('src');
-    }
-    if (this.leftpillar != undefined) {
-      videoelems[1].src = cachebustingurl(prefix + this.leftpillar);
-    } else {
-      videoelems[1].removeAttribute('src');
-    }
-    if (this.front != undefined) {
-      videoelems[2].src = cachebustingurl(prefix + this.front);
-    } else {
-      videoelems[2].removeAttribute('src');
-    }
-    if (this.rightrepeater != undefined) {
-      videoelems[3].src = cachebustingurl(prefix + this.rightrepeater);
-    } else {
-      videoelems[3].removeAttribute('src');
-    }
-    if (this.rightpillar != undefined) {
-      videoelems[4].src = cachebustingurl(prefix + this.rightpillar);
-    } else {
-      videoelems[4].removeAttribute('src');
-    }
-    if (this.back != undefined) {
-      videoelems[5].src = cachebustingurl(prefix + this.back);
-    } else {
-      videoelems[5].removeAttribute('src');
-    }
+    setVideoElemSource(videoelems[0], this.leftrepeater != undefined ? prefix + this.leftrepeater : undefined);
+    setVideoElemSource(videoelems[1], this.leftpillar != undefined ? prefix + this.leftpillar : undefined);
+    setVideoElemSource(videoelems[2], this.front != undefined ? prefix + this.front : undefined);
+    setVideoElemSource(videoelems[3], this.rightrepeater != undefined ? prefix + this.rightrepeater : undefined);
+    setVideoElemSource(videoelems[4], this.rightpillar != undefined ? prefix + this.rightpillar : undefined);
+    setVideoElemSource(videoelems[5], this.back != undefined ? prefix + this.back : undefined);
 
     this.numangles = 0;
     for (var i=0; i < 6;i++) {
@@ -2358,7 +2379,7 @@ class VideoSequence {
       return;
     }
 
-    var jsonurl = "TeslaCam/" + this.jsonfile[idx];
+    var jsonurl = buildViewerMediaUrl(this.jsonfile[idx], false);
     // clear this so we only do this once
     this.jsonfile[idx] = null;
     log("starting json fetch");
@@ -2569,6 +2590,111 @@ class VideoSequence {
       b.firstElementChild.firstChild.setAttribute('d', 'M 8,30 30,18 8,6 z');
     }
   }
+}
+
+const VIEWER_SOURCE_LOCAL = "local";
+const VIEWER_SOURCE_CLOUD = "cloud";
+const VIEWER_SOURCE_KEY = "viewersource";
+var currentViewerSource = VIEWER_SOURCE_LOCAL;
+var cloudViewerAvailable = false;
+
+function buildViewerMediaUrl(relativePath, download) {
+  if (currentViewerSource == VIEWER_SOURCE_CLOUD) {
+    var url = "api/v1/cloud/stream?path=" + encodeURIComponent(relativePath);
+    if (download === true) {
+      url += "&download=1";
+    }
+    return url;
+  }
+  return "TeslaCam/" + relativePath;
+}
+
+function getVideoListUrlForSource(source) {
+  if (source == VIEWER_SOURCE_CLOUD) {
+    return "api/v1/cloud/videolist";
+  }
+  return "cgi-bin/videolist.sh";
+}
+
+function setVideoElemSource(elem, relativePath) {
+  if (relativePath == undefined) {
+    elem.removeAttribute('src');
+    return;
+  }
+  elem.src = cachebustingurl(buildViewerMediaUrl(relativePath, false));
+}
+
+function updateVideoSourceSelector() {
+  var picker = document.getElementById("sourcepicker");
+  var select = document.getElementById("videosource");
+  if (select == null || picker == null) {
+    return;
+  }
+  var cloudOption = select.querySelector("option[value='cloud']");
+  cloudOption.disabled = !cloudViewerAvailable;
+  picker.classList.toggle("unavailable", !cloudViewerAvailable);
+  if (currentViewerSource == VIEWER_SOURCE_CLOUD && !cloudViewerAvailable) {
+    currentViewerSource = VIEWER_SOURCE_LOCAL;
+  }
+  select.value = currentViewerSource;
+}
+
+function onVideoSourceChanged(newSource) {
+  if (newSource == VIEWER_SOURCE_CLOUD && !cloudViewerAvailable) {
+    updateVideoSourceSelector();
+    return;
+  }
+  if (newSource != VIEWER_SOURCE_LOCAL && newSource != VIEWER_SOURCE_CLOUD) {
+    return;
+  }
+  if (newSource == currentViewerSource) {
+    return;
+  }
+  currentViewerSource = newSource;
+  localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+  loadViewerClips();
+}
+
+function clearViewerData() {
+  if (currentsequence != undefined) {
+    currentsequence.pause();
+  }
+  currentsequence = undefined;
+  videos = {};
+  for (var i of ["RecentClips", "SavedClips", "SentryClips"]) {
+    var d = document.getElementById(i);
+    d.textContent = "";
+  }
+  for (var v of videoelems) {
+    v.pause();
+    v.removeAttribute('src');
+    v.style.visibility = "hidden";
+  }
+  for (var c of canvaselems) {
+    var ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
+}
+
+function checkCloudViewerAvailability(callback) {
+  readfile({
+    url: "api/v1/cloud/health",
+    callback: function(value) {
+      try {
+        var health = JSON.parse(value);
+        cloudViewerAvailable = (health.enabled === true);
+      } catch (err) {
+        cloudViewerAvailable = false;
+      }
+      updateVideoSourceSelector();
+      callback();
+    },
+    onerror: function() {
+      cloudViewerAvailable = false;
+      updateVideoSourceSelector();
+      callback();
+    }
+  });
 }
 
 var videos={};
@@ -2782,7 +2908,42 @@ function flipdropdownsfromclick() {
 
 readconfig();
 
-readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
+var appInitialized = false;
+function ensureAppInitialized() {
+  if (!appInitialized) {
+    initialize();
+    appInitialized = true;
+  }
+}
+
+function loadViewerClips() {
+  clearViewerData();
+  var nr = document.querySelector(".noclips");
+  if (currentViewerSource == VIEWER_SOURCE_CLOUD) {
+    nr.innerHTML = "Loading cloud recordings...";
+  } else {
+    nr.innerHTML = "Loading...";
+  }
+  readfile({
+    url: getVideoListUrlForSource(currentViewerSource),
+    callback: parseVideoList,
+    onerror: function(request) {
+      if (currentViewerSource == VIEWER_SOURCE_CLOUD) {
+        cloudViewerAvailable = false;
+        currentViewerSource = VIEWER_SOURCE_LOCAL;
+        localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+        updateVideoSourceSelector();
+        loadViewerClips();
+        return;
+      }
+      nr.innerHTML = "No recordings";
+      ensureAppInitialized();
+      log("failed to load videolist: " + request.status);
+    }
+  });
+}
+
+function parseVideoList(value) {
   var newest="0-";
   var newestsequence;
   var lines = value.split('\n');
@@ -2804,11 +2965,14 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
           teslausb no longer creates an "event.json" folder */
        continue;
     }
-    if (!videos.hasOwnProperty(group)) {
+    if (group != "RecentClips" && group != "SavedClips" && group != "SentryClips") {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(videos, group)) {
       videos[group]={};
     }
     var sequence;
-    if (videos[group].hasOwnProperty(sequencename)) {
+    if (Object.prototype.hasOwnProperty.call(videos[group], sequencename)) {
       sequence=videos[group][sequencename];
     } else {
       sequence=new VideoSequence(group, sequencename);
@@ -2829,8 +2993,8 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
       sequence.jsonfile[0] = jsonpath;
       // add the json to the RecentClips that includes this SentryClip
       var clipday = sequencename.substr(0,10);
-      if (videos.hasOwnProperty("RecentClips") &&
-        videos["RecentClips"].hasOwnProperty(clipday)) {
+      if (Object.prototype.hasOwnProperty.call(videos, "RecentClips") &&
+        Object.prototype.hasOwnProperty.call(videos["RecentClips"], clipday)) {
         videos["RecentClips"][clipday].jsonfile.push(jsonpath);
         log("added event json to " + clipday);
       } else {
@@ -2851,6 +3015,9 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
     nr.style.display='';
   }
   for (i of ["RecentClips", "SavedClips", "SentryClips"]) {
+    if (!Object.prototype.hasOwnProperty.call(videos, i)) {
+      videos[i] = {};
+    }
     var d=document.getElementById(i);
     for (c in videos[i]) {
       // Regular expression to match the date format
@@ -2901,9 +3068,26 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
     newestsequence.select();
   }
   nr.innerHTML = "No recordings";
-  initialize();
+  ensureAppInitialized();
 }
-});
+
+function initializeViewerSources() {
+  var rememberedSource = localStorageGet(VIEWER_SOURCE_KEY);
+  if (rememberedSource == VIEWER_SOURCE_LOCAL || rememberedSource == VIEWER_SOURCE_CLOUD) {
+    currentViewerSource = rememberedSource;
+  }
+  updateVideoSourceSelector();
+  checkCloudViewerAvailability(function() {
+    if (currentViewerSource == VIEWER_SOURCE_CLOUD && !cloudViewerAvailable) {
+      currentViewerSource = VIEWER_SOURCE_LOCAL;
+      localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+    }
+    updateVideoSourceSelector();
+    loadViewerClips();
+  });
+}
+
+initializeViewerSources();
 
 function stringtoseconds(s) {
   var secs = (3600 * s.substring(0, 2)) +

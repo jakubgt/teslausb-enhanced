@@ -40,6 +40,12 @@ Optional:
 
 To install teslausb on a Raspberry Pi, it is recommended to use the [prebuilt image](https://github.com/marcone/teslausb/releases) and [one step setup instructions](doc/OneStepSetup.md). For other SBCs, start [here](https://github.com/marcone/teslausb/wiki/Installation)
 
+## Optional: Local Computer Cloud Viewer (GCS)
+
+An additive viewer mode is available for running on a local computer with Docker Compose. It keeps local viewer capability and adds a Cloud source backed by GCS.
+
+See [CloudViewerGCS](doc/CloudViewerGCS.md).
+
 ## Contributing
 
 You're welcome to contribute to this repo by submitting pull requests and creating issues.
