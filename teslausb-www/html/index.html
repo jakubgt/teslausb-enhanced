@@ -1755,14 +1755,14 @@ function showstatus() {
         var throttledbits = parseInt(statusvals.throttled, 16);
         if (!Number.isNaN(throttledbits)) {
           var throttledflags = [
-            [0, "under-voltage occuring"],
-            [1, "currently throttled"],
-            [2, "arm frequency capped"],
-            [3, "soft temperature reached"],
-            [16, "under-voltage has occurred since last reboot"],
-            [17, "throttling has occurred since last reboot"],
-            [18, "arm frequency capped has occurred since last reboot"],
-            [19, "soft temperature reached since last reboot"]
+            [0, "Undervoltage detected"],
+            [1, "Arm frequency capped"],
+            [2, "Currently throttled"],
+            [3, "Soft temperature limit active"],
+            [16, "Undervoltage has occurred since last reboot"],
+            [17, "Arm frequency capping has occurred since last reboot"],
+            [18, "Throttling has occurred since last reboot"],
+            [19, "Soft temperature limit has occurred since last reboot"]
           ];
           var throttledlines = [];
           for (var flag of throttledflags) {
