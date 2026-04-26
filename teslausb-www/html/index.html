@@ -1729,15 +1729,15 @@ function showstatus() {
 
       var external5vdiv = document.querySelector(".status_external_5v");
       if (statusvals.external_5v != "" && statusvals.external_5v != "N/A") {
-        external5vdiv.innerText = "External 5V: " + statusvals.external_5v;
+        external5vdiv.innerText = "External 5V: " + parseFloat(statusvals.external_5v).toFixed(3) + " V";
         external5vdiv.style.display = "inherit";
       } else {
         external5vdiv.style.display = "none";
       }
 
       var rtcbattvdiv = document.querySelector(".status_rtc_batt_v");
-      if (statusvals.rtc_batt_v != "" && statusvals.rtc_batt_v != "N/A") {
-        rtcbattvdiv.innerText = "RTC Battery: " + statusvals.rtc_batt_v;
+      if (statusvals.rtc_batt_v != "" && statusvals.rtc_batt_v != "N/A" && parseFloat(statusvals.rtc_batt_v) >= 2.5) {
+        rtcbattvdiv.innerText = "RTC Battery: " + parseFloat(statusvals.rtc_batt_v).toFixed(3) + " V";
         rtcbattvdiv.style.display = "inherit";
       } else {
         rtcbattvdiv.style.display = "none";
