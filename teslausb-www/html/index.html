@@ -1755,7 +1755,7 @@ function showstatus() {
         var throttledbits = parseInt(statusvals.throttled, 16);
         if (!Number.isNaN(throttledbits)) {
           var throttledflags = [
-            [0, "under-voltage"],
+            [0, "under-voltage occuring"],
             [1, "currently throttled"],
             [2, "arm frequency capped"],
             [3, "soft temperature reached"],
