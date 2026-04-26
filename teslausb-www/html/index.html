@@ -798,6 +798,12 @@ video {
   display: none;
 }
 
+.status_throttled {
+  display: none;
+  color: #c40000;
+  white-space: pre-line;
+}
+
 </style>
 </head>
 <body>
@@ -893,6 +899,7 @@ video {
             </svg>
           </span>
         </div>
+        <div class="status_throttled"></div>
       </div>
       <button class="group2" id="toggledrives" onclick="toggledrivesfunc();">...</button>
       <p>
@@ -1741,6 +1748,39 @@ function showstatus() {
         rtcbattvdiv.style.display = "inherit";
       } else {
         rtcbattvdiv.style.display = "none";
+      }
+
+      var throttleddiv = document.querySelector(".status_throttled");
+      if (statusvals.throttled != "" && statusvals.throttled != "N/A") {
+        var throttledbits = parseInt(statusvals.throttled, 16);
+        if (!Number.isNaN(throttledbits)) {
+          var throttledflags = [
+            [0, "under-voltage"],
+            [1, "currently throttled"],
+            [2, "arm frequency capped"],
+            [3, "soft temperature reached"],
+            [16, "under-voltage has occurred since last reboot"],
+            [17, "throttling has occurred since last reboot"],
+            [18, "arm frequency capped has occurred since last reboot"],
+            [19, "soft temperature reached since last reboot"]
+          ];
+          var throttledlines = [];
+          for (var flag of throttledflags) {
+            if ((throttledbits & (1 << flag[0])) != 0) {
+              throttledlines.push(flag[1]);
+            }
+          }
+          if (throttledlines.length > 0) {
+            throttleddiv.innerText = throttledlines.join("\n");
+            throttleddiv.style.display = "inherit";
+          } else {
+            throttleddiv.style.display = "none";
+          }
+        } else {
+          throttleddiv.style.display = "none";
+        }
+      } else {
+        throttleddiv.style.display = "none";
       }
 
       var drivesdiv = document.querySelector(".status_drives");
