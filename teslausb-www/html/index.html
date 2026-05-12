@@ -423,6 +423,34 @@ video {
   margin: 0;
 }
 
+.sourcepicker {
+  float: right;
+  color: white;
+  padding: 8px 10px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sourcepicker label {
+  color: #d0d0d0;
+  font-size: 12px;
+}
+
+.sourcepicker select {
+  background: #222;
+  color: white;
+  border: 1px solid #666;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 13px;
+}
+
+.sourcepicker.unavailable select option[value="gcs"],
+.sourcepicker.unavailable select option[value="s3"] {
+  color: #999;
+}
+
 .noclips {
   color: grey;
 }
@@ -960,6 +988,15 @@ video {
           <div id="SentryClips" class="subnav-content"></div>
         </div>
 
+	        <div class="sourcepicker" id="sourcepicker" style="display:none;">
+	          <label for="videosource">Source</label>
+	          <select id="videosource" onchange="onVideoSourceChanged(this.value)">
+	            <option value="local">Local</option>
+	            <option value="gcs" hidden>GCS</option>
+	            <option value="s3" hidden>S3</option>
+	          </select>
+	        </div>
+
         <div class="subnav layoutbtn" style="float:right;">
           <svg class="layoutsvg" width="52" height="26" viewBox="0 0 26 13">
             <path d="M 2 6 L 8 6 L 8 2 L 2 2 z M 10 6 L 16 6 L 16 2 L 10 2 z M 18 6 L 24 6 L 24 2 L 18 2 z M 2 12 L 8 12 L 8 8 L 2 8 z M 10 12 L 16 12 L 16 8 L 10 8 z M 18 12 L 24 12 L 24 8 L 18 8 z"/>
@@ -1236,7 +1273,10 @@ function download(filename, text) {
 }
 
 function cachebustingurl(url) {
-  return url + '?' + Math.random();
+  if (url.includes("?")) {
+    return url + '&_cb=' + Math.random();
+  }
+  return url + '?_cb=' + Math.random();
 }
 
 function isElementVisible(elem) {
@@ -1322,30 +1362,37 @@ function readyState(state) {
   }
 }
 
-function readfile({url, callback, callbackarg, pre, tail, button}) {
+function readfile({url, callback, callbackarg, pre, tail, button, onerror}) {
   var request = new XMLHttpRequest();
   request.open('GET', cachebustingurl(url));
   log("reading " + url);
   request.onreadystatechange = function () {
     log(`read ${url}, result: ${request.status}, state: ${readyState(request.readyState)}`);
-    if (request.readyState === 4 && request.status === 200) {
-      var type = request.getResponseHeader('Content-Type');
-      if (type.indexOf("text") !== 1) {
-        if (callback != null) {
-          callback(request.responseText, callbackarg);
+    if (request.readyState !== 4) {
+      return;
+    }
+    if (request.status === 200) {
+      if (callback != null) {
+        callback(request.responseText, callbackarg);
+      }
+      if (pre != null) {
+        var preobj = document.getElementById(pre);
+        preobj.textContent=request.responseText;
+        if (tail === true) {
+          preobj.scrollTo(0,preobj.scrollHeight);
+          starttailing({url:url, pre:preobj, button:button});
         }
-        if (pre != null) {
-          var preobj = document.getElementById(pre);
-          preobj.textContent=request.responseText;
-          if (tail === true) {
-            preobj.scrollTo(0,preobj.scrollHeight);
-            starttailing({url:url, pre:preobj, button:button});
-          }
-        }
-        if (button != null) {
-          var btn = document.getElementById(button);
-          btn.disabled=false;
-        }
+      }
+      if (button != null) {
+        var btn = document.getElementById(button);
+        btn.disabled=false;
+      }
+    } else if (onerror != null) {
+      onerror(request);
+    } else {
+      if (pre != null) {
+        var preobj = document.getElementById(pre);
+        preobj.textContent = `Request failed: ${request.status}`;
       }
     }
   }
@@ -2155,39 +2202,15 @@ class VideoSegment {
   }
 
   select() {
-    var prefix = "TeslaCam/" + this.group + "/" + this.sequence + "/";
+    var prefix = this.group + "/" + this.sequence + "/";
     log("===== segment =====");
     freezeVideoElems();
-    if (this.leftrepeater != undefined) {
-      videoelems[0].src = cachebustingurl(prefix + this.leftrepeater);
-    } else {
-      videoelems[0].removeAttribute('src');
-    }
-    if (this.leftpillar != undefined) {
-      videoelems[1].src = cachebustingurl(prefix + this.leftpillar);
-    } else {
-      videoelems[1].removeAttribute('src');
-    }
-    if (this.front != undefined) {
-      videoelems[2].src = cachebustingurl(prefix + this.front);
-    } else {
-      videoelems[2].removeAttribute('src');
-    }
-    if (this.rightrepeater != undefined) {
-      videoelems[3].src = cachebustingurl(prefix + this.rightrepeater);
-    } else {
-      videoelems[3].removeAttribute('src');
-    }
-    if (this.rightpillar != undefined) {
-      videoelems[4].src = cachebustingurl(prefix + this.rightpillar);
-    } else {
-      videoelems[4].removeAttribute('src');
-    }
-    if (this.back != undefined) {
-      videoelems[5].src = cachebustingurl(prefix + this.back);
-    } else {
-      videoelems[5].removeAttribute('src');
-    }
+    setVideoElemSource(videoelems[0], this.leftrepeater != undefined ? prefix + this.leftrepeater : undefined);
+    setVideoElemSource(videoelems[1], this.leftpillar != undefined ? prefix + this.leftpillar : undefined);
+    setVideoElemSource(videoelems[2], this.front != undefined ? prefix + this.front : undefined);
+    setVideoElemSource(videoelems[3], this.rightrepeater != undefined ? prefix + this.rightrepeater : undefined);
+    setVideoElemSource(videoelems[4], this.rightpillar != undefined ? prefix + this.rightpillar : undefined);
+    setVideoElemSource(videoelems[5], this.back != undefined ? prefix + this.back : undefined);
 
     this.numangles = 0;
     for (var i=0; i < 6;i++) {
@@ -2425,7 +2448,7 @@ class VideoSequence {
       return;
     }
 
-    var jsonurl = "TeslaCam/" + this.jsonfile[idx];
+    var jsonurl = buildViewerMediaUrl(this.jsonfile[idx], false);
     // clear this so we only do this once
     this.jsonfile[idx] = null;
     log("starting json fetch");
@@ -2636,6 +2659,223 @@ class VideoSequence {
       b.firstElementChild.firstChild.setAttribute('d', 'M 8,30 30,18 8,6 z');
     }
   }
+}
+
+const VIEWER_SOURCE_LOCAL = "local";
+const VIEWER_SOURCE_GCS = "gcs";
+const VIEWER_SOURCE_S3 = "s3";
+const LEGACY_VIEWER_SOURCE_CLOUD = "cloud";
+const VIEWER_SOURCE_KEY = "viewersource";
+var currentViewerSource = VIEWER_SOURCE_LOCAL;
+var cloudViewerConfiguredSources = [];
+var cloudViewerAvailableBySource = {};
+var defaultCloudViewerSource = null;
+
+function isCloudViewerSource(source) {
+  return source == VIEWER_SOURCE_GCS || source == VIEWER_SOURCE_S3;
+}
+
+function cloudViewerLabelForProvider(provider) {
+  if (provider == VIEWER_SOURCE_GCS) {
+    return "GCS";
+  }
+  if (provider == VIEWER_SOURCE_S3) {
+    return "S3";
+  }
+  return "Cloud";
+}
+
+function isCloudViewerConfigured(source) {
+  return cloudViewerConfiguredSources.includes(source);
+}
+
+function isCloudViewerAvailable(source) {
+  return cloudViewerAvailableBySource[source] === true;
+}
+
+function firstAvailableCloudViewerSource() {
+  for (var source of cloudViewerConfiguredSources) {
+    if (isCloudViewerAvailable(source)) {
+      return source;
+    }
+  }
+  return null;
+}
+
+function buildViewerMediaUrl(relativePath, download) {
+  if (isCloudViewerSource(currentViewerSource)) {
+    var url = "api/v1/cloud/stream?provider=" + encodeURIComponent(currentViewerSource) + "&path=" + encodeURIComponent(relativePath);
+    if (download === true) {
+      url += "&download=1";
+    }
+    return url;
+  }
+  return "TeslaCam/" + relativePath;
+}
+
+function getVideoListUrlForSource(source) {
+  if (isCloudViewerSource(source)) {
+    return "api/v1/cloud/videolist?provider=" + encodeURIComponent(source);
+  }
+  return "cgi-bin/videolist.sh";
+}
+
+function setVideoElemSource(elem, relativePath) {
+  if (relativePath == undefined) {
+    elem.removeAttribute('src');
+    return;
+  }
+  elem.src = cachebustingurl(buildViewerMediaUrl(relativePath, false));
+}
+
+function updateVideoSourceSelector() {
+  var picker = document.getElementById("sourcepicker");
+  var select = document.getElementById("videosource");
+  if (select == null || picker == null) {
+    return;
+  }
+  var gcsOption = select.querySelector("option[value='" + VIEWER_SOURCE_GCS + "']");
+  var s3Option = select.querySelector("option[value='" + VIEWER_SOURCE_S3 + "']");
+
+  if (gcsOption != null) {
+    gcsOption.textContent = cloudViewerLabelForProvider(VIEWER_SOURCE_GCS);
+    gcsOption.hidden = !isCloudViewerConfigured(VIEWER_SOURCE_GCS);
+    gcsOption.disabled = isCloudViewerConfigured(VIEWER_SOURCE_GCS) && !isCloudViewerAvailable(VIEWER_SOURCE_GCS);
+  }
+  if (s3Option != null) {
+    s3Option.textContent = cloudViewerLabelForProvider(VIEWER_SOURCE_S3);
+    s3Option.hidden = !isCloudViewerConfigured(VIEWER_SOURCE_S3);
+    s3Option.disabled = isCloudViewerConfigured(VIEWER_SOURCE_S3) && !isCloudViewerAvailable(VIEWER_SOURCE_S3);
+  }
+
+  if (cloudViewerConfiguredSources.length == 0) {
+    picker.style.display = "none";
+    currentViewerSource = VIEWER_SOURCE_LOCAL;
+    select.value = currentViewerSource;
+    return;
+  }
+
+  picker.style.display = "flex";
+  picker.classList.toggle("unavailable", firstAvailableCloudViewerSource() == null);
+
+  if (isCloudViewerSource(currentViewerSource)) {
+    if (!isCloudViewerConfigured(currentViewerSource) || !isCloudViewerAvailable(currentViewerSource)) {
+      var fallback = firstAvailableCloudViewerSource();
+      currentViewerSource = fallback == null ? VIEWER_SOURCE_LOCAL : fallback;
+    }
+  }
+
+  select.value = currentViewerSource;
+}
+
+function onVideoSourceChanged(newSource) {
+  if (newSource != VIEWER_SOURCE_LOCAL && !isCloudViewerSource(newSource)) {
+    return;
+  }
+  if (isCloudViewerSource(newSource) && (!isCloudViewerConfigured(newSource) || !isCloudViewerAvailable(newSource))) {
+    updateVideoSourceSelector();
+    return;
+  }
+  if (newSource == currentViewerSource) {
+    return;
+  }
+  currentViewerSource = newSource;
+  localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+  loadViewerClips();
+}
+
+function clearViewerData() {
+  if (currentsequence != undefined) {
+    currentsequence.pause();
+  }
+  currentsequence = undefined;
+  videos = {};
+  for (var i of ["RecentClips", "SavedClips", "SentryClips"]) {
+    var d = document.getElementById(i);
+    d.textContent = "";
+  }
+  for (var v of videoelems) {
+    v.pause();
+    v.removeAttribute('src');
+    v.style.visibility = "hidden";
+  }
+  for (var c of canvaselems) {
+    var ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
+}
+
+function checkCloudViewerAvailability(callback) {
+  readfile({
+    url: "api/v1/cloud/health",
+    callback: function(value) {
+      try {
+        var health = JSON.parse(value);
+        cloudViewerConfiguredSources = [];
+        cloudViewerAvailableBySource = {};
+        defaultCloudViewerSource = null;
+
+        if (health.enabled === true) {
+          var configuredProviders = [];
+          if (Array.isArray(health.configured_providers)) {
+            configuredProviders = health.configured_providers;
+          } else if (typeof health.provider === "string") {
+            configuredProviders = [health.provider];
+          }
+
+          for (var source of configuredProviders) {
+            if (!isCloudViewerSource(source)) {
+              continue;
+            }
+            if (!cloudViewerConfiguredSources.includes(source)) {
+              cloudViewerConfiguredSources.push(source);
+            }
+          }
+
+          if (typeof health.default_provider === "string" && isCloudViewerSource(health.default_provider) &&
+            cloudViewerConfiguredSources.includes(health.default_provider)) {
+            defaultCloudViewerSource = health.default_provider;
+          } else if (typeof health.provider === "string" && isCloudViewerSource(health.provider) &&
+            cloudViewerConfiguredSources.includes(health.provider)) {
+            defaultCloudViewerSource = health.provider;
+          }
+
+          var healthyProviders = [];
+          if (Array.isArray(health.healthy_providers)) {
+            healthyProviders = health.healthy_providers;
+          } else if (typeof health.provider === "string" && health.healthy !== false) {
+            healthyProviders = [health.provider];
+          }
+
+          for (var source2 of cloudViewerConfiguredSources) {
+            var healthy = healthyProviders.includes(source2);
+            if (!healthy && typeof health.providers === "object" && health.providers != null &&
+              typeof health.providers[source2] === "object" && health.providers[source2] != null) {
+              healthy = (health.providers[source2].healthy === true);
+            }
+            if (!healthy && healthyProviders.length == 0 &&
+              !(typeof health.providers === "object" && health.providers != null && source2 in health.providers)) {
+              healthy = true;
+            }
+            cloudViewerAvailableBySource[source2] = healthy;
+          }
+        }
+      } catch (err) {
+        cloudViewerConfiguredSources = [];
+        cloudViewerAvailableBySource = {};
+        defaultCloudViewerSource = null;
+      }
+      updateVideoSourceSelector();
+      callback();
+    },
+    onerror: function() {
+      cloudViewerConfiguredSources = [];
+      cloudViewerAvailableBySource = {};
+      defaultCloudViewerSource = null;
+      updateVideoSourceSelector();
+      callback();
+    }
+  });
 }
 
 var videos={};
@@ -2849,7 +3089,48 @@ function flipdropdownsfromclick() {
 
 readconfig();
 
-readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
+var appInitialized = false;
+function ensureAppInitialized() {
+  if (!appInitialized) {
+    initialize();
+    appInitialized = true;
+  }
+}
+
+function loadViewerClips() {
+  clearViewerData();
+  var nr = document.querySelector(".noclips");
+  if (isCloudViewerSource(currentViewerSource)) {
+    nr.innerHTML = "Loading " + cloudViewerLabelForProvider(currentViewerSource) + " recordings...";
+  } else {
+    nr.innerHTML = "Loading...";
+  }
+  readfile({
+    url: getVideoListUrlForSource(currentViewerSource),
+    callback: parseVideoList,
+    onerror: function(request) {
+      if (isCloudViewerSource(currentViewerSource)) {
+        cloudViewerAvailableBySource[currentViewerSource] = false;
+        var fallbackSource = firstAvailableCloudViewerSource();
+        if (fallbackSource == null) {
+          fallbackSource = VIEWER_SOURCE_LOCAL;
+        }
+        if (currentViewerSource != fallbackSource) {
+          currentViewerSource = fallbackSource;
+          localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+          updateVideoSourceSelector();
+          loadViewerClips();
+          return;
+        }
+      }
+      nr.innerHTML = "No recordings";
+      ensureAppInitialized();
+      log("failed to load videolist: " + request.status);
+    }
+  });
+}
+
+function parseVideoList(value) {
   var newest="0-";
   var newestsequence;
   var lines = value.split('\n');
@@ -2871,11 +3152,14 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
           teslausb no longer creates an "event.json" folder */
        continue;
     }
-    if (!videos.hasOwnProperty(group)) {
+    if (group != "RecentClips" && group != "SavedClips" && group != "SentryClips") {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(videos, group)) {
       videos[group]={};
     }
     var sequence;
-    if (videos[group].hasOwnProperty(sequencename)) {
+    if (Object.prototype.hasOwnProperty.call(videos[group], sequencename)) {
       sequence=videos[group][sequencename];
     } else {
       sequence=new VideoSequence(group, sequencename);
@@ -2896,8 +3180,8 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
       sequence.jsonfile[0] = jsonpath;
       // add the json to the RecentClips that includes this SentryClip
       var clipday = sequencename.substr(0,10);
-      if (videos.hasOwnProperty("RecentClips") &&
-        videos["RecentClips"].hasOwnProperty(clipday)) {
+      if (Object.prototype.hasOwnProperty.call(videos, "RecentClips") &&
+        Object.prototype.hasOwnProperty.call(videos["RecentClips"], clipday)) {
         videos["RecentClips"][clipday].jsonfile.push(jsonpath);
         log("added event json to " + clipday);
       } else {
@@ -2918,6 +3202,9 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
     nr.style.display='';
   }
   for (i of ["RecentClips", "SavedClips", "SentryClips"]) {
+    if (!Object.prototype.hasOwnProperty.call(videos, i)) {
+      videos[i] = {};
+    }
     var d=document.getElementById(i);
     for (c in videos[i]) {
       // Regular expression to match the date format
@@ -2968,9 +3255,42 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
     newestsequence.select();
   }
   nr.innerHTML = "No recordings";
-  initialize();
+  ensureAppInitialized();
 }
-});
+
+function initializeViewerSources() {
+  var rememberedSource = localStorageGet(VIEWER_SOURCE_KEY);
+  var legacyCloudRemembered = (rememberedSource == LEGACY_VIEWER_SOURCE_CLOUD);
+
+  if (rememberedSource == VIEWER_SOURCE_LOCAL || rememberedSource == VIEWER_SOURCE_GCS || rememberedSource == VIEWER_SOURCE_S3) {
+    currentViewerSource = rememberedSource;
+  }
+  updateVideoSourceSelector();
+  checkCloudViewerAvailability(function() {
+    if (legacyCloudRemembered) {
+      if (defaultCloudViewerSource != null && isCloudViewerAvailable(defaultCloudViewerSource)) {
+        currentViewerSource = defaultCloudViewerSource;
+      } else {
+        var firstCloud = firstAvailableCloudViewerSource();
+        currentViewerSource = firstCloud == null ? VIEWER_SOURCE_LOCAL : firstCloud;
+      }
+    }
+
+    if (isCloudViewerSource(currentViewerSource) &&
+      (!isCloudViewerConfigured(currentViewerSource) || !isCloudViewerAvailable(currentViewerSource))) {
+      var fallback = firstAvailableCloudViewerSource();
+      currentViewerSource = fallback == null ? VIEWER_SOURCE_LOCAL : fallback;
+    }
+
+    if (localStorageGet(VIEWER_SOURCE_KEY) != currentViewerSource) {
+      localStorageSet(VIEWER_SOURCE_KEY, currentViewerSource);
+    }
+    updateVideoSourceSelector();
+    loadViewerClips();
+  });
+}
+
+initializeViewerSources();
 
 function stringtoseconds(s) {
   var secs = (3600 * s.substring(0, 2)) +

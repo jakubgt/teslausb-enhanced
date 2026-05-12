@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: ./cloudviewer-api
+    environment:
+      CLOUD_VIEWER_ADDR: ":8080"
+      LOCAL_TESLACAM_PATH: /data/TeslaCam
+      CLOUD_PROVIDER: ${CLOUD_PROVIDER:-gcs}
+      GCS_BUCKET: ${GCS_BUCKET:-}
+      GCS_PREFIX: ${GCS_PREFIX-TeslaCam}
+      GCS_SIGN_TTL_SECONDS: ${GCS_SIGN_TTL_SECONDS:-900}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_PREFIX: ${S3_PREFIX-TeslaCam}
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_SIGN_TTL_SECONDS: ${S3_SIGN_TTL_SECONDS:-900}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/gcs/gcs-service-account.json
+    volumes:
+      - ${LOCAL_TESLACAM_PATH:-./local-TeslaCam}:/data/TeslaCam:ro
+      - ${GCS_CREDENTIALS_DIR:-.}:/run/gcs:ro
+
+  web:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:${CLOUD_VIEWER_PORT:-18080}:80"
+    volumes:
+      - ./teslausb-www/html:/usr/share/nginx/html:ro
+      - ./docker/nginx-cloudviewer.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${LOCAL_TESLACAM_PATH:-./local-TeslaCam}:/data/TeslaCam:ro

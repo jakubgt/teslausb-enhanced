@@ -4,3 +4,8 @@
 *.ipr
 *.iws
 .idea/
+.env
+local-TeslaCam/
+gcs-service-account.json
+.playwright-cli/
+!docker/nginx-cloudviewer.conf
