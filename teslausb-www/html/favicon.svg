@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6f6f6f"/>
+      <stop offset="1" stop-color="#454545"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0.5" cy="0.44" r="0.8">
+      <stop offset="0" stop-color="#5c5c5c"/>
+      <stop offset="0.5" stop-color="#161616"/>
+      <stop offset="1" stop-color="#000000"/>
+    </radialGradient>
+    <radialGradient id="refl" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="rec" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#e31937"/>
+      <stop offset="0.5" stop-color="#e31937"/>
+      <stop offset="1" stop-color="#e31937" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="lensclip">
+      <circle cx="32" cy="32" r="11.2"/>
+    </clipPath>
+  </defs>
+  <rect x="6" y="6" width="52" height="52" rx="13" fill="url(#body)"/>
+  <circle cx="49" cy="15" r="6" fill="url(#rec)"/>
+  <circle cx="32" cy="32" r="17" fill="#0a0a0a"/>
+  <circle cx="32" cy="32" r="13.7" fill="#717171"/>
+  <circle cx="32" cy="32" r="11.2" fill="url(#glass)"/>
+  <g clip-path="url(#lensclip)">
+    <ellipse cx="36" cy="27" rx="5.5" ry="3" fill="url(#refl)" transform="rotate(-35 36 27)"/>
+  </g>
+</svg>
