@@ -11,6 +11,30 @@ server {
     client_max_body_size 0;
     fastcgi_request_buffering off;
 
+    # Compress text assets (big win for the JS/CSS bundles over Wi-Fi)
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml application/manifest+json;
+
+    location /new {
+        return 301 /;
+    }
+
+    # Fingerprinted bundles never change: cache them aggressively.
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        auth_basic off;
+    }
+    # The entry document must always reflect the latest deploy.
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+        auth_basic off;
+    }
+
     location / {
         try_files $uri $uri/ =404;
         auth_basic off;

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7c7c80"/>
+      <stop offset="1" stop-color="#353538"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#adadad"/>
+      <stop offset="1" stop-color="#565656"/>
+    </linearGradient>
+    <radialGradient id="inner" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5c5c5c"/>
+      <stop offset="1" stop-color="#232323"/>
+    </radialGradient>
+    <radialGradient id="rec" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#e31937"/>
+      <stop offset="0.5" stop-color="#e31937"/>
+      <stop offset="1" stop-color="#e31937" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="lensclip">
+      <circle cx="32" cy="32" r="12.5"/>
+    </clipPath>
+  </defs>
+
+  <rect x="6" y="6" width="52" height="52" rx="13" fill="url(#body)"/>
+  <circle cx="49" cy="15" r="6" fill="url(#rec)"/>
+
+  <!-- lens: black rim, gray ring, flat dark glass, inner light-gray element -->
+  <circle cx="32" cy="32" r="17" fill="#0a0a0a"/>
+  <circle cx="32" cy="32" r="13.7" fill="url(#ring)"/>
+  <circle cx="32" cy="32" r="12.5" fill="#0a0a0a"/>
+  <circle cx="32" cy="32" r="8" fill="url(#inner)"/>
+
+  <!-- flare sandwiched at the boundary of the inner circle and the dark glass -->
+  <g clip-path="url(#lensclip)">
+    <circle cx="37" cy="27" r="2.9" fill="#8c8c8c" opacity="0.5"/>
+  </g>
+</svg>
