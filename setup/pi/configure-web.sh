@@ -45,13 +45,8 @@ fi
 # between Chrome and Tesla's recordings
 g++ -o /root/cttseraser -D_FILE_OFFSET_BITS=64 "$SOURCE_DIR/teslausb-www/cttseraser.cpp" -lstdc++ -lfuse
 
-# install new UI (compiled js/css files)
-curlwrapper -L -o /tmp/webui.tgz https://github.com/marcone/teslausb-webui/releases/latest/download/teslausb-ui.tgz
-tar -C /var/www/html -xf /tmp/webui.tgz
-if [ -d /var/www/html/new ] && ! [ -e /var/www/html/new/favicon.ico ]
-then
-  ln -s /var/www/html/favicon.ico /var/www/html/new/favicon.ico
-fi
+# The web UI (CloudScape SPA) ships prebuilt in teslausb-www/html and is
+# installed by the cp above; it is the default and only interface.
 
 
 cat > /sbin/mount.ctts << EOF
