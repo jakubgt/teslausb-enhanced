@@ -1,14 +1,66 @@
-name: ShellCheck
+name: Validate
 
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install validation dependencies
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            bash dash g++ libfuse-dev libnginx-mod-http-fancyindex nginx \
+            pkg-config python3 rsync shellcheck sudo
       - name: Run ShellCheck
         shell: bash
         run: |
           cd "${GITHUB_WORKSPACE}"
           ./check.sh
+      - name: Compile Python helpers
+        run: python3 -m compileall -q ./run
+      - name: Run Python helper tests
+        run: python3 -m unittest discover -s ./tests -p 'test_*.py' -v
+      - name: Compile the FUSE helper
+        shell: bash
+        run: |
+          g++ -D_FILE_OFFSET_BITS=64 ./teslausb-www/cttseraser.cpp \
+            $(pkg-config --cflags --libs fuse) -o /tmp/cttseraser
+      - name: Validate sudoers policy
+        run: sudo visudo -cf ./teslausb-www/teslausb-web-sudoers
+      - name: Validate nginx configuration
+        shell: bash
+        run: |
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo install -m 0644 ./teslausb-www/teslausb.nginx \
+            /etc/nginx/sites-enabled/teslausb.nginx
+          sudo nginx -t
+      - name: Run shell regression and archive integration tests
+        shell: bash
+        run: |
+          cd "${GITHUB_WORKSPACE}"
+          bash ./tests/mount-helpers-test.sh
+          bash ./tests/make-snapshot-failure-test.sh
+          bash ./tests/copy-music-test.sh
+          bash ./tests/cgi-security-test.sh
+          bash ./tests/archive-common-test.sh
+          bash ./tests/ble-artifact-test.sh
+          bash ./tests/runtime-qol-test.sh
+          bash ./tests/dependency-strategy-test.sh
+          sudo bash ./tests/setup-security-test.sh
+          bash ./tests/web-config-security-test.sh
+      - name: Run JavaScript helper tests
+        run: >-
+          node --test
+          ./tests/filebrowser-helpers.test.js
+          ./tests/index-helpers.test.js
+          ./tests/config-tool.test.js

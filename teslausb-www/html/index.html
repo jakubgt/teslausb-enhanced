@@ -86,6 +86,9 @@ iframe {
   height: 32px;
   border: none;
   background: url(icons/hamburger.svg);
+  background-color: transparent;
+  cursor: pointer;
+  padding: 0;
   z-index: 15;
 }
 
@@ -98,15 +101,21 @@ iframe {
   line-height: 32px;
   text-align: center;
   font-size: 22px;
+  border: 0;
+  background: transparent;
+  padding: 0 42px;
 }
 
 .settingsbuttondiv {
-  padding-left: 8px;
+  padding: 0;
   flex: 0 0 22px;
   height: 22px;
   top: 6px;
   right: 2px;
   position: relative;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
 .tablabel {
@@ -122,23 +131,21 @@ iframe {
 @media screen and (max-width: 824px) {
   .hamburger {
     display: block;
+    width: 44px;
+    height: 44px;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 28px 28px;
   }
 
   .tabheaderholder {
-    // Changing the visibility to hide and show the menu in response
-    // to a click appears to trigger a bug in Chrome that makes it
-    // consume lots of CPU and makes some page interactions very
-    // sluggish until the user performs another interaction like
-    // toggling menu again with the hamburger button or clicking
-    // on the filebrowser splitter.
-    // Hiding and showing the menu by changing its position appears
-    // to avoid the bug.
-    //visibility: hidden;
+    /* Moving the menu instead of toggling visibility avoids a Chrome bug
+       that can cause high CPU use after opening the mobile navigation. */
     left: 100%;
     flex-direction: column;
     height: 100%;
     width: unset;
-    top: 32px;
+    top: 44px;
     background: #f8f8f8;
     z-index: 20;
     padding-right: 34px;
@@ -159,11 +166,12 @@ iframe {
   }
 
   .hamburger.brgropen ~ .tabheaderholder {
-    //visibility: visible;
     left: 0;
   }
   .currenttabname {
     display: block;
+    height: 44px;
+    line-height: 44px;
   }
 
   .hamburger.brgropen ~ .tabheaderholder > .githublink {
@@ -173,11 +181,24 @@ iframe {
   }
 
   .settingsbuttondiv {
+    display: grid;
     position: fixed;
     flex: unset;
-    right: 2px;
-    top: 6px;
+    right: 0;
+    top: 0;
+    width: 44px;
+    height: 44px;
+    place-items: center;
     visibility: visible;
+  }
+
+  .settingsbutton {
+    width: 24px;
+    height: 24px;
+  }
+
+  .tabholder > .tab {
+    top: 44px;
   }
 }
 
@@ -206,6 +227,17 @@ iframe {
 
 .tabradiobtn {
   display: none;
+}
+
+.tablabel:focus-visible,
+.hamburger:focus-visible,
+.currenttabname:focus-visible,
+.settingsbuttondiv:focus-visible,
+.flatbutton:focus-visible,
+.subnav:focus-visible,
+.dropdownitem:focus-visible {
+  outline: 3px solid #1769aa;
+  outline-offset: 2px;
 }
 
 #tab1:checked ~ .tab.content1,
@@ -280,6 +312,32 @@ button {
   overflow:auto;
   border-top:1px solid black;
   border-bottom:1px solid black;
+}
+
+.mypre.log-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.resource-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+}
+
+.resource-status {
+  color: #555;
+  min-height: 1.2em;
+}
+
+.resource-status.error,
+.viewerstatus.error,
+.status_refresh.error,
+.status_archive.error {
+  color: #a40000;
+  font-weight: bold;
 }
 
 td {
@@ -401,6 +459,19 @@ video {
   min-height: 46px;
 }
 
+.viewerstatus {
+  background: rgba(0, 0, 0, 0.82);
+  color: white;
+  display: none;
+  left: 50%;
+  max-width: min(90vw, 700px);
+  padding: 8px 12px;
+  position: fixed;
+  top: 52px;
+  transform: translateX(-50%);
+  z-index: 30;
+}
+
 .navbar a {
   float: left;
   font-size: 16px;
@@ -421,6 +492,10 @@ video {
   background-color: inherit;
   font-family: inherit;
   margin: 0;
+}
+
+.subnav {
+  cursor: pointer;
 }
 
 .noclips {
@@ -578,7 +653,9 @@ video {
   color: black;
 }
 
-.subnav:hover .subnav-content {
+.subnav:hover .subnav-content,
+.subnav:focus-within .subnav-content,
+.subnav.keyboard-open .subnav-content {
   display: block;
 }
 
@@ -612,6 +689,23 @@ video {
     opacity: 1;
     transition: opacity 0.5s;
     transition-delay: 0s;
+  }
+}
+
+@media(hover: none), (pointer: coarse) {
+  #videocontrols {
+    opacity: 0.72;
+  }
+
+  .flatbutton {
+    min-height: 52px;
+    min-width: 52px;
+  }
+
+  .subnav,
+  .noclips {
+    padding-left: 10px;
+    padding-right: 10px;
   }
 }
 
@@ -684,6 +778,9 @@ video {
   float: right;
   font-size: 28px;
   font-weight: bold;
+  border: 0;
+  background: transparent;
+  padding: 0 4px;
 }
 
 .closebutton:hover,.closebutton:focus {
@@ -789,6 +886,76 @@ video {
   border: 1px solid lightgrey;
 }
 
+.status_archive {
+  border-left: 4px solid #777;
+  margin-top: 7px;
+  padding: 5px 8px;
+}
+
+.status_archive.success {
+  border-left-color: #188038;
+}
+
+.status_archive.running {
+  border-left-color: #1769aa;
+}
+
+.status_archive.error {
+  border-left-color: #a40000;
+}
+
+.status_archive progress {
+  display: block;
+  margin-top: 4px;
+  max-width: 420px;
+  width: 100%;
+}
+
+@media screen and (max-width: 824px) {
+  .content4 > div {
+    box-sizing: border-box;
+    padding: 4px 8px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .content4 .group2 {
+    box-sizing: border-box;
+    min-height: 44px;
+    max-width: 100%;
+    width: min(100%, 320px);
+  }
+
+  .resource-actions button,
+  .modalcontent button {
+    min-height: 44px;
+  }
+
+  .modalcontent {
+    box-sizing: border-box;
+    margin: 10vh auto;
+    max-height: 80vh;
+    overflow: auto;
+    width: calc(100% - 24px);
+  }
+
+  .pistatus,
+  .resource-status {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, #videocontrols {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.status_archive_message {
+  color: #555;
+  font-size: 0.9em;
+  margin-top: 2px;
+}
+
 /* put some vertical spacing between the children of the status area */
 .pistatus > *:not(:last-child) {
   margin-bottom: 3px;
@@ -808,8 +975,8 @@ video {
 </head>
 <body>
 <div class="tabholder">
-  <div class="hamburger" onclick="toggleHamburgerMenu();"></div>
-  <div class="currenttabname" onclick="toggleHamburgerMenu();"></div>
+  <button type="button" class="hamburger" aria-label="Open navigation" aria-expanded="false" onclick="toggleHamburgerMenu();"></button>
+  <button type="button" class="currenttabname" aria-label="Open navigation" aria-expanded="false" onclick="toggleHamburgerMenu();"></button>
   <input class="tabradiobtn" type="radio" name="tabs" id="tab1">
   <input class="tabradiobtn" type="radio" name="tabs" id="tab2">
   <input class="tabradiobtn" type="radio" name="tabs" id="tab3">
@@ -817,50 +984,58 @@ video {
   <input class="tabradiobtn" type="radio" name="tabs" id="tab5">
   <input class="tabradiobtn" type="radio" name="tabs" id="tab6">
   <input class="tabradiobtn" type="radio" name="tabs" id="tab7" checked>
-  <div class="tabheaderholder">
-    <label for="tab1" class="tablabel tablabel1">Diagnostics</label>
-    <label for="tab2" class="tablabel tablabel2">Archiveloop log</label>
-    <label for="tab3" class="tablabel tablabel3">Setup log</label>
-    <label for="tab4" class="tablabel tablabel4">Tools</label>
-    <label for="tab5" class="tablabel tablabel5">Recordings</label>
-    <label for="tab6" class="tablabel tablabel6">Files</label>
-    <label for="tab7" class="tablabel tablabel7">Viewer</label>
+  <div class="tabheaderholder" role="tablist" aria-label="TeslaUSB sections">
+    <label for="tab1" class="tablabel tablabel1" role="tab" tabindex="0">Diagnostics</label>
+    <label for="tab2" class="tablabel tablabel2" role="tab" tabindex="0">Archiveloop log</label>
+    <label for="tab3" class="tablabel tablabel3" role="tab" tabindex="0">Setup log</label>
+    <label for="tab4" class="tablabel tablabel4" role="tab" tabindex="0">Tools</label>
+    <label for="tab5" class="tablabel tablabel5" role="tab" tabindex="0">Recordings</label>
+    <label for="tab6" class="tablabel tablabel6" role="tab" tabindex="0">Files</label>
+    <label for="tab7" class="tablabel tablabel7" role="tab" tabindex="0">Viewer</label>
 
     <div class="stretchable"></div>
 
-    <a href="https://www.github.com/marcone/teslausb" target="_blank" class="githublink">TeslaUSB on GitHub</a>
+    <a href="https://www.github.com/marcone/teslausb" target="_blank" rel="noopener" class="githublink">TeslaUSB on GitHub</a>
 
-    <div class="settingsbuttondiv" title="Settings">
-      <svg class="settingsbutton" viewBox="0 0 38 38">
+    <button type="button" class="settingsbuttondiv" title="Settings" aria-label="Open settings">
+      <svg class="settingsbutton" aria-hidden="true" viewBox="0 0 38 38">
         <path d="M12 6l1-5c1-1 7-1 8 0l1 5a10 10 0 015 4l-16 6zM24.892 7.67l4.83-1.634c1.366.366 4.366 5.562 4 6.928l-3.83 3.366a10 10 0 01-.964 6.33L15.732 11.804zM29.892 19.67l3.83 3.366c.366 1.366-2.634 6.562-4 6.928l-4.83-1.634a10 10 0 01-5.964 2.33l2.804-16.856zM22 30l-1 5c-1 1-7 1-8 0l-1-5a10 10 0 01-5-4l16-6zM9.108 28.33l-4.83 1.634c-1.366-.366-4.366-5.562-4-6.928l3.83-3.366a10 10 0 01.964-6.33l13.196 10.856zM4.108 16.33l-3.83-3.366c-.366-1.366 2.634-6.562 4-6.928l4.83 1.634a10 10 0 015.964-2.33l-2.804 16.856z"/>
       </svg>
-    </div>
+    </button>
   </div>
 
   <div class="tab content1">
     <div style="width:100%;height:calc(100% - 4px)">
-      <pre class="mypre" id="diagnosticspre">...</pre>
-      <div style="padding:4px;">
+      <pre class="mypre" id="diagnosticspre" tabindex="0" aria-label="Diagnostics report">...</pre>
+      <div class="resource-actions">
         <button class="group1" id="diagrefreshbtn" onclick="refreshdiagnostics();">Refresh diagnostics</button>
         <button class="group1" id="diagdwnbtn" onclick="download('diagnostics.txt', document.getElementById('diagnosticspre').textContent);">Download diagnostics</button>
+        <button class="group1" data-wrap-target="diagnosticspre" onclick="toggleLogWrap('diagnosticspre', this);">Wrap lines</button>
+        <span class="resource-status" id="diagnosticsstatus" role="status" aria-live="polite"></span>
       </div>
     </div>
   </div>
 
   <div class="tab content2">
     <div style="width:100%;height:calc(100% - 4px)">
-      <pre class="mypre" id="archivelooppre">Loading...</pre>
-      <div style="padding:4px;">
+      <pre class="mypre" id="archivelooppre" tabindex="0" aria-label="Archive service log">Loading...</pre>
+      <div class="resource-actions">
+        <button class="group1" onclick="reloadLog('archivelooppre', 'archiveloop.log', 'aldwnbtn', 'archiveloopstatus');">Refresh</button>
         <button class="group1" id="aldwnbtn" onclick="download('archiveloop.log', document.getElementById('archivelooppre').textContent);">Download archiveloop log</button>
+        <button class="group1" data-wrap-target="archivelooppre" onclick="toggleLogWrap('archivelooppre', this);">Wrap lines</button>
+        <span class="resource-status" id="archiveloopstatus" role="status" aria-live="polite"></span>
       </div>
     </div>
   </div>
 
   <div class="tab content3">
     <div style="width:100%;height:calc(100% - 4px)">
-      <pre class="mypre" id="setuplogpre">Loading...</pre>
-      <div style="padding:4px;">
+      <pre class="mypre" id="setuplogpre" tabindex="0" aria-label="Setup log">Loading...</pre>
+      <div class="resource-actions">
+        <button class="group1" onclick="reloadLog('setuplogpre', 'teslausb-headless-setup.log', 'sudwnbtn', 'setuplogstatus');">Refresh</button>
         <button class="group1" id="sudwnbtn" onclick="download('teslausb-headless-setup.log', document.getElementById('setuplogpre').textContent);">Download setup log</button>
+        <button class="group1" data-wrap-target="setuplogpre" onclick="toggleLogWrap('setuplogpre', this);">Wrap lines</button>
+        <span class="resource-status" id="setuplogstatus" role="status" aria-live="polite"></span>
       </div>
     </div>
   </div>
@@ -868,6 +1043,7 @@ video {
   <div class="tab content4">
     <div style="width:calc(100% - 4px);margin: 2px;">
       <div class="pistatus">
+        <div class="status_refresh" role="status" aria-live="polite"></div>
         <div class="status_uptime"></div>
         <div class="status_temp"></div>
         <div class="status_fan"></div>
@@ -900,13 +1076,19 @@ video {
           </span>
         </div>
         <div class="status_throttled"></div>
+        <div class="status_archive" hidden role="status" aria-live="polite">
+          <div class="status_archive_summary"></div>
+          <progress class="status_archive_progress" max="1" value="0" hidden aria-label="Archive transfer progress"></progress>
+          <div class="status_archive_message"></div>
+        </div>
       </div>
-      <button class="group2" id="toggledrives" onclick="toggledrivesfunc();">...</button>
+      <button class="group2" id="toggledrives" onclick="toggledrivesfunc(this);">...</button>
+      <span id="drivestext" role="status" aria-live="polite" style="padding-left:20px;"></span>
       <p>
-      <button class="group2" onclick="syncfunc();">Trigger archive/sync</button>
-      <span id="synctext" style="padding-left:20px;"></span>
+      <button class="group2" id="syncbutton" onclick="syncfunc(this);">Trigger archive/sync</button>
+      <span id="synctext" role="status" aria-live="polite" style="padding-left:20px;"></span>
       <p>
-      <button class="group2" onclick="startspeedtest(this);" id="speedtestbutton">Run network speed test</button>
+      <button class="group2" onclick="startspeedtest(this);" id="speedtestbutton" aria-describedby="speedtext">Run 15-second network speed test</button>
       <span>
         <svg id="speedspinner" width="20" height="20" style="margin-left: 10px; vertical-align:middle;visibility:hidden;" viewBox="-12 -12 24 24">
           <g stroke-linecap="round" stroke-width="2">
@@ -923,21 +1105,21 @@ video {
             <use transform="rotate(324)" xlink:href="#a" stroke="#000000"/>
           </g>
         </svg>
-        <span id="speedtext" style="padding-left:10px;"></span>
+        <span id="speedtext" role="status" aria-live="polite" style="padding-left:10px;"></span>
       </span>
       <p>
         <div id="pairingdiv">
           <button class="group2" id="pairKey" onclick="pairBLEkey();">Pair BLE with Car</button>
-          <span id="pairtext" style="padding-left:20px;"></span>
+          <span id="pairtext" role="status" aria-live="polite" style="padding-left:20px;"></span>
         </div>
       <p>
-      <button class="group2" id="rebootbutton" onclick="rebootfunc(this);">Restart Raspberry Pi</button><span id="reboottext" style="padding-left:20px;"></span>
+      <button class="group2" id="rebootbutton" onclick="rebootfunc(this);">Restart Raspberry Pi</button><span id="reboottext" role="status" aria-live="polite" style="padding-left:20px;"></span>
     </div>
   </div>
 
   <div class="tab content5">
     <div style="width:100%;height:calc(100% - 4px);">
-      <iframe class="recordings" src="TeslaCam/" onload="hideRecordingParent();"></iframe>
+      <iframe class="recordings" title="TeslaCam recording files" src="TeslaCam/" onload="hideRecordingParent();"></iframe>
     </div>
   </div>
 
@@ -948,20 +1130,21 @@ video {
 
   <div class="tab content7">
     <div class="videoholderparent" style="width:100%;height:100%;background:#333;" onmousemove="showcontrols()">
+      <div id="viewerstatus" class="viewerstatus" role="status" aria-live="polite"></div>
       <div class="navbar">
         <div class="noclips">Loading...</div>
-        <div class="subnav">RecentClips
+        <div class="subnav" role="button" tabindex="0" aria-haspopup="true">RecentClips
           <div id="RecentClips" class="subnav-content"></div>
         </div>
-        <div class="subnav">SavedClips
+        <div class="subnav" role="button" tabindex="0" aria-haspopup="true">SavedClips
           <div id="SavedClips" class="subnav-content"></div>
         </div>
-        <div class="subnav">SentryClips
+        <div class="subnav" role="button" tabindex="0" aria-haspopup="true">SentryClips
           <div id="SentryClips" class="subnav-content"></div>
         </div>
 
-        <div class="subnav layoutbtn" style="float:right;">
-          <svg class="layoutsvg" width="52" height="26" viewBox="0 0 26 13">
+        <div class="subnav layoutbtn" style="float:right;" role="button" tabindex="0" aria-haspopup="true" aria-label="Choose viewer layout">
+          <svg class="layoutsvg" aria-hidden="true" width="52" height="26" viewBox="0 0 26 13">
             <path d="M 2 6 L 8 6 L 8 2 L 2 2 z M 10 6 L 16 6 L 16 2 L 10 2 z M 18 6 L 24 6 L 24 2 L 18 2 z M 2 12 L 8 12 L 8 8 L 2 8 z M 10 12 L 16 12 L 16 8 L 10 8 z M 18 12 L 24 12 L 24 8 L 18 8 z"/>
           </svg>
           <div id="layouts" class="subnav-content">
@@ -975,26 +1158,26 @@ video {
         </div>
       </div>
       <div class="videoholder layout3">
-        <video disableRemotePlayback playsinline id="leftrepeaterview" class="videogriditem leftrepeaterview" style="z-index:1;"></video>
+        <video disableRemotePlayback playsinline aria-label="Left repeater camera" id="leftrepeaterview" class="videogriditem leftrepeaterview" style="z-index:1;"></video>
         <canvas id="leftrepeaterviewfreeze" class="videogriditem leftrepeaterview"  style="z-index:0;"></canvas>
 
-        <video disableRemotePlayback playsinline id="leftpillarview" class="videogriditem leftpillarview" style="z-index:1;"></video>
+        <video disableRemotePlayback playsinline aria-label="Left pillar camera" id="leftpillarview" class="videogriditem leftpillarview" style="z-index:1;"></video>
         <canvas id="leftpillarviewfreeze" class="videogriditem leftpillarview"  style="z-index:0;"></canvas>
 
-        <video disableRemotePlayback playsinline id="frontview" class="videogriditem frontview" style="z-index:1;"></video>
+        <video disableRemotePlayback playsinline aria-label="Front camera" id="frontview" class="videogriditem frontview" style="z-index:1;"></video>
         <canvas id="frontviewfreeze" class="videogriditem frontview" style="z-index:0;"></canvas>
 
-        <video disableRemotePlayback playsinline id="rightrepeaterview" class="videogriditem rightrepeaterview" style="z-index:1;"></video>
+        <video disableRemotePlayback playsinline aria-label="Right repeater camera" id="rightrepeaterview" class="videogriditem rightrepeaterview" style="z-index:1;"></video>
         <canvas id="rightrepeaterviewfreeze" class="videogriditem rightrepeaterview" style="z-index:0;"></canvas>
 
-        <video disableRemotePlayback playsinline id="rightpillarview" class="videogriditem rightpillarview" style="z-index:1;"></video>
+        <video disableRemotePlayback playsinline aria-label="Right pillar camera" id="rightpillarview" class="videogriditem rightpillarview" style="z-index:1;"></video>
         <canvas id="rightpillarviewfreeze" class="videogriditem rightpillarview" style="z-index:0;"></canvas>
 
         <div class="videogriditem mapview" style="margin:0px;z-index:0;">
-          <iframe id="sentrymap"></iframe>
+          <iframe id="sentrymap" title="Recording location map"></iframe>
         </div>
 
-        <video disableRemotePlayback playsinline id="backview" class="videogriditem backview" style="z-index:1;"></video>
+        <video disableRemotePlayback playsinline aria-label="Rear camera" id="backview" class="videogriditem backview" style="z-index:1;"></video>
         <canvas id="backviewfreeze" class="videogriditem backview" style="z-index:0;"></canvas>
 
         <div id="infoholder" class="videogriditem infoview" style="margin-left:12px;color:white;">
@@ -1009,19 +1192,19 @@ video {
         <div id="videocontrols" >
           <input type="range" class="slider" id="position" name="position"
                  min="0" max="60" style="width:90%;max-width:600px;height:30px;z-index:2;"
-                 onmousemove="slidermousemove(event)">
+                 aria-label="Recording position" onmousemove="slidermousemove(event)">
           <div class="sliderpositionbubble">00:00</div>
           <div style="width:90%;max-width:600px;height:26px;margin-top:-24px;">
             <canvas id="tickmarkscanvas" style="width:100%;height:100%;"></canvas>
           </div>
           <div class="buttoncontainer">
-            <button id="skipback" class="flatbutton skipback" onclick="skipBack()">
+            <button id="skipback" class="flatbutton skipback" aria-label="Skip back 10 seconds" onclick="skipBack()">
               <svg class="mediabutton"><path d="M 19,28 A 10,10 0 1 0 9,18 M 8,18 10,18 9,20 z"></path></svg>
             </button>
-            <button id="playpause" class="flatbutton play" onclick="startPlaying()">
+            <button id="playpause" class="flatbutton play" aria-label="Play recording" onclick="startPlaying()">
               <svg class="mediabutton"><path></path></svg>
             </button>
-            <button id="skipforward" class="flatbutton skipforward" onclick="skipForward()">
+            <button id="skipforward" class="flatbutton skipforward" aria-label="Skip forward 30 seconds" onclick="skipForward()">
               <svg class="mediabutton"><path d="M 19,28 A 10,10 0 1 1 29,18 M 28,18 30,18 29,20 z"></path></svg>
             </button>
           </div>
@@ -1030,14 +1213,16 @@ video {
     </div>
   </div>
   <div id="settingsoverlay" class="modaloverlay">
-    <div class="modalcontent" style="max-width:500px">
+    <div class="modalcontent" role="dialog" aria-modal="true" aria-labelledby="settingsheading" style="max-width:500px">
       <div style="margin-bottom:10px">
-        <span>Settings</span>
-        <span class="closebutton">&times;</span>
+        <span id="settingsheading">Settings</span>
+        <button type="button" class="closebutton" aria-label="Close settings">&times;</button>
       </div>
       <div style="width:100%;padding:10px">
         <input type="checkbox" id="altui" name="altui" value="1">
         <label for="altui">Use alternative web interface</label>
+        <p><a href="/new/">Open the newer interface directly</a></p>
+        <p style="font-size:0.9em">Recovery: add <code>?ui=legacy</code> to this page's address to clear a broken newer-interface preference.</p>
       </div>
       <div style="text-align:right;padding-top:30px;">
         <button onclick="cancelsettings()">Cancel</button> <button onclick="confirmsettings()">OK</button>
@@ -1064,14 +1249,27 @@ function localStorageSet(name, value) {
   }
 }
 
-if (document.referrer.includes("/new/")) {
+function requestedWebInterface(search) {
+  try {
+    var requested = new URLSearchParams(search).get("ui");
+    return requested == "legacy" || requested == "new" ? requested : null;
+  } catch (error) {
+    log(error);
+    return null;
+  }
+}
+
+var forcedInterface = requestedWebInterface(window.location.search);
+if (forcedInterface == "legacy") {
+  localStorageSet("usealtui", "false");
+} else if (forcedInterface == "new") {
+  localStorageSet("usealtui", "true");
+  document.location.replace('/new/?source=legacy');
+} else if (document.referrer.includes("/new/")) {
   /* user switched back from the Vue UI */
   localStorageSet("usealtui", "false");
-} else {
-  if (localStorageGet("usealtui") == "true") {
-    document.location.replace('/new/?source=legacy');
-    nonExistentFunction();
-  }
+} else if (localStorageGet("usealtui") == "true") {
+  document.location.replace('/new/?source=legacy');
 }
 
 var isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
@@ -1087,10 +1285,15 @@ function log(what) {
 }
 
 function hideRecordingParent() {
-  var i = document.querySelector(".recordings");
-  if (i.contentWindow.location.pathname === "/TeslaCam/") {
-    var parentlink = i.contentDocument.querySelector("#list tbody tr");
-    parentlink.parentElement.removeChild(parentlink);
+  var recordingFrame = document.querySelector(".recordings");
+  if (!recordingFrame || !recordingFrame.contentWindow || !recordingFrame.contentDocument) return;
+  try {
+    if (recordingFrame.contentWindow.location.pathname === "/TeslaCam/") {
+      var parentlink = recordingFrame.contentDocument.querySelector("#list tbody tr");
+      if (parentlink) parentlink.remove();
+    }
+  } catch (error) {
+    log("Could not update the recording directory listing: " + error.message);
   }
 }
 
@@ -1243,66 +1446,72 @@ function isElementVisible(elem) {
   return !(window.getComputedStyle(elem).visibility === "hidden");
 }
 
-function starttailing({url, pre, button}) {
+function resourceStatusId(preId) {
+  return {
+    diagnosticspre: "diagnosticsstatus",
+    archivelooppre: "archiveloopstatus",
+    setuplogpre: "setuplogstatus"
+  }[preId];
+}
+
+function setResourceStatus(statusId, message, isError) {
+  if (!statusId) return;
+  var status = document.getElementById(statusId);
+  if (!status) return;
+  status.textContent = message || "";
+  status.classList.toggle("error", Boolean(isError));
+}
+
+function starttailing({url, pre, button, status, generation}) {
+  if (generation != pre.tailGeneration) return;
   if (!isElementVisible(pre)) {
     setTimeout(function() {
-                            starttailing({url:url, pre:pre, button:button});
-                          }, 1000);
+      starttailing({url:url, pre:pre, button:button, status:status, generation:generation});
+    }, 1000);
     return;
   }
+
   log("tail " + url);
-  if (pre.tailcorrection === undefined) {
-    pre.tailcorrection=0;
-  }
-  var tailpos=pre.textContent.length - 1 + pre.tailcorrection;
+  var tailpos=Math.max(0, pre.textContent.length - 1);
   var request = new XMLHttpRequest();
+  var completed = false;
+  function retryTail(message) {
+    if (completed || generation != pre.tailGeneration) return;
+    completed = true;
+    pre.tailRetryDelay = Math.min((pre.tailRetryDelay || 1000) * 2, 15000);
+    setResourceStatus(status, message + " Retrying...", true);
+    setTimeout(function() {
+      starttailing({url:url, pre:pre, button:button, status:status, generation:generation});
+    }, pre.tailRetryDelay);
+  }
+
   request.open('GET', cachebustingurl(url));
+  request.timeout = 20000;
   request.setRequestHeader('Range', 'bytes=' + tailpos + '-' + (tailpos + 32768));
   request.onreadystatechange = function () {
-    if (request.readyState === 4) {
-      if (request.status === 206) {
-        var left = pre.scrollLeft;
-        var scrollpos=pre.scrollTop+pre.clientHeight;
-        var scrollheight=pre.scrollHeight;
-        var shouldgotobottom=(Math.abs(scrollpos-scrollheight) < 5)
-        pre.appendChild(document.createTextNode(request.responseText.substring(1)));
-        if (shouldgotobottom) {
-          pre.scrollTo(left,pre.scrollHeight);
-        }
-        setTimeout(function() {
-                                starttailing({url:url, pre:pre, button:button});
-                              }, 500);
-      } else if (request.status === 416) {
-        /* log was truncated, find the end of the currently
-           displayed log in the new remote log to determine
-           the offset at which we should now read. */
-        log('reloading truncated log: ' + tailpos);
-        var newreq = new XMLHttpRequest();
-        newreq.open('GET', cachebustingurl(url));
-        newreq.onreadystatechange = function () {
-          if (newreq.readyState === 4) {
-            if (newreq.status === 200) {
-              var len=pre.textContent.length;
-              var lastshown=pre.textContent.substring(len-200,len);
-              var newpos=newreq.responseText.indexOf(lastshown);
-              if (newpos > 0) {
-                pre.tailcorrection=-(len-(newpos+200));
-                starttailing({url:url, pre:pre, button:button});
-                return;
-              }
-            }
-            log('could not read file "' + url + '", status: ' + request.status);
-            pre.textContent="Attempting refresh..."
-            pre.tailcorrection=0;
-            readfile({url:url, pre:pre.id, button:button, tail:true});
-          }
-        }
-        newreq.send();
-      } else {
-        log('unexpected status: ' + request.status);
-      }
+    if (request.readyState !== 4 || completed || generation != pre.tailGeneration) return;
+    if (request.status === 206) {
+      completed = true;
+      pre.tailRetryDelay = 500;
+      setResourceStatus(status, "Following live log", false);
+      var left = pre.scrollLeft;
+      var shouldgotobottom=Math.abs(pre.scrollTop + pre.clientHeight - pre.scrollHeight) < 5;
+      pre.appendChild(document.createTextNode(request.responseText.substring(tailpos > 0 ? 1 : 0)));
+      if (shouldgotobottom) pre.scrollTo(left,pre.scrollHeight);
+      setTimeout(function() {
+        starttailing({url:url, pre:pre, button:button, status:status, generation:generation});
+      }, 500);
+    } else if (request.status === 200 || request.status === 416) {
+      completed = true;
+      setResourceStatus(status, "Log rotated; reloading", false);
+      readfile({url:url, pre:pre.id, button:button, tail:true, status:status});
+    } else {
+      retryTail(cgiRequestErrorMessage(request.status, request.statusText));
     }
-  }
+  };
+  request.onerror = function () { retryTail("Network error while following log."); };
+  request.onabort = function () { retryTail("Log request was cancelled."); };
+  request.ontimeout = function () { retryTail("Log request timed out."); };
   request.send();
 }
 
@@ -1322,55 +1531,205 @@ function readyState(state) {
   }
 }
 
-function readfile({url, callback, callbackarg, pre, tail, button}) {
+function readfile({url, callback, callbackarg, pre, tail, button, status}) {
   var request = new XMLHttpRequest();
+  var completed = false;
+  function finish(value, error) {
+    if (completed) return;
+    completed = true;
+    var preobj = pre != null ? document.getElementById(pre) : null;
+    var statusId = status || resourceStatusId(pre);
+    if (error) {
+      setResourceStatus(statusId, "Could not load " + url + ": " + error.message, true);
+      if (preobj && (preobj.textContent === "Loading..." || preobj.textContent === "...")) {
+        preobj.textContent = "Unable to load " + url + ". Use Refresh to try again.";
+      }
+    } else {
+      setResourceStatus(statusId, tail === true ? "Following live log" : "Loaded", false);
+      if (preobj) {
+        preobj.textContent=value;
+        if (tail === true) {
+          preobj.scrollTo(0,preobj.scrollHeight);
+          preobj.tailGeneration = (preobj.tailGeneration || 0) + 1;
+          preobj.tailRetryDelay = 500;
+          starttailing({url:url, pre:preobj, button:button, status:statusId, generation:preobj.tailGeneration});
+        }
+      }
+      if (button != null) {
+        var btn = document.getElementById(button);
+        if (btn) btn.disabled=false;
+      }
+    }
+    if (callback != null) callback(value, callbackarg, error);
+  }
+
   request.open('GET', cachebustingurl(url));
+  request.timeout = 30000;
   log("reading " + url);
   request.onreadystatechange = function () {
     log(`read ${url}, result: ${request.status}, state: ${readyState(request.readyState)}`);
-    if (request.readyState === 4 && request.status === 200) {
-      var type = request.getResponseHeader('Content-Type');
-      if (type.indexOf("text") !== 1) {
-        if (callback != null) {
-          callback(request.responseText, callbackarg);
+    if (request.readyState !== 4) return;
+    if (request.status >= 200 && request.status < 300) finish(request.responseText, null);
+    else finish(null, new Error(cgiRequestErrorMessage(request.status, request.statusText)));
+  };
+  request.onerror = function () { finish(null, new Error("Network error")); };
+  request.onabort = function () { finish(null, new Error("Request cancelled")); };
+  request.ontimeout = function () { finish(null, new Error("Request timed out")); };
+  request.send();
+  return request;
+}
+
+function readfilePromise(options) {
+  return new Promise(function(resolve, reject) {
+    var promiseOptions = Object.assign({}, options, {
+      callback: function(value, callbackarg, error) {
+        if (error) reject(error);
+        else resolve(value);
+      }
+    });
+    readfile(promiseOptions);
+  });
+}
+
+function reloadLog(preId, url, buttonId, statusId) {
+  var pre = document.getElementById(preId);
+  if (pre) {
+    pre.tailGeneration = (pre.tailGeneration || 0) + 1;
+    pre.textContent = "Loading...";
+  }
+  var downloadButton = document.getElementById(buttonId);
+  if (downloadButton) downloadButton.disabled = true;
+  setResourceStatus(statusId, "Refreshing...", false);
+  readfile({pre:preId, url:url, tail:true, button:buttonId, status:statusId});
+}
+
+function toggleLogWrap(preId, button) {
+  var pre = document.getElementById(preId);
+  if (!pre) return;
+  var wrap = pre.classList.toggle("log-wrap");
+  button.textContent = wrap ? "Use long lines" : "Wrap lines";
+  localStorageSet("wrap-" + preId, wrap ? "true" : "false");
+}
+
+function restoreLogWrapSettings() {
+  for (var pre of document.querySelectorAll(".mypre")) {
+    if (localStorageGet("wrap-" + pre.id) == "true") {
+      pre.classList.add("log-wrap");
+      var button = document.querySelector('[data-wrap-target="' + pre.id + '"]');
+      if (button) button.textContent = "Use long lines";
+    }
+  }
+}
+
+function cgiRequestErrorMessage(status, statusText) {
+  if (status > 0) {
+    return "HTTP " + status + (statusText ? " " + statusText : "");
+  }
+  return statusText || "Network request failed";
+}
+
+function cgiRequestError(request, message) {
+  var error = new Error(message || cgiRequestErrorMessage(request.status, request.statusText));
+  error.status = request.status;
+  error.responseText = request.responseText || "";
+  return error;
+}
+
+function apiRequest(url, options) {
+  options = options || {};
+  var method = options.method || "GET";
+  var expectJson = options.expectJson !== false;
+  return new Promise(function(resolve, reject) {
+    var request = new XMLHttpRequest();
+    var completed = false;
+    function finish(error, payload) {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      if (error) {
+        reject(error);
+      } else {
+        resolve(payload);
+      }
+    }
+
+    request.open(method, url);
+    request.timeout = options.timeout || 30000;
+    request.setRequestHeader("Accept", expectJson ? "application/json" : "text/plain");
+    if (method === "POST") {
+      request.setRequestHeader("X-TeslaUSB-Request", "1");
+    }
+    request.onreadystatechange = function () {
+      if (request.readyState === 4) {
+        if (request.status === 0 && !request.responseText) {
+          finish(cgiRequestError(request));
+          return;
         }
-        if (pre != null) {
-          var preobj = document.getElementById(pre);
-          preobj.textContent=request.responseText;
-          if (tail === true) {
-            preobj.scrollTo(0,preobj.scrollHeight);
-            starttailing({url:url, pre:preobj, button:button});
+        var payload = request.responseText;
+        if (expectJson) {
+          try {
+            payload = JSON.parse(request.responseText);
+          } catch (parseError) {
+            finish(cgiRequestError(request, "TeslaUSB returned an invalid JSON response"));
+            return;
           }
         }
-        if (button != null) {
-          var btn = document.getElementById(button);
-          btn.disabled=false;
+        if (request.status >= 200 && request.status < 300 &&
+            (!expectJson || !payload || payload.ok !== false)) {
+          finish(null, payload);
+        } else {
+          var message = payload && payload.error
+            ? payload.error + (request.status ? " (HTTP " + request.status + ")" : "")
+            : cgiRequestErrorMessage(request.status, request.statusText);
+          var error = cgiRequestError(request, message);
+          error.apiResponse = payload;
+          finish(error);
         }
       }
-    }
-  }
-  request.send();
+    };
+    request.onerror = function () {
+      finish(cgiRequestError(request, cgiRequestErrorMessage(request.status, "Network error")));
+    };
+    request.onabort = function () {
+      finish(cgiRequestError(request, "Request cancelled"));
+    };
+    request.ontimeout = function () {
+      finish(cgiRequestError(request, "Request timed out"));
+    };
+    request.send(options.body || null);
+  });
 }
 
-function callcgi(url) {
-  var request = new XMLHttpRequest();
-  request.open('GET', cachebustingurl(url));
-  request.onreadystatechange = function () {
-    if (request.readyState === 4 && request.status === 200) {
-      var type = request.getResponseHeader('Content-Type');
-      if (type.indexOf("text") !== 1) {
-        return request.responseText;
-      }
-    }
-  }
-  request.send();
+function callcgi(url, options) {
+  return apiRequest(url, Object.assign({method:"POST"}, options || {}));
 }
 
-function syncfunc() {
-  callcgi('cgi-bin/trigger_sync.sh');
+function clearMessageAfter(element, message, delay) {
+  setTimeout(function() {
+    if (element.textContent === message) {
+      element.textContent = "";
+    }
+  }, delay);
+}
+
+async function syncfunc(button) {
+  button = button || document.getElementById('syncbutton');
   var msg=document.getElementById('synctext');
-  msg.textContent="Sync triggered";
-  setTimeout(function() { msg.textContent=""; }, 5000);
+  button.disabled=true;
+  button.setAttribute("aria-busy", "true");
+  msg.textContent="Triggering sync...";
+  try {
+    await callcgi('/api/v1/actions/sync');
+    var success="Sync triggered";
+    msg.textContent=success;
+    clearMessageAfter(msg, success, 5000);
+  } catch (error) {
+    msg.textContent="Could not trigger sync: " + error.message;
+  } finally {
+    button.disabled=false;
+    button.removeAttribute("aria-busy");
+  }
 }
 
 class Speedometer {
@@ -1406,6 +1765,12 @@ class Speedometer {
 var totalRandom;
 var randomReader = undefined;
 var speedometer;
+var speedTestActive = false;
+var speedTestAbortController;
+var speedTestTimer;
+var speedTestGeneration = 0;
+const SPEED_TEST_SECONDS = 15;
+const SPEED_TEST_MAX_MS = 17000;
 
 function byteRate(speed) {
   if (speed > 500000) {
@@ -1421,7 +1786,7 @@ function bitRate(speed) {
 }
 
 function showspeed(button, indicator, spinner) {
-  if (randomReader != undefined) {
+  if (speedTestActive) {
     if (isElementVisible(button)) {
       speedometer.addValue(totalRandom);
       var speed = speedometer.getRecentAverage();
@@ -1437,58 +1802,96 @@ function showspeed(button, indicator, spinner) {
 var lastTotalRandom = 0;
 var spinAngle = 0;
 function updatespeedspinner(spinner) {
-  if (randomReader != undefined) {
+  if (speedTestActive) {
     if (totalRandom != lastTotalRandom) {
       lastTotalRandom = totalRandom;
       spinAngle += 36;
       spinner.setAttribute('transform', 'rotate('+ spinAngle + ')');
     }
-    setTimeout(updatespeedspinner, 80, spinner)
+    setTimeout(updatespeedspinner, 80, spinner);
   }
 }
 
-function startspeedtest(button) {
+async function startspeedtest(button) {
   var indicator = document.getElementById("speedtext");
   var spinner = document.getElementById('speedspinner');
-  if (randomReader == undefined) {
-    log("starting speed test");
-    button.textContent="Stop network speed test";
-    spinner.style.visibility = "inherit";
-    (async () => {
-      const randomStream = await fetch('cgi-bin/randomdata.sh')
-      randomReader = await randomStream.body.getReader()
-      totalRandom = 0;
-      speedometer = new Speedometer(5);
-      setTimeout(showspeed, 1000, button, indicator, spinner);
-      setTimeout(updatespeedspinner, 100, spinner);
-
-      randomReader.read().then(function receiveRandomChunk({ done, value }) {
-        if (done) {
-          log("speed test end");
-          return
-        }
-        totalRandom += value.length;
-        return randomReader.read().then(receiveRandomChunk)
-      })
-    })()
-  } else {
+  if (speedTestActive) {
     stopspeedtest(button, indicator, spinner);
+    return;
+  }
+
+  log("starting speed test");
+  speedTestActive = true;
+  speedTestGeneration += 1;
+  var generation = speedTestGeneration;
+  button.textContent="Stop network speed test";
+  button.setAttribute("aria-busy", "true");
+  indicator.textContent = "Connecting...";
+  spinner.style.visibility = "inherit";
+  totalRandom = 0;
+  lastTotalRandom = 0;
+  speedometer = new Speedometer(5);
+  speedTestAbortController = typeof AbortController == "undefined" ? null : new AbortController();
+  speedTestTimer = setTimeout(function() {
+    if (speedTestActive && generation == speedTestGeneration) {
+      var reading = indicator.textContent;
+      stopspeedtest(button, indicator, spinner, reading + " — speed test timed out safely");
+    }
+  }, SPEED_TEST_MAX_MS);
+
+  try {
+    var fetchOptions = speedTestAbortController ? {signal:speedTestAbortController.signal} : {};
+    var randomStream = await fetch('/api/v1/speed-test?' + SPEED_TEST_SECONDS, fetchOptions);
+    if (!randomStream.ok || !randomStream.body) {
+      throw new Error("HTTP " + randomStream.status + (randomStream.statusText ? " " + randomStream.statusText : ""));
+    }
+    var reader = randomStream.body.getReader();
+    if (!speedTestActive || generation != speedTestGeneration) {
+      reader.cancel().catch(function(error) { log(error); });
+      return;
+    }
+    randomReader = reader;
+    setTimeout(showspeed, 1000, button, indicator, spinner);
+    setTimeout(updatespeedspinner, 100, spinner);
+
+    while (speedTestActive && generation == speedTestGeneration) {
+      var chunk = await reader.read();
+      if (chunk.done) {
+        var reading = indicator.textContent;
+        stopspeedtest(button, indicator, spinner, reading + " — " + SPEED_TEST_SECONDS + "-second test complete");
+        return;
+      }
+      totalRandom += chunk.value.length;
+    }
+  } catch (error) {
+    if (speedTestActive && generation == speedTestGeneration && error.name != "AbortError") {
+      stopspeedtest(button, indicator, spinner, "Speed test failed: " + error.message);
+    }
   }
 }
 
-function stopspeedtest(button, indicator, spinner) {
-  if (randomReader != undefined) {
-    log("stopping speed test");
+function stopspeedtest(button, indicator, spinner, finalMessage) {
+  log("stopping speed test");
+  speedTestActive = false;
+  speedTestGeneration += 1;
+  clearTimeout(speedTestTimer);
+  speedTestTimer = undefined;
+  var reader = randomReader;
+  randomReader = undefined;
+  if (reader) {
     try {
-      randomReader.cancel();
+      var cancellation = reader.cancel();
+      if (cancellation && cancellation.catch) cancellation.catch(function(error) { log(error); });
     } catch (error) {
       log(error);
     }
-    randomReader = undefined;
-    button.textContent="Run network speed test";
-    indicator.textContent = "";
-    spinner.style.visibility = "hidden";
   }
+  if (speedTestAbortController) speedTestAbortController.abort();
+  speedTestAbortController = undefined;
+  button.textContent="Run 15-second network speed test";
+  button.removeAttribute("aria-busy");
+  indicator.textContent = finalMessage || "";
+  spinner.style.visibility = "hidden";
 }
 
 function setbuttonsdisabled(group, disabled) {
@@ -1498,91 +1901,80 @@ function setbuttonsdisabled(group, disabled) {
   }
 }
 
-function pairBLEkey() {
+function bleResponseText(response) {
+  return String(response || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function blePairingState(response) {
+  var paragraph = String(response || "").match(/<p>\s*([^<]+?)\s*<\/p>/i);
+  var text = (paragraph ? paragraph[1] : bleResponseText(response)).trim().toLowerCase();
+  if (text == "paired") return "paired";
+  if (text == "not paired") return "not-paired";
+  return "unknown";
+}
+
+function waitMilliseconds(milliseconds) {
+  return new Promise(function(resolve) { window.setTimeout(resolve, milliseconds); });
+}
+
+async function pairBLEkey() {
   var msg=document.getElementById('pairtext');
   msg.textContent="Initiating pairing request";
   var button=document.getElementById('pairKey');
+  var buttonstates=Array.from(document.querySelectorAll('.group1,.group2')).map(function(item) {
+    return {button:item, disabled:item.disabled};
+  });
   button.disabled=true;
   button.textContent="Pairing...";
+  button.setAttribute("aria-busy", "true");
   setbuttonsdisabled('group1', true);
   setbuttonsdisabled('group2', true);
-
-  var request = new XMLHttpRequest();
-  request.open('GET', cachebustingurl('cgi-bin/pairBLEkey.sh'));
-  request.setRequestHeader("Cache-Control", "no-cache, no-store, max-age=0");
-  request.onreadystatechange = function () {
-    log('readstatechange, state: ' + request.readyState + ', status: ' + request.status);
-    if (request.readyState === 4) {
-      let result = request.responseText;
-
-      if (request.status >= 200 && request.status < 300) {
-        msg.textContent = "Pairing started. Tap keycard on center console to confirm.";
-        setTimeout(function () { waitforpairing(button, 0); }, 5000);
-      } else {
-        log("pairing failed");
-        const pattern = /<p>(.*?)<\/p>/gs;
-
-        let matches = result.match(pattern);
-        if (matches && matches.length > 0) {
-          let errorString = matches[0].replace(/<\/?p>/g, "");
-          if (errorString.includes("maximum number of BLE devices")) {
-            msg.textContent = "Too many BLE devices active; turn off Bluetooth on nearby phone keys and try again.";
-          } else
-            msg.textContent = errorString;
-        } else {
-          msg.textContent = "Pairing failed. Please try again.";
-        }
-        button.disabled = false;
-        button.textContent = "Pair BLE with Car";
-        setbuttonsdisabled('group1', false);
-        setbuttonsdisabled('group2', false);
-     }
-
+  try {
+    await callcgi('/api/v1/actions/ble/pair');
+    msg.textContent = "Pairing started. Tap keycard on center console to confirm.";
+    await waitforpairing(button, 0);
+    msg.textContent = "Successfully paired with car.";
+  } catch (error) {
+    log(error);
+    var detail = error.apiResponse && error.apiResponse.error
+      ? error.apiResponse.error
+      : bleResponseText(error.responseText);
+    if (detail.includes("maximum number of BLE devices")) {
+      msg.textContent = "Too many BLE devices active; turn off Bluetooth on nearby phone keys and try again.";
+    } else if (detail) {
+      msg.textContent = "Pairing failed: " + detail;
+    } else {
+      msg.textContent = "Pairing failed: " + error.message;
     }
+  } finally {
+    buttonstates.forEach(function(state) { state.button.disabled=state.disabled; });
+    button.textContent = "Pair BLE with Car";
+    button.removeAttribute("aria-busy");
   }
-  request.send();
-
 }
 
-function waitforpairing(button, count) {
-  var request = new XMLHttpRequest();
-  request.open('GET', cachebustingurl('cgi-bin/checkBLEstatus.sh'));
-  request.setRequestHeader("Cache-Control", "no-cache, no-store, max-age=0");
-  request.onreadystatechange = function () {
-    log('readstatechange, state: ' + request.readyState + ', status: ' + request.status);
-    if (request.readyState === 4) {
-      if (request.status === 200) {
-        result = request.responseText;
-      } else {
-        log("unexpected pairing response");
-        result = "";
-      }
-
-      if (result.indexOf("<p>paired</p>") > 0) {
+async function waitforpairing(button, count) {
+  var msg=document.getElementById('pairtext');
+  for (var attempt=count; attempt <= 12; attempt++) {
+    await waitMilliseconds(5000);
+    try {
+      var result = await apiRequest('/api/v1/ble/status');
+      if (blePairingState(result && result.message) == "paired") {
         log("pairing succeeded");
-        var msg=document.getElementById('pairtext');
-        msg.textContent="Successfully paired with car.";
-      } else if (count > 12) {
-        log("pairing failed");
-        var msg=document.getElementById('pairtext');
-        msg.textContent="Pairing failed. Please try again.";
-      } else {
-        log("Still waiting for pairing");
-        window.setTimeout(function() { waitforpairing(button, count + 1); }, 5000);
         return;
       }
-
-      button.disabled = false;
-      button.textContent = "Pair BLE with Car";
-      setbuttonsdisabled('group1', false);
-      setbuttonsdisabled('group2', false);
+      msg.textContent = "Waiting for keycard confirmation...";
+    } catch (error) {
+      log(error);
+      msg.textContent = "Could not check pairing status; retrying...";
     }
   }
-  request.send();
+  throw new Error("No confirmation was received within about one minute");
 }
 
 function restorerebootbutton(button) {
   button.disabled=false;
+  button.removeAttribute("aria-busy");
   button.textContent='Restart Raspberry Pi';
   button.onclick=function() { rebootfunc(button); };
 }
@@ -1610,15 +2002,29 @@ function waitforreboot(button) {
 }
 
 var rebootbuttonresetter;
-function realrebootfunc(button) {
+async function realrebootfunc(button) {
   clearTimeout(rebootbuttonresetter);
+  var buttonstates=Array.from(document.querySelectorAll('.group1,.group2')).map(function(item) {
+    return {button:item, disabled:item.disabled};
+  });
   setbuttonsdisabled('group1', true);
   setbuttonsdisabled('group2', true);
-  callcgi('cgi-bin/reboot.sh');
   var msg=document.getElementById('reboottext');
-  msg.textContent="Reboot is in progress";
+  msg.textContent="Requesting restart...";
   button.disabled=true;
-  setTimeout(function() { waitforreboot(button); }, 5000);
+  button.setAttribute("aria-busy", "true");
+  try {
+    await callcgi('/api/v1/actions/reboot');
+    msg.textContent="Reboot is in progress";
+    setTimeout(function() { waitforreboot(button); }, 5000);
+  } catch (error) {
+    msg.textContent="Could not restart Raspberry Pi: " + error.message;
+    buttonstates.forEach(function(state) {
+      state.button.disabled=state.disabled;
+    });
+    restorerebootbutton(button);
+    button.removeAttribute("aria-busy");
+  }
 }
 
 function rebootfunc (button) {
@@ -1633,13 +2039,22 @@ async function refreshdiagnostics() {
   var pre=document.getElementById('diagnosticspre');
   btn1.disabled=true;
   btn2.disabled=true;
+  btn1.setAttribute("aria-busy", "true");
   pre.textContent='Generating diagnostics...';
-
-  readfile({url:'cgi-bin/diagnose.sh', callback:function(value) {
-    readfile({pre:'diagnosticspre', url:'diagnostics.txt', button:'diagdwnbtn'});
-    var btn=document.getElementById('diagrefreshbtn');
-    btn.disabled=false;
-  }});
+  setResourceStatus("diagnosticsstatus", "Generating diagnostics...", false);
+  try {
+    await callcgi('/api/v1/actions/diagnostics', {timeout:120000});
+    var report = await readfilePromise({url:'diagnostics.txt', status:'diagnosticsstatus'});
+    pre.textContent = report;
+    btn2.disabled = false;
+    setResourceStatus("diagnosticsstatus", "Diagnostics refreshed", false);
+  } catch (error) {
+    pre.textContent = "Could not generate diagnostics. " + error.message;
+    setResourceStatus("diagnosticsstatus", "Diagnostics failed: " + error.message, true);
+  } finally {
+    btn1.disabled=false;
+    btn1.removeAttribute("aria-busy");
+  }
 }
 
 function uptimeString(secs) {
@@ -1689,11 +2104,143 @@ function dayNameFromDateString(datestr) {
   return dayNameFormat.format(d);
 }
 
-function toggledrivesfunc() {
-  callcgi('cgi-bin/toggledrives.sh');
+function parseWifiStrength(value) {
+  var text=String(value == null ? "" : value).trim();
+  if (text === "") {
+    return null;
+  }
+  var fraction=text.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\/\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/);
+  var strength;
+  if (fraction) {
+    var denominator=Number(fraction[2]);
+    if (denominator <= 0) {
+      return null;
+    }
+    strength=Number(fraction[1]) / denominator;
+  } else {
+    strength=Number(text);
+  }
+  if (!Number.isFinite(strength)) {
+    return null;
+  }
+  return Math.min(1, Math.max(0, strength));
+}
+
+async function toggledrivesfunc(button) {
+  button=button || document.getElementById('toggledrives');
+  var msg=document.getElementById('drivestext');
+  var originalText=button.textContent;
+  var originalState=button.drives_active;
+  button.disabled=true;
+  button.textContent="Updating drives...";
+  button.setAttribute("aria-busy", "true");
+  msg.textContent="";
+  try {
+    await callcgi('/api/v1/actions/drives/toggle');
+    if (originalState == "yes") {
+      button.drives_active="no";
+      button.textContent="Connect drives to host";
+    } else if (originalState == "no") {
+      button.drives_active="yes";
+      button.textContent="Disconnect drives from host";
+    } else {
+      button.textContent=originalText;
+    }
+    var success="Drive state updated";
+    msg.textContent=success;
+    clearMessageAfter(msg, success, 5000);
+  } catch (error) {
+    button.textContent=originalText;
+    button.drives_active=originalState;
+    msg.textContent="Could not update drives: " + error.message;
+  } finally {
+    button.disabled=false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
+function archiveStatusFromSystemStatus(systemStatus) {
+  if (!systemStatus || typeof systemStatus != "object") return null;
+  if (systemStatus.archive_status && typeof systemStatus.archive_status == "object") {
+    return Object.assign(
+      {available:systemStatus.archive_status.available !== false},
+      systemStatus.archive_status);
+  }
+  var flatNames = [
+    "schema_version", "last_result", "last_started", "last_finished",
+    "pending_files", "pending_bytes", "transferred_files", "transferred_bytes", "message"
+  ];
+  var hasFlatStatus = flatNames.some(function(name) {
+    return Object.prototype.hasOwnProperty.call(systemStatus, "archive_" + name);
+  });
+  if (!hasFlatStatus) return null;
+  var result = {available:systemStatus.archive_available !== false};
+  for (var name of flatNames) result[name] = systemStatus["archive_" + name];
+  return result;
+}
+
+function archiveStatusView(systemStatus) {
+  var status = archiveStatusFromSystemStatus(systemStatus);
+  if (!status) return {visible:false};
+  if (status.available === false) {
+    return {visible:true, state:"unavailable", summary:"Archive status is not available", message:"", showProgress:false};
+  }
+  if (Number(status.schema_version) !== 1) {
+    return {visible:true, state:"error", summary:"Archive status format is unsupported", message:"Update both the service and web interface.", showProgress:false};
+  }
+
+  var pendingFiles = Math.max(0, Number(status.pending_files) || 0);
+  var pendingBytes = Math.max(0, Number(status.pending_bytes) || 0);
+  var transferredFiles = Math.max(0, Number(status.transferred_files) || 0);
+  var transferredBytes = Math.max(0, Number(status.transferred_bytes) || 0);
+  var totalFiles = pendingFiles + transferredFiles;
+  var totalBytes = pendingBytes + transferredBytes;
+  var state = String(status.last_result || "idle").toLowerCase();
+  var summary;
+  if (state == "running") {
+    summary = "Archive: in progress — " + transferredFiles + " of " + totalFiles + " files";
+  } else if (state == "success") {
+    summary = "Archive: last run succeeded — " + transferredFiles + " files, " + spaceString(transferredBytes);
+  } else if (state == "error") {
+    summary = "Archive: last run failed — " + pendingFiles + " files remain";
+  } else {
+    state = "idle";
+    summary = pendingFiles > 0 ? "Archive: idle — " + pendingFiles + " files pending" : "Archive: idle — nothing pending";
+  }
+  if (status.last_finished) {
+    var finished = new Date(status.last_finished);
+    if (!Number.isNaN(finished.valueOf())) summary += " (" + finished.toLocaleString() + ")";
+  }
+  var progressMax = totalBytes > 0 ? totalBytes : totalFiles;
+  var progressValue = totalBytes > 0 ? transferredBytes : transferredFiles;
+  return {
+    visible:true,
+    state:state,
+    summary:summary,
+    message:String(status.message || ""),
+    showProgress:state == "running" && progressMax > 0,
+    progressMax:progressMax || 1,
+    progressValue:progressValue
+  };
+}
+
+function renderArchiveStatus(systemStatus) {
+  var view = archiveStatusView(systemStatus);
+  var container = document.querySelector(".status_archive");
+  if (!container) return;
+  container.hidden = !view.visible;
+  if (!view.visible) return;
+  container.className = "status_archive " + view.state;
+  container.querySelector(".status_archive_summary").textContent = view.summary;
+  container.querySelector(".status_archive_message").textContent = view.message;
+  var progress = container.querySelector(".status_archive_progress");
+  progress.hidden = !view.showProgress;
+  progress.max = view.progressMax || 1;
+  progress.value = view.progressValue || 0;
 }
 
 var statusvals;
+var statusRequestInFlight = false;
 const max_status_age = 4000;
 
 function updateuptimeonly() {
@@ -1703,7 +2250,7 @@ function updateuptimeonly() {
     var uptimediv = document.querySelector(".status_uptime");
     uptimediv.innerText = "Uptime: " + uptimeString(uptime);
   }
-  if (statusvals != undefined && status_age >= max_status_age) {
+  if (statusvals == undefined || status_age >= max_status_age) {
     setTimeout(showstatus, 10);
   } else {
     setTimeout(updateuptimeonly, 1000);
@@ -1712,9 +2259,25 @@ function updateuptimeonly() {
 
 function showstatus() {
   var uptimediv = document.querySelector(".status_uptime");
-  if (isElementVisible(uptimediv) || uptimediv.clientHeight == 0) {
-    readfile({url:'cgi-bin/status.sh', callback:function(value) {
-      statusvals=JSON.parse(value);
+  if ((isElementVisible(uptimediv) || uptimediv.clientHeight == 0) && !statusRequestInFlight) {
+    statusRequestInFlight = true;
+    readfile({url:'/api/v1/status', callback:function(value, callbackarg, error) {
+      statusRequestInFlight = false;
+      var refreshStatus = document.querySelector(".status_refresh");
+      if (error) {
+        refreshStatus.textContent = "Status refresh failed: " + error.message;
+        refreshStatus.classList.add("error");
+        return;
+      }
+      try {
+        statusvals=JSON.parse(value);
+      } catch (parseError) {
+        refreshStatus.textContent = "Status response was invalid: " + parseError.message;
+        refreshStatus.classList.add("error");
+        return;
+      }
+      refreshStatus.textContent = "";
+      refreshStatus.classList.remove("error");
       statusvals.retrieved = Date.now();
       uptimediv.innerText = "Uptime: " + uptimeString(statusvals.uptime);
 
@@ -1799,8 +2362,12 @@ function showstatus() {
       var drivesdiv = document.querySelector(".status_space");
       var total = statusvals.total_space;
       var used = total - statusvals.free_space;
-      drivesdiv.innerText = "Disk usage: " + spaceString(used) + " (" +
-                          (used * 100 / total).toFixed(0) + "%)";
+      if (Number.isFinite(used) && Number(total) > 0) {
+        drivesdiv.innerText = "Disk usage: " + spaceString(used) + " (" +
+                            (used * 100 / total).toFixed(0) + "%)";
+      } else {
+        drivesdiv.innerText = "Disk usage: unavailable";
+      }
 
       var drivesdiv = document.querySelector(".status_snapshots");
       var snaps = "Snapshots: " + statusvals.num_snapshots;
@@ -1844,13 +2411,18 @@ function showstatus() {
         } else {
           wifiinfo += statusvals.wifi_ip;
         }
-        var strength = eval(statusvals.wifi_strength);
-        var str = "+".repeat(1 + 3.99 * strength);
-        var wifiicon = document.querySelector(".wifi-icon");
-        wifiicon.attributes.strength.value = str;
-        wifiiconspan.setAttribute("title", "Signal quality: " + (strength * 100).toFixed(0) + "%");
+        var strength = parseWifiStrength(statusvals.wifi_strength);
+        if (strength == null) {
+          wifiicon.attributes.strength.value = "-";
+          wifiiconspan.setAttribute("title", "Signal quality unavailable");
+        } else {
+          var str = "+".repeat(1 + 3.99 * strength);
+          wifiicon.attributes.strength.value = str;
+          wifiiconspan.setAttribute("title", "Signal quality: " + (strength * 100).toFixed(0) + "%");
+        }
       }
       wifiinfospan.innerText = wifiinfo;
+      renderArchiveStatus(statusvals);
     }});
   }
   setTimeout(updateuptimeonly, 1000);
@@ -1858,8 +2430,21 @@ function showstatus() {
 
 var config;
 function readconfig() {
-  readfile({url:'cgi-bin/config.sh', callback:function(value) {
-    config = JSON.parse(value);
+  readfile({url:'/api/v1/config', callback:function(value, callbackarg, error) {
+    if (error) {
+      var status = document.querySelector(".status_refresh");
+      status.textContent = "Configuration could not be loaded: " + error.message;
+      status.classList.add("error");
+      return;
+    }
+    try {
+      config = JSON.parse(value);
+    } catch (parseError) {
+      var status = document.querySelector(".status_refresh");
+      status.textContent = "Configuration response was invalid: " + parseError.message;
+      status.classList.add("error");
+      return;
+    }
     const filestab = document.querySelector(".tablabel6");
     var numdrives = 0;
     if (config.has_music == "yes") numdrives++;
@@ -1906,12 +2491,14 @@ function readconfig() {
 function initialize() {
   setbuttonsdisabled('group1', true);
   setbuttonsdisabled('group2', false);
-  readfile({pre:'archivelooppre', url:'archiveloop.log', tail:true, button:'aldwnbtn'});
-  readfile({pre:'setuplogpre', url:'teslausb-headless-setup.log', tail:true, button:'sudwnbtn'});
+  reloadLog('archivelooppre', 'archiveloop.log', 'aldwnbtn', 'archiveloopstatus');
+  reloadLog('setuplogpre', 'teslausb-headless-setup.log', 'sudwnbtn', 'setuplogstatus');
   showstatus();
   refreshdiagnostics();
+  restoreLogWrapSettings();
+  initializeAccessibility();
 
-  var settingsbtn = document.querySelector('.settingsbutton');
+  var settingsbtn = document.querySelector('.settingsbuttondiv');
   settingsbtn.onclick = showsettings;
   var closebutton = document.querySelector('.closebutton');
   closebutton.onclick = closesettings;
@@ -1923,16 +2510,80 @@ function initialize() {
   }
 }
 
+function updateTabAccessibility() {
+  for (var label of document.querySelectorAll(".tablabel")) {
+    var input = document.getElementById(label.htmlFor);
+    label.setAttribute("aria-selected", input && input.checked ? "true" : "false");
+  }
+}
+
+function initializeAccessibility() {
+  for (var label of document.querySelectorAll(".tablabel")) {
+    if (label.dataset.keyboardReady == "true") continue;
+    label.dataset.keyboardReady = "true";
+    label.addEventListener("keydown", function(event) {
+      if (event.key == "Enter" || event.key == " ") {
+        event.preventDefault();
+        var input = document.getElementById(event.currentTarget.htmlFor);
+        if (input) {
+          input.checked = true;
+          updateTabAccessibility();
+          setCurrentTabName();
+        }
+      }
+    });
+  }
+  for (var input of document.querySelectorAll(".tabradiobtn")) {
+    if (input.dataset.changeReady == "true") continue;
+    input.dataset.changeReady = "true";
+    input.addEventListener("change", updateTabAccessibility);
+  }
+  for (var subnav of document.querySelectorAll(".subnav")) {
+    if (subnav.dataset.keyboardReady == "true") continue;
+    subnav.dataset.keyboardReady = "true";
+    subnav.addEventListener("keydown", function(event) {
+      if (event.key == "Enter" || event.key == " ") {
+        event.preventDefault();
+        event.currentTarget.classList.toggle("keyboard-open");
+      }
+    });
+  }
+  for (var item of document.querySelectorAll(".dropdownitem")) {
+    if (item.hasAttribute("tabindex")) continue;
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.addEventListener("keydown", function(event) {
+      if (event.key == "Enter" || event.key == " ") {
+        event.preventDefault();
+        event.currentTarget.click();
+      }
+    });
+  }
+  if (document.body.dataset.escapeReady != "true") {
+    document.body.dataset.escapeReady = "true";
+    document.addEventListener("keydown", function(event) {
+      if (event.key == "Escape") {
+        closesettings();
+        document.querySelector(".hamburger").classList.remove("brgropen");
+      }
+    });
+  }
+  updateTabAccessibility();
+}
+
 function showsettings() {
   var altui = document.getElementById('altui');
   altui.checked = (localStorageGet("usealtui") == "true");
   var overlay = document.getElementById("settingsoverlay");
   overlay.style.display = "block";
+  overlay.previousFocus = document.activeElement;
+  overlay.querySelector(".closebutton").focus();
 }
 
 function closesettings() {
   var overlay = document.getElementById("settingsoverlay");
   overlay.style.display = "none";
+  if (overlay.previousFocus && overlay.previousFocus.focus) overlay.previousFocus.focus();
 }
 
 function cancelsettings() {
@@ -1944,7 +2595,6 @@ function confirmsettings() {
   localStorageSet("usealtui", usealtui);
   if (usealtui) {
     document.location.replace('/new/?source=legacy');
-    nonExistentFunction();
   }
   closesettings();
 }
@@ -1993,6 +2643,31 @@ function videoError(elem) {
      return "unknown";
   }
   return elem.error.message;
+}
+
+function setViewerStatus(message, isError) {
+  var status = document.getElementById("viewerstatus");
+  if (!status) return;
+  status.textContent = message || "";
+  status.style.display = message ? "block" : "none";
+  status.classList.toggle("error", Boolean(isError));
+}
+
+function playVideoSafely(video) {
+  try {
+    var result = video.play();
+    if (result && result.catch) {
+      result.catch(function(error) {
+        log(error);
+        setViewerStatus("Playback could not start: " + error.message, true);
+      });
+    }
+    return result;
+  } catch (error) {
+    log(error);
+    setViewerStatus("Playback could not start: " + error.message, true);
+    return null;
+  }
 }
 
 /* a collection of videos that share the same timestamp */
@@ -2078,6 +2753,7 @@ class VideoSegment {
     if (this.activevideoelems.length == this.numangles) {
       log("all videos loaded. Longest: " + this.longestvideoelem.id + ": " + this.longestvideoelem.duration);
       this.readytoplay = true;
+      setViewerStatus("", false);
       this.longestvideoelem.ontimeupdate = this.onTimeUpdate;
       for (var vid of this.activevideoelems) {
         vid.onended=this.onVideoEnded;
@@ -2107,7 +2783,8 @@ class VideoSegment {
     elem.removeAttribute('src');
     if (this.numangles == 0) {
       log("all videos failed to scan, moving to next");
-      currentsequence.next();
+      setViewerStatus("This recording could not be loaded. It may be incomplete or use an unsupported codec.", true);
+      if (!currentsequence.next()) unfreezeVideoElems();
     }
   }
 
@@ -2126,7 +2803,7 @@ class VideoSegment {
       for (var vid of this.activevideoelems) {
         if (vid != elem && vid.paused && !vid.ended && elem.currentTime > (elem.duration - vid.duration)) {
           log("starting vid");
-          vid.play();
+          playVideoSafely(vid);
         }
       }
     } else {
@@ -2138,6 +2815,7 @@ class VideoSegment {
     var elem = event.target;
     log("video error on '" + elem.id +"' at position " + elem.currentTime + ": " + videoError(elem));
     elem.errored = true;
+    setViewerStatus("A camera angle stopped playing: " + videoError(elem), true);
     this.onVideoEnded();
   }
 
@@ -2237,7 +2915,7 @@ class VideoSegment {
   play() {
     if (this.readytoplay == true) {
       log("direct play");
-      this.longestvideoelem.play();
+      playVideoSafely(this.longestvideoelem);
       return;
     }
     log("deferred play");
@@ -2429,13 +3107,23 @@ class VideoSequence {
     // clear this so we only do this once
     this.jsonfile[idx] = null;
     log("starting json fetch");
-    readfile({url:jsonurl, callbackarg:this, callback:function(value, thiz) {
+    readfile({url:jsonurl, callbackarg:this, callback:function(value, thiz, error) {
         if (thiz != currentsequence) {
+          return;
+        }
+        if (error) {
+          thiz.jsonfile[idx] = undefined;
+          setViewerStatus("Recording location metadata could not be loaded: " + error.message, true);
           return;
         }
         log("json read callback");
         log(value);
-        thiz.jsonparsed[idx] = JSON.parse(value);
+        try {
+          thiz.jsonparsed[idx] = JSON.parse(value);
+        } catch (parseError) {
+          setViewerStatus("Recording location metadata was invalid: " + parseError.message, true);
+          return;
+        }
         log(thiz.jsonparsed[idx]);
         thiz.onMapResize();
         thiz.onTickResize();
@@ -2621,6 +3309,7 @@ class VideoSequence {
     segment.play();
     var b = document.getElementById('playpause');
     b.classList.add("pause");
+    b.setAttribute("aria-label", "Pause recording");
     if (isFirefox || isWebkit) {
       b.firstElementChild.firstChild.setAttribute('d', 'M 8,30 14,30 14,6 8,6 z M 24,30 30,30 30,6 24,6 z');
     }
@@ -2632,6 +3321,7 @@ class VideoSequence {
     segment.pause();
     var b = document.getElementById('playpause');
     b.classList.remove("pause");
+    b.setAttribute("aria-label", "Play recording");
     if (isFirefox || isWebkit) {
       b.firstElementChild.firstChild.setAttribute('d', 'M 8,30 30,18 8,6 z');
     }
@@ -2704,6 +3394,8 @@ function prettyname(name) {
 }
 
 function setDropdownClick(group, item) {
+  item.tabIndex = 0;
+  item.setAttribute("role", "button");
   item.onclick=function(event) {
     /* unselect all the currently selected items */
     var previousselected = document.querySelectorAll('.selected:not(.layoutitem)');
@@ -2729,6 +3421,12 @@ function setDropdownClick(group, item) {
     this.sequence.select();
     event.stopPropagation();
   };
+  item.onkeydown=function(event) {
+    if (event.key == "Enter" || event.key == " ") {
+      event.preventDefault();
+      item.click();
+    }
+  };
 
 }
 
@@ -2741,7 +3439,7 @@ function makeRecentsDropdownItem(group, sequence, selected) {
   itemsub.className = "dropdownitemsub";
   newitem.appendChild(itemmain);
   newitem.appendChild(itemsub);
-  itemmain.innerHTML = prettyname(sequence.toString());
+  itemmain.textContent = prettyname(sequence.toString());
 
   var html = '(' + dayNameFromDateString(sequence.toString());
   var numevents = videos[group][sequence].jsonfile.length;
@@ -2749,7 +3447,7 @@ function makeRecentsDropdownItem(group, sequence, selected) {
     html += ", " + numevents + " events";
   }
   html += ")";
-  itemsub.innerHTML = html;
+  itemsub.textContent = html;
 
   newitem.group=group;
   newitem.sequence=videos[group][sequence];
@@ -2773,7 +3471,7 @@ function newSentryDropdownItem(group, sequence, selected) {
   var date = sequence.substring(0,10);
   var itemsub = document.createElement("div");
   itemsub.className = "dropdownitemdayname";
-  itemsub.innerHTML = "(" + dayNameFromDateString(date) + ")";
+  itemsub.textContent = "(" + dayNameFromDateString(date) + ")";
   newitem.appendChild(itemsub);
 
   itemsub = document.createElement("div");
@@ -2782,8 +3480,8 @@ function newSentryDropdownItem(group, sequence, selected) {
 
   var time = sequence.substring(11);
 
-  itemmain.innerHTML = date;
-  itemsub.innerHTML = time.substring(0,5).replaceAll("-", ":");;
+  itemmain.textContent = date;
+  itemsub.textContent = time.substring(0,5).replaceAll("-", ":");
 
   newitem.group=group;
   newitem.sequence=videos[group][sequence];
@@ -2804,7 +3502,7 @@ function addToSentryDropdownItem(parent, group, sequence, selected) {
   itemsub.className = "dropdownitemsub selectable";
   parent.appendChild(itemsub);
   var time = sequence.substring(11);
-  itemsub.innerHTML = time.substring(0,5).replaceAll("-", ":");
+  itemsub.textContent = time.substring(0,5).replaceAll("-", ":");
   itemsub.sequence=videos[group][sequence];
   setDropdownClick(group, itemsub);
   if (selected) {
@@ -2848,11 +3546,35 @@ function flipdropdownsfromclick() {
 }
 
 readconfig();
+initialize();
 
-readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
+function parseVideoListResponse(value) {
+  var payload = JSON.parse(value);
+  if (!payload || !Array.isArray(payload.videos) ||
+      payload.videos.some(function(path) { return typeof path != "string"; })) {
+    throw new Error("recording list has an unexpected format");
+  }
+  return payload.videos;
+}
+
+readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
+  if (error) {
+    var loadIndicator = document.querySelector(".noclips");
+    loadIndicator.textContent = "Recordings unavailable";
+    setViewerStatus("The recording list could not be loaded: " + error.message, true);
+    return;
+  }
+  var lines;
+  try {
+    lines = parseVideoListResponse(value);
+  } catch (parseError) {
+    var loadIndicator = document.querySelector(".noclips");
+    loadIndicator.textContent = "Recordings unavailable";
+    setViewerStatus("The recording list response was invalid: " + parseError.message, true);
+    return;
+  }
   var newest="0-";
   var newestsequence;
-  var lines = value.split('\n');
   var haspillarviews = false;
   for (line of lines) {
     var [group, sequencename, filename] = line.split('/');
@@ -2967,8 +3689,7 @@ readfile({url:'cgi-bin/videolist.sh', callback:function(value) {
   if (newestsequence != undefined) {
     newestsequence.select();
   }
-  nr.innerHTML = "No recordings";
-  initialize();
+  nr.textContent = "No recordings";
 }
 });
 
@@ -3023,6 +3744,9 @@ function slidermousemove(e) {
 function toggleHamburgerMenu() {
   const brgr = document.querySelector(".hamburger");
   brgr.classList.toggle("brgropen");
+  const expanded = brgr.classList.contains("brgropen");
+  brgr.setAttribute("aria-expanded", expanded ? "true" : "false");
+  document.querySelector(".currenttabname").setAttribute("aria-expanded", expanded ? "true" : "false");
   const menu = document.querySelector(".tabheaderholder");
   menu.onclick = (e) => {
     if (e.target.classList.contains("tablabel")) {
@@ -3030,6 +3754,8 @@ function toggleHamburgerMenu() {
       tabname.innerText = e.target.innerText;
     }
     brgr.classList.remove("brgropen");
+    brgr.setAttribute("aria-expanded", "false");
+    document.querySelector(".currenttabname").setAttribute("aria-expanded", "false");
     menu.onclick = null;
   }
 }

@@ -1,15 +1,22 @@
 #!/bin/bash -eu
 
+set -euE
+
 if [ "${BASH_SOURCE[0]}" != "$0" ]
 then
   echo "${BASH_SOURCE[0]} must be executed, not sourced"
   return 1 # shouldn't use exit when sourced
 fi
 
+BACKINGFILES_ROOT="${BACKINGFILES_ROOT:-/backingfiles}"
+SNAPSHOTS_ROOT="${SNAPSHOTS_ROOT:-$BACKINGFILES_ROOT/snapshots}"
+SNAPSHOT_MOUNT_ROOT="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
+CAM_DISK_IMAGE="${CAM_DISK_IMAGE:-$BACKINGFILES_ROOT/cam_disk.bin}"
+
 if [ "${FLOCKED:-}" != "$0" ]
 then
-  mkdir -p /backingfiles/snapshots
-  if FLOCKED="$0" flock -E 99 /backingfiles/snapshots "$0" "$@" || case "$?" in
+  mkdir -p "$SNAPSHOTS_ROOT"
+  if FLOCKED="$0" flock -E 99 "$SNAPSHOTS_ROOT" "$0" "$@" || case "$?" in
   99) echo "failed to lock snapshots dir"
       exit 99
       ;;
@@ -58,7 +65,7 @@ function make_links_for_snapshot {
   local finalmnt="$2"
   log "making links for $curmnt, retargeted to $finalmnt"
   local restore_nullglob
-  restore_nullglob=$(shopt -p nullglob)
+  restore_nullglob=$(shopt -p nullglob || true)
   shopt -s nullglob
   for f in "$curmnt/TeslaCam/RecentClips/"*
   do
@@ -110,14 +117,14 @@ function snapshot {
   # before cleaning up old snapshots to maintain free space.
   local oldnum=-1
   local newnum=0
-  if stat /backingfiles/snapshots/snap-*/snap.bin > /dev/null 2>&1
+  if stat "$SNAPSHOTS_ROOT"/snap-*/snap.bin > /dev/null 2>&1
   then
-    oldnum=$(find /backingfiles/snapshots/snap-* -maxdepth 1 -name snap.bin | sort | tail -1 | tr -c -d '[:digit:]' | sed 's/^0*//' )
+    oldnum=$(find "$SNAPSHOTS_ROOT"/snap-* -maxdepth 1 -name snap.bin | sort | tail -1 | tr -c -d '[:digit:]' | sed 's/^0*//' )
     newnum=$((oldnum + 1))
   fi
   local oldname
   local newsnapdir
-  oldname=/backingfiles/snapshots/snap-$(printf "%06d" "$oldnum")/snap.bin
+  oldname=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$oldnum")/snap.bin
 
   # check that the previous snapshot is complete
   if [ ! -e "${oldname}.toc" ] && [ "$oldnum" != "-1" ]
@@ -126,16 +133,16 @@ function snapshot {
     rm -rf "$(dirname "$oldname")"
     newnum=$((oldnum))
     oldnum=$((oldnum - 1))
-    oldname=/backingfiles/snapshots/snap-$(printf "%06d" "$oldnum")/snap.bin
+    oldname=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$oldnum")/snap.bin
   fi
 
-  newsnapdir=/backingfiles/snapshots/snap-$(printf "%06d" $newnum)
-  newsnapmnt=/tmp/snapshots/snap-$(printf "%06d" $newnum)
+  newsnapdir=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$newnum")
+  newsnapmnt=$SNAPSHOT_MOUNT_ROOT/snap-$(printf "%06d" "$newnum")
 
   local newsnapname=$newsnapdir/snap.bin
   log "taking snapshot of cam disk in $newsnapdir"
 
-  if mount | grep /backingfiles/cam_disk.bin
+  if mount | grep -F "$CAM_DISK_IMAGE"
   then
     echo "snapshot already mounted"
   fi
@@ -153,7 +160,7 @@ function snapshot {
   fi
 
   # make a copy-on-write snapshot of the current image
-  cp --reflink=always /backingfiles/cam_disk.bin "$newsnapname"
+  cp --reflink=always "$CAM_DISK_IMAGE" "$newsnapname"
   # at this point we have a snapshot of the cam image, which is completely
   # independent of the still in-use image exposed to the car
 
@@ -175,15 +182,30 @@ function snapshot {
   # if needed, manually mount the image and check/fix timestamps
   if [ "$(getconf LONG_BIT)" = "32" ] && [ "$(. /etc/os-release && echo "${VERSION_ID:-}")" = "12" ]
   then
-    local -r tmpmnt=$(mktemp -d)
+    local tmpmnt
+    tmpmnt=$(mktemp -d)
+    readonly tmpmnt
     /root/bin/mountimage "$newsnapname" "$tmpmnt" rw
-    find "$tmpmnt" -newerat 20380101 | xargs -r touch
+    find "$tmpmnt" -newerat 20380101 -exec touch -- {} +
     umount "$tmpmnt"
     rmdir "$tmpmnt"
   fi
 
+  local autofs_wait_seconds="${AUTOFS_WAIT_SECONDS:-60}"
+  case "$autofs_wait_seconds" in
+    '' | *[!0-9]*)
+      log "invalid AUTOFS_WAIT_SECONDS: $autofs_wait_seconds"
+      return 2
+      ;;
+  esac
+  local autofs_deadline=$((SECONDS + autofs_wait_seconds))
   while ! systemctl --quiet is-active autofs
   do
+    if ((SECONDS >= autofs_deadline))
+    then
+      log "timed out waiting for autofs after $autofs_wait_seconds seconds"
+      return 124
+    fi
     log "waiting for autofs to be active"
     sleep 1
   done
@@ -204,7 +226,13 @@ function snapshot {
   fi
 }
 
-if ! snapshot "${1:-fsck}"
-then
-  log "failed to take snapshot"
-fi
+function snapshot_error () {
+  local status=$?
+  trap - ERR
+  log "failed to take snapshot" || true
+  exit "$status"
+}
+
+trap snapshot_error ERR
+snapshot "${1:-fsck}"
+trap - ERR

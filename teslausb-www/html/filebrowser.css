@@ -180,7 +180,8 @@ details > ul.fb-droptarget {
   content: 'i';
 }
 
-.fb-diskinfo-outer:hover .fb-diskinfo-inner {
+.fb-diskinfo-outer:hover .fb-diskinfo-inner,
+.fb-diskinfo-outer:focus-visible .fb-diskinfo-inner {
   color: darkblue;
   background: lightblue;
 }
@@ -199,7 +200,8 @@ details > ul.fb-droptarget {
   background: lightgrey;
 }
 
-.fb-diskinfo-outer:hover .fb-diskinfo {
+.fb-diskinfo-outer:hover .fb-diskinfo,
+.fb-diskinfo-outer:focus-visible .fb-diskinfo {
   visibility: visible;
 }
 
@@ -255,6 +257,15 @@ details > ul.fb-droptarget {
   border-radius: 50vh;
   box-shadow: 0 0 0 30px #cceeff;
   clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 50%)
+}
+
+.fb-fileentry:focus-visible,
+.fb-direntry:focus-visible,
+.fb-tree summary:focus-visible,
+.fb-crumb:focus-visible {
+  outline: 3px solid #065fcc;
+  outline-offset: 1px;
+  border-radius: 3px;
 }
 
 .fb-direntry {
@@ -423,7 +434,10 @@ details > ul.fb-droptarget {
   width: 20px;
   height: 20px;
   background: white;
+  border: 0;
+  padding: 0;
   text-align: center;
+  cursor: pointer;
 }
 
 .fb-dropinfo-closebutton:hover {
@@ -449,8 +463,21 @@ details > ul.fb-droptarget {
   height: 48px;
   border: none;
   padding: 0;
+  background-color: transparent;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  cursor: pointer;
   z-index: 3;
   display: none;
+}
+
+.fb-barbutton:focus-visible,
+.fb-dropinfo-closebutton:focus-visible,
+.fb-dropinfo-cancel:focus-visible,
+.fb-diskinfo-outer:focus-visible {
+  outline: 3px solid #065fcc;
+  outline-offset: 2px;
 }
 
 .fb-barbutton.fb-visiblebarbutton {
@@ -492,6 +519,82 @@ details > ul.fb-droptarget {
   border-radius: 24px;
 }
 
+.fb-status {
+  position: fixed;
+  left: 16px;
+  bottom: 22px;
+  max-width: calc(100% - 380px);
+  min-height: 20px;
+  padding: 4px 8px;
+  color: #234;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 4px;
+  z-index: 2;
+  overflow-wrap: anywhere;
+}
+
+.fb-status:empty {
+  display: none;
+}
+
+.fb-status.fb-error {
+  color: #8b0000;
+  border: 1px solid #c44;
+}
+
+@media screen and (max-width: 560px) {
+  .fb-treediv {
+    min-width: 34%;
+    max-width: 60%;
+    width: 42%;
+  }
+
+  .fb-buttonbar {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    display: flex !important;
+    justify-content: flex-end;
+    max-width: calc(100% - 32px);
+    overflow-x: auto;
+  }
+
+  .fb-barbutton {
+    flex: 0 0 48px;
+  }
+
+  .fb-status {
+    left: 8px;
+    right: 8px;
+    bottom: calc(66px + env(safe-area-inset-bottom));
+    max-width: none;
+  }
+
+  .fb-fileentry,
+  .fb-direntry,
+  .fb-tree summary {
+    min-height: 44px;
+    box-sizing: border-box;
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+
+  .fb-dropinfo {
+    box-sizing: border-box;
+    left: 12px;
+    max-width: calc(100% - 24px);
+    width: 350px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-playertitle,
+  .fb-dropinfo-line2,
+  .fb-dropinfo-line3 {
+    scroll-behavior: auto;
+  }
+}
+
 @media(hover: hover) {
   .uploadbutton {
     display: none;
@@ -507,6 +610,7 @@ details > ul.fb-droptarget {
   padding: 0 4px 0 4px;
 }
 
-.fb-driveselector:focus {
-  outline: none;
+.fb-driveselector:focus-visible {
+  outline: 3px solid #065fcc;
+  outline-offset: 1px;
 }

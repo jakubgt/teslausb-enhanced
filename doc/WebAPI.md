@@ -1,0 +1,57 @@
+# TeslaUSB local web API
+
+TeslaUSB exposes a versioned, same-origin API at `/api/v1`. It is intended for
+the dashboard and trusted tools on the same private network as the device. It
+is not an Internet-facing remote-control API.
+
+## Request rules
+
+- Read-only routes use `GET`.
+- Every state-changing route uses `POST` and must include
+  `X-TeslaUSB-Request: 1`.
+- Requests must use the device's local hostname or a private/link-local IP.
+  Add custom fully qualified names (including Tailscale MagicDNS names) to the
+  comma- or space-separated `WEB_ALLOWED_HOSTS` setting. Values are exact DNS
+  names/IPs without URL schemes, paths, wildcards, or ports.
+- Responses are not cached. API action responses use JSON with an `ok` field.
+- Positional query arguments use percent encoding and retain the legacy file
+  browser order so clients can migrate without changing their path model.
+
+Example:
+
+```console
+curl -X POST \
+  -H 'X-TeslaUSB-Request: 1' \
+  http://teslausb.local/api/v1/actions/sync
+```
+
+## Routes
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/capabilities` | Discover the API version and routes |
+| `GET` | `/api/v1/status` | Hardware, network, storage, and archive health |
+| `GET` | `/api/v1/config` | Discover configured virtual drives and BLE |
+| `GET` | `/api/v1/videos` | List linked TeslaCam recordings |
+| `GET` | `/api/v1/speed-test?SECONDS` | Stream bounded test data; `SECONDS` is 1–30 (the bundled UI requests 15) |
+| `GET` | `/api/v1/ble/status` | Read BLE pairing state |
+| `POST` | `/api/v1/actions/sync` | Trigger archive synchronization |
+| `POST` | `/api/v1/actions/reboot` | Queue a Raspberry Pi restart |
+| `POST` | `/api/v1/actions/drives/toggle` | Enable or disable the USB gadget |
+| `POST` | `/api/v1/actions/diagnostics` | Regenerate the diagnostic report |
+| `POST` | `/api/v1/actions/ble/pair` | Start BLE key pairing |
+| `GET` | `/api/v1/files/list` | List a managed media directory |
+| `GET` | `/api/v1/files/download` | Download one managed media file |
+| `GET` | `/api/v1/files/download-zip` | Download managed media as ZIP |
+| `POST` | `/api/v1/files/upload` | Upload one managed media file |
+| `POST` | `/api/v1/files/copy` | Copy managed media |
+| `POST` | `/api/v1/files/move` | Move or rename managed media |
+| `POST` | `/api/v1/files/delete` | Delete managed media |
+| `POST` | `/api/v1/files/mkdir` | Create managed media directories |
+
+The old `/cgi-bin/*.sh` read routes remain available. Legacy GET-based action
+routes are a deprecated compatibility shim for existing releases of the
+separately distributed WebUI; browser calls are accepted only with same-origin
+evidence. New integrations should use `/api/v1` exclusively.
+
+File routes currently preserve the legacy positional query format. For example, list the root of the Music drive with `/api/v1/files/list?fs%2FMusic&.`. The list response remains line-oriented text for compatibility; `/status`, `/config`, `/videos`, BLE status, and action responses are JSON. Mutation failures use a non-2xx status with `{"ok":false,"error":"..."}`; clients should handle both the HTTP status and JSON error instead of assuming a successful body.

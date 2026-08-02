@@ -24,7 +24,7 @@ then
 fi
 
 function nm_get_wifi_client_device () {
-  for i in {1..5}
+  for _ in {1..5}
   do
     WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -c 17-)"
     if [ -n "$WLAN" ]
@@ -89,7 +89,7 @@ if systemctl --quiet is-enabled NetworkManager.service
 then
   # force-install iw because otherwise it will get autoremoved when
   # alsa-utils is removed later
-  apt-get -y --force-yes install iw || return 1
+  DEBIAN_FRONTEND=noninteractive apt-get -y install iw || return 1
   if ! nm_add_ap
   then
     # Network Manager won't allow adding connections when started with a
@@ -121,7 +121,7 @@ then
 
   # install required packages
   log_progress "installing dnsmasq and hostapd"
-  apt-get -y --force-yes install dnsmasq hostapd
+  DEBIAN_FRONTEND=noninteractive apt-get -y install dnsmasq hostapd
 
   log_progress "configuring AP '$AP_SSID' with IP $IP"
   # create udev rule

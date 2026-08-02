@@ -18,5 +18,27 @@ unmount_if_set() {
   fi
 }
 
-unmount_if_set "${ARCHIVE_MOUNT:-}" &
-unmount_if_set "${MUSIC_ARCHIVE_MOUNT:-}" &
+# Keep the bounded unmounts parallel, but do not let either survive into the
+# next archive iteration and race a newly connected mount.
+archive_unmount_pid=
+music_unmount_pid=
+if [ -n "${ARCHIVE_MOUNT:-}" ]
+then
+  unmount_if_set "$ARCHIVE_MOUNT" &
+  archive_unmount_pid=$!
+fi
+if [ -n "${MUSIC_ARCHIVE_MOUNT:-}" ]
+then
+  unmount_if_set "$MUSIC_ARCHIVE_MOUNT" &
+  music_unmount_pid=$!
+fi
+disconnect_status=0
+if [ -n "$archive_unmount_pid" ] && ! wait "$archive_unmount_pid"
+then
+  disconnect_status=1
+fi
+if [ -n "$music_unmount_pid" ] && ! wait "$music_unmount_pid"
+then
+  disconnect_status=1
+fi
+exit "$disconnect_status"

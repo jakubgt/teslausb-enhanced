@@ -14,7 +14,7 @@ then
 fi
 
 function checkenv {
-  if [ -e /dev/disk/by-label/backingfiles ] || [ -e /dev/disk/by-label/mutable ] || grep -q LABEL=backingfiles /etc/fstab || grep -q LABEL=backingfiles /etc/fstab
+  if [ -e /dev/disk/by-label/backingfiles ] || [ -e /dev/disk/by-label/mutable ] || grep -q LABEL=backingfiles /etc/fstab || grep -q LABEL=mutable /etc/fstab
   then
     echo "STOP: mutable or backingfiles already exist and/or are listed in fstab. Restart with clean environment."
     exit 1
@@ -38,7 +38,7 @@ function checknewpartitions {
     lsblk -no NAME,LABEL "$LOOP" | grep -q backingfiles || return 1
     lsblk -no NAME,LABEL "$LOOP" | grep -q mutable || return 1
   fi
-  if ! grep -q LABEL=backingfiles /etc/fstab || ! grep -q LABEL=backingfiles /etc/fstab
+  if ! grep -q LABEL=backingfiles /etc/fstab || ! grep -q LABEL=mutable /etc/fstab
   then
     echo "ERROR: fstab not correctly updated"
     cat /etc/fstab
@@ -164,7 +164,20 @@ SUCCESS=true
 
 function checksuccess {
   printf 'Starting "%s"\n' "$1"
-  cp /etc/fstab /etc/fstab.org
+  if ! FSTAB_BACKUP=$(mktemp /etc/fstab.teslausb-test.XXXXXX)
+  then
+    echo "FAIL: unable to create an fstab backup"
+    SUCCESS=false
+    return 1
+  fi
+  if ! cp --preserve=all /etc/fstab "$FSTAB_BACKUP"
+  then
+    echo "FAIL: unable to back up /etc/fstab"
+    rm -f -- "$FSTAB_BACKUP"
+    FSTAB_BACKUP=
+    SUCCESS=false
+    return 1
+  fi
   if ../setup/pi/create-backingfiles-partition.sh /backingfiles /mutable && checknewpartitions
   then
     printf '%-45s %s\n' "$1" OK
@@ -174,7 +187,14 @@ function checksuccess {
     printf '%-45s %s\n' "$1" FAIL > /dev/tty
     SUCCESS=false
   fi
-  mv /etc/fstab.org /etc/fstab
+  if mv -f -- "$FSTAB_BACKUP" /etc/fstab
+  then
+    FSTAB_BACKUP=
+  else
+    echo "FAIL: unable to restore /etc/fstab"
+    SUCCESS=false
+    exit 1
+  fi
 }
 
 function checkfailure {
@@ -235,6 +255,47 @@ function makeexternaldriveimage {
 ROOT_IMAGE=/tmp/createbackingfilepartitiontest$$.img
 EXT_IMAGE=/tmp/createbackingfilepartitiontestext$$.img
 LOG=/tmp/createbackingfilepartitiontest$$.log
+FSTAB_BACKUP=
+
+function cleanup {
+  local status=$?
+  trap - EXIT
+
+  if [ -n "$FSTAB_BACKUP" ] && [ -e "$FSTAB_BACKUP" ]
+  then
+    if ! mv -f -- "$FSTAB_BACKUP" /etc/fstab
+    then
+      echo "WARNING: unable to restore /etc/fstab from $FSTAB_BACKUP" >&2
+    fi
+    FSTAB_BACKUP=
+  fi
+
+  local image
+  local loop
+  for image in "$ROOT_IMAGE" "$EXT_IMAGE"
+  do
+    while IFS= read -r loop
+    do
+      if [ -n "$loop" ]
+      then
+        losetup -d "$loop" || true
+      fi
+    done < <(losetup -n -O NAME -j "$image" 2> /dev/null || true)
+  done
+
+  rm -f "$ROOT_IMAGE" "$EXT_IMAGE"
+  if [ "$status" -eq 0 ] && [ "${SUCCESS:-false}" = "true" ]
+  then
+    rm -f "$LOG"
+  fi
+
+  exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 checkenv
 

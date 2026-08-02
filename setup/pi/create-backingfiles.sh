@@ -78,7 +78,7 @@ function calc_size () {
     esac
     log_progress "Percentage-based size no longer supported, using default size of $requestedsize for $1" > /dev/stderr
   fi
-  requestedsize="$(( $(dehumanize $requestedsize) / 1024 ))"
+  requestedsize="$(( $(dehumanize "$requestedsize") / 1024 ))"
   echo "$requestedsize"
 }
 
@@ -168,7 +168,6 @@ function image_size_kb () {
 
 function release_all_images () {
   systemctl stop teslausb || true
-  killall archiveloop || true
   /root/bin/disable_gadget.sh || true
   umount -d /mnt/cam || true
   umount -d /mnt/music || true
@@ -185,7 +184,8 @@ function image_matches_params () {
   then
     if [ -e "$image_file" ]
     then
-      local current_image_size=$(image_size_kb "$image_file")
+      local current_image_size
+      current_image_size=$(image_size_kb "$image_file")
       if ! closeenough "$requested_image_size" "$current_image_size"
       then
         log_progress "$image_file should be resized (to $requested_image_size from $current_image_size)"
@@ -219,7 +219,7 @@ else
   if ! hash mkfs.exfat &> /dev/null
   then
     /root/bin/remountfs_rw
-    if ! apt install -y exfatprogs
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y exfatprogs
     then
       log_progress "kernel supports ExFAT, but exfatprogs package does not exist."
       if [ "$USE_EXFAT" = true ]
@@ -234,7 +234,7 @@ fi
 # some distros don't include mkfs.vfat
 if ! hash mkfs.vfat
 then
-  apt-get -y --force-yes install dosfstools
+  DEBIAN_FRONTEND=noninteractive apt-get -y install dosfstools
 fi
 
 CAM_DISK_FILE_NAME="$BACKINGFILES_MOUNTPOINT/cam_disk.bin"
@@ -267,10 +267,11 @@ function reduce_size () {
   local newval=$((curval*95/100))
   if [ "$newval" -ge "$minval" ]
   then
-    export $1=$newval
+    printf -v "$1" '%s' "$newval"
   else
-    export $1=$minval
+    printf -v "$1" '%s' "$minval"
   fi
+  export "${1?}"
   adjusted=true
 }
 

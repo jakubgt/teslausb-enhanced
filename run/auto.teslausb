@@ -1,9 +1,5 @@
 #!/bin/dash
 
-diskimage="/backingfiles/snapshots/$1/snap.bin"
-mountpoint="/backingfiles/snapshots/$1/mnt"
-optfile="${diskimage}.opts"
-
 case $1 in
   snap-*)
     ;;
@@ -12,25 +8,51 @@ case $1 in
     ;;
 esac
 
+backingfiles_root="${BACKINGFILES_ROOT:-/backingfiles}"
+snapshot_mount_root="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
+mountoptsforimage="${MOUNTOPTSFORIMAGE:-/root/bin/mountoptsforimage}"
+release_snapshot="${RELEASE_SNAPSHOT:-/root/bin/release_snapshot.sh}"
+
+diskimage="$backingfiles_root/snapshots/$1/snap.bin"
+mountpoint="$backingfiles_root/snapshots/$1/mnt"
+optfile="${diskimage}.opts"
+
 if [ ! -r "$diskimage" ]
 then
-  /root/bin/release_snapshot.sh "$1"
+  "$release_snapshot" "$1"
   exit 1
 fi
 
 if [ ! -L "$mountpoint" ] && [ -d "$mountpoint" ]
 then
   rmdir "$mountpoint"
-  ln -s "/tmp/snapshots/$1" "$mountpoint"
+  ln -s "$snapshot_mount_root/$1" "$mountpoint"
 fi
 
 if [ ! -f "$optfile" ]
 then
-  rm -rf "$optfile"
-  /root/bin/mountoptsforimage "${diskimage}" | {
-    read -r fstype opts
-    echo "-fstype=${fstype},ro,${opts} :${diskimage}" > "$optfile"
-  }
+  if [ -e "$optfile" ] || [ -L "$optfile" ]
+  then
+    rm -f "$optfile" || exit 1
+  fi
+
+  mount_options=$("$mountoptsforimage" "$diskimage") || exit 1
+  set -f
+  # mountoptsforimage emits exactly two whitespace-separated fields.
+  # shellcheck disable=SC2086
+  set -- $mount_options
+  set +f
+  if [ "$#" -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]
+  then
+    exit 1
+  fi
+
+  tmpfile=$(mktemp "${optfile}.tmp.XXXXXX") || exit 1
+  trap 'rm -f "$tmpfile"' 0
+  trap 'exit 1' HUP INT TERM
+  printf '%s\n' "-fstype=$1,ro,$2 :${diskimage}" > "$tmpfile"
+  mv -f "$tmpfile" "$optfile"
+  trap - 0 HUP INT TERM
 fi
 
 cat "$optfile"

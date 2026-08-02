@@ -1,10 +1,13 @@
 #!/bin/bash
 
-VIN=$(sudo grep "^export TESLA_BLE_VIN=" /root/teslausb_setup_variables.conf | cut -d'=' -f2- | head -n 1 | tr -cd '[:alnum:]')
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+# shellcheck source=teslausb-www/html/cgi-bin/cgi-common.sh
+source "$script_dir/cgi-common.sh"
 
+cgi_require_mutation
 
-
-message=$(sudo /root/bin/tesla-control -ble -vin ${VIN^^} add-key-request /root/.ble/key_public.pem owner cloud_key 2>&1)
+message=$(sudo -n /usr/local/sbin/teslausb-web-sudo ble-pair 2>&1)
 result=$?
 
 status_code="202 Accepted"
@@ -16,17 +19,26 @@ then
   output="Failed to send pairing request. $message"
 fi
 
-cat << EOF
-HTTP/1.0 $status_code
-Content-type: text/html
-Status: $status_code
+if [[ "${TESLAUSB_API_RESPONSE:-}" == json ]]
+then
+  if [[ $result -eq 0 ]]
+  then
+    cgi_ok "$output" "$status_code"
+  else
+    cgi_error "$status_code" "$output"
+  fi
+else
+  cgi_html_escape "$output"
+  cgi_headers "$status_code" 'text/html; charset=utf-8'
+  cat << EOF
 
 <html>
 <head>
   <meta http-equiv="refresh" content="3; URL=/" />
 </head>
 <body>
-  <p>$output</p>
+  <p>$CGI_ESCAPED</p>
 </body>
 </html>
 EOF
+fi

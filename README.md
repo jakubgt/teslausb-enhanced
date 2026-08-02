@@ -2,7 +2,7 @@
 
 ## Intro
 
-Raspberry Pi and other [SBCs](## "Single Board Computers") can emulate a USB drive, so can act as a drive for your Tesla to write dashcam footage to. Because the SBC has full access to the emulated drive, it can:
+Raspberry Pi and other single-board computers (SBCs) can emulate a USB drive, so can act as a drive for your Tesla to write dashcam footage to. Because the SBC has full access to the emulated drive, it can:
 
 - automatically copy the recordings to an archive server when you get home
 - hold both dashcam recordings and music files
@@ -15,6 +15,10 @@ This video (not mine) has a nice overview of teslausb and how to install it:
 [![teslausb intro and installation](http://img.youtube.com/vi/ETs6r1vKTO8/0.jpg)](http://www.youtube.com/watch?v=ETs6r1vKTO8 "teslausb intro and installation")
 
 If you are interested in having more detailed information about how TeslaUsb works, have a look into the [wiki](https://github.com/marcone/teslausb/wiki).
+
+### Dashcam encryption compatibility
+
+Tesla vehicles with software 2026.20 or later can encrypt recordings written to the USB drive. TeslaUSB cannot currently archive or play files in `EncryptedClips`; automatic archiving and the web viewer require standard, unencrypted recordings. If encryption is enabled in your vehicle, turn off **Controls > Safety > Encrypt Dashcam Recordings**. See Tesla's [Dashcam documentation](https://www.tesla.com/ownersmanual/model3/en_us/GUID-3BCC07CE-5EA2-4F40-99D1-27690898FF3C.html) for details.
 
 ## Prerequisites
 
@@ -38,7 +42,31 @@ Optional:
 
 ## Installing
 
-To install teslausb on a Raspberry Pi, it is recommended to use the [prebuilt image](https://github.com/marcone/teslausb/releases) and [one step setup instructions](doc/OneStepSetup.md). For other SBCs, start [here](https://github.com/marcone/teslausb/wiki/Installation)
+The current prebuilt Raspberry Pi image is based on Raspberry Pi OS Bookworm Lite. For other SBCs, start with the [installation wiki](https://github.com/marcone/teslausb/wiki/Installation).
+
+### Quick start
+
+1. Confirm that your board supports USB OTG and use a microSD card of at least 64 GB.
+2. Download the [latest prebuilt image](https://github.com/marcone/teslausb/releases/latest) and flash it with Raspberry Pi Imager's **Use custom** option.
+3. Copy and edit `teslausb_setup_variables.conf.sample` on the boot partition, then save it as `teslausb_setup_variables.conf`. The optional [local configuration helper](doc/ConfigTool.md) can generate and preflight this file without executing it.
+4. Before first boot, confirm the archive destination, use unique Wi-Fi and web passwords, and leave `DATA_DRIVE` unset unless you have verified the exact whole-disk device that may be erased. Keep a private backup of the original configuration.
+5. Safely eject the card, boot the Pi with internet access, and allow the setup flashes, reboot, and final steady pulse to finish. Initial setup can take longer than five minutes on a slow connection.
+6. Open `http://teslausb.local/` and confirm storage, network, and archive health before connecting it to the car.
+
+See the [one-step setup guide](doc/OneStepSetup.md) for configuration choices, LED stages, security, and troubleshooting.
+
+### Web-interface recovery
+
+TeslaUSB provides two interfaces over the same device:
+
+- `http://teslausb.local/` is the bundled legacy interface.
+- `http://teslausb.local/new/` is the optional, separately released interface when an explicitly pinned release has been installed.
+
+If a saved preference keeps redirecting to an interface that does not load, open `http://teslausb.local/?ui=legacy` to force and remember the legacy interface. You can also open `/new/` directly. If neither works, clear site data for `teslausb.local`, try the device's IP address, and inspect `/teslausb/teslausb-headless-setup.log` over SSH.
+
+The bundled dashboard uses the [versioned local Web API](doc/WebAPI.md). Read requests use `GET`; actions use `POST` with a same-origin request header. The API is intended for trusted private networks and must not be exposed directly to the Internet.
+
+Archive transfers now produce SHA-256 manifests, verify destination content before removing source links, and retain bounded retry state across service restarts. See [archive reliability](doc/ArchiveReliability.md) for behavior, status paths, and operational limits.
 
 ## Contributing
 

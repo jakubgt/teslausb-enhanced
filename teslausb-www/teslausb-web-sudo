@@ -1,0 +1,161 @@
+#!/bin/bash -p
+
+# Root-owned dispatcher for the small, fixed set of privileged operations used
+# by the TeslaUSB web UI.  The sudoers policy authorizes each exact one-word
+# action; this script independently rejects every other argument shape.
+
+set -u
+set -o pipefail
+
+PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+readonly PATH
+IFS=$' \t\n'
+readonly IFS
+LC_ALL=C
+export LC_ALL
+umask 077
+
+readonly setup_variables='/root/teslausb_setup_variables.conf'
+TESLA_BLE_VIN=
+
+usage_error() {
+  printf 'teslausb-web-sudo: exactly one supported action is required\n' >&2
+  exit 64
+}
+
+parse_ble_vin_line() {
+  local line="$1"
+  local raw_vin
+  local candidate=
+
+  [[ "$line" == 'export TESLA_BLE_VIN='* ]] || return 1
+  raw_vin="${line#export TESLA_BLE_VIN=}"
+
+  # Accept only one literal token. The ANSI-C form is emitted by the bundled
+  # config helper; VIN characters cannot contain escapes, so no evaluation is
+  # needed and concatenation or command substitution remains invalid.
+  if (( ${#raw_vin} == 17 ))
+  then
+    candidate=$raw_vin
+  elif (( ${#raw_vin} == 19 )) &&
+       [[ "${raw_vin:0:1}" == "'" && "${raw_vin: -1}" == "'" ]]
+  then
+    candidate="${raw_vin:1:17}"
+  elif (( ${#raw_vin} == 19 )) &&
+       [[ "${raw_vin:0:1}" == '"' && "${raw_vin: -1}" == '"' ]]
+  then
+    candidate="${raw_vin:1:17}"
+  elif (( ${#raw_vin} == 20 )) &&
+       [[ "${raw_vin:0:2}" == "\$'" && "${raw_vin: -1}" == "'" ]]
+  then
+    candidate="${raw_vin:2:17}"
+  else
+    return 1
+  fi
+
+  [[ "$candidate" =~ ^[A-HJ-NPR-Z0-9a-hj-npr-z]{17}$ ]] || return 1
+  TESLA_BLE_VIN="${candidate^^}"
+}
+
+read_ble_vin() {
+  local line
+
+  TESLA_BLE_VIN=
+  while IFS= read -r line
+  do
+    if [[ "$line" == 'export TESLA_BLE_VIN='* ]]
+    then
+      parse_ble_vin_line "$line" || true
+      break
+    fi
+  done < "$setup_variables"
+
+  if [[ -z "$TESLA_BLE_VIN" ]]
+  then
+    printf 'teslausb-web-sudo: TESLA_BLE_VIN is not configured\n' >&2
+    return 1
+  fi
+}
+
+ble_is_configured() {
+  read_ble_vin > /dev/null 2>&1
+}
+
+run_vcgencmd() {
+  local operation="$1"
+  shift
+  local candidate
+
+  for candidate in /usr/bin/vcgencmd /opt/vc/bin/vcgencmd
+  do
+    if [[ -x "$candidate" ]]
+    then
+      exec "$candidate" "$operation" "$@"
+    fi
+  done
+  printf 'teslausb-web-sudo: vcgencmd is unavailable\n' >&2
+  exit 127
+}
+
+run_reboot() {
+  local candidate
+
+  for candidate in /usr/bin/systemctl /bin/systemctl
+  do
+    if [[ -x "$candidate" ]]
+    then
+      exec "$candidate" --no-block reboot
+    fi
+  done
+  for candidate in /usr/sbin/reboot /sbin/reboot
+  do
+    if [[ -x "$candidate" ]]
+    then
+      exec "$candidate"
+    fi
+  done
+  printf 'teslausb-web-sudo: reboot is unavailable\n' >&2
+  exit 127
+}
+
+(( $# == 1 )) || usage_error
+
+case "$1" in
+  diagnose)
+    exec /root/bin/setup-teslausb diagnose
+    ;;
+  reboot)
+    run_reboot
+    ;;
+  gadget-enable)
+    exec /root/bin/enable_gadget.sh
+    ;;
+  gadget-disable)
+    exec /root/bin/disable_gadget.sh
+    ;;
+  ble-configured)
+    ble_is_configured
+    ;;
+  ble-status)
+    read_ble_vin || exit 65
+    exec /root/bin/tesla-control -ble -vin "$TESLA_BLE_VIN" \
+      session-info /root/.ble/key_private.pem infotainment
+    ;;
+  ble-pair)
+    read_ble_vin || exit 65
+    exec /root/bin/tesla-control -ble -vin "$TESLA_BLE_VIN" \
+      add-key-request /root/.ble/key_public.pem owner cloud_key
+    ;;
+  pmic-ext5v)
+    run_vcgencmd pmic_read_adc EXT5V_V
+    ;;
+  pmic-batt)
+    run_vcgencmd pmic_read_adc BATT_V
+    ;;
+  get-throttled)
+    run_vcgencmd get_throttled
+    ;;
+  *)
+    usage_error
+    ;;
+esac

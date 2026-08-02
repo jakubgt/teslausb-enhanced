@@ -4,8 +4,8 @@
 # state where the archive is reachable via the network, appears to be
 # mounted, but the mount is inoperable and any attempt to access it
 # results in a "host is down" message.
-# Run this in the background, since unmounting can hang, which would
-# block a return to archiveloop.
+# The bounded unmounts run in parallel, but this script waits for both. This
+# prevents a late unmount from one archive iteration racing the next connect.
 
 unmount_if_set() {
   local mount_point=$1
@@ -25,5 +25,25 @@ unmount_if_set() {
   fi
 }
 
-unmount_if_set "${ARCHIVE_MOUNT:-}" &
-unmount_if_set "${MUSIC_ARCHIVE_MOUNT:-}" &
+archive_unmount_pid=
+music_unmount_pid=
+if [ -n "${ARCHIVE_MOUNT:-}" ]
+then
+  unmount_if_set "$ARCHIVE_MOUNT" &
+  archive_unmount_pid=$!
+fi
+if [ -n "${MUSIC_ARCHIVE_MOUNT:-}" ]
+then
+  unmount_if_set "$MUSIC_ARCHIVE_MOUNT" &
+  music_unmount_pid=$!
+fi
+disconnect_status=0
+if [ -n "$archive_unmount_pid" ] && ! wait "$archive_unmount_pid"
+then
+  disconnect_status=1
+fi
+if [ -n "$music_unmount_pid" ] && ! wait "$music_unmount_pid"
+then
+  disconnect_status=1
+fi
+exit "$disconnect_status"

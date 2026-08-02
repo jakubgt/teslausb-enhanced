@@ -1,35 +1,104 @@
+# All paths, including recordings and static assets, share this gate. Regexes
+# deliberately match only private/link-local numeric addresses; a hostname
+# such as fd-attacker.example cannot masquerade as an IPv6 literal because the
+# IPv6 patterns require an actual colon.
+map $host $teslausb_host_allowed {
+    default 0;
+    localhost 1;
+    teslausb 1;
+    raspberrypi 1;
+    ~^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+local$ 1;
+    ~^127\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$ 1;
+    ~^10\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$ 1;
+    ~^172\.(1[6-9]|2[0-9]|3[01])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$ 1;
+    ~^192\.168\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$ 1;
+    ~^169\.254\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$ 1;
+    "::1" 1;
+    "[::1]" 1;
+    ~^f[cd][0-9a-f:]*:[0-9a-f:]+$ 1;
+    ~^\[f[cd][0-9a-f:]*:[0-9a-f:]+\]$ 1;
+    ~^fe[89ab][0-9a-f:]*:[0-9a-f:]+$ 1;
+    ~^\[fe[89ab][0-9a-f:]*:[0-9a-f:]+\]$ 1;
+    # TESLAUSB_CUSTOM_HOSTS
+}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
 
     root /var/www/html;
 
-    index index.html
+    index index.html;
 
     server_name _;
 
     client_max_body_size 0;
     fastcgi_request_buffering off;
 
+    auth_basic off;
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    if ($teslausb_host_allowed = 0) {
+        return 421;
+    }
+
+    # Preserve the same-origin referrer used by the legacy/new UI switch while
+    # avoiding cross-origin URL leakage. The remaining directives do not
+    # restrict scripts, styles, media, or the same-origin diagnostics iframe.
+    add_header Referrer-Policy "same-origin" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header Content-Security-Policy "frame-ancestors 'self'; object-src 'none'; base-uri 'self'" always;
+
     location / {
         try_files $uri $uri/ =404;
-        auth_basic off;
-        auth_basic_user_file /etc/nginx/.htpasswd;
     }
 
     location /cgi-bin/ {
-         auth_basic off;
-         auth_basic_user_file /etc/nginx/.htpasswd;
          gzip off;
          root /var/www/html;
          fastcgi_pass  unix:/var/run/fcgiwrap.socket;
          include /etc/nginx/fastcgi_params;
          fastcgi_param SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+         fastcgi_param WEB_ALLOWED_HOSTS "__TESLAUSB_ALLOWED_HOSTS__";
          fastcgi_max_temp_file_size 0;
     }
+    location = /cgi-bin/cgi-common.sh {
+         deny all;
+    }
+    location = /cgi-bin/api-v1.sh {
+         deny all;
+    }
+
+    location ~ ^/api/v1(?:/.*)?$ {
+         gzip off;
+         fastcgi_pass unix:/var/run/fcgiwrap.socket;
+         include /etc/nginx/fastcgi_params;
+         fastcgi_param SCRIPT_FILENAME /var/www/html/cgi-bin/api-v1.sh;
+         fastcgi_param PATH_INFO $uri;
+         fastcgi_param WEB_ALLOWED_HOSTS "__TESLAUSB_ALLOWED_HOSTS__";
+         fastcgi_max_temp_file_size 0;
+    }
+
+    # Music and recordings remain browsable/streamable, but uploaded active
+    # content must not execute in the administrative UI's origin. Unknown
+    # extensions are already protected from MIME sniffing by the server header.
+    location ~* ^/(?:fs|TeslaCam)/.*\.(?:s?html?|xhtml|svgz?|xml|xsl|xslt|m?js)$ {
+         try_files $uri =404;
+         types { }
+         default_type application/octet-stream;
+         add_header Content-Disposition "attachment" always;
+         # add_header directives at location scope replace inherited headers on
+         # nginx versions shipped by Raspberry Pi OS, so repeat them here.
+         add_header Referrer-Policy "same-origin" always;
+         add_header X-Content-Type-Options "nosniff" always;
+         add_header X-Frame-Options "SAMEORIGIN" always;
+         add_header Cross-Origin-Resource-Policy "same-origin" always;
+         add_header Content-Security-Policy "frame-ancestors 'self'; object-src 'none'; base-uri 'self'" always;
+    }
+
     location /TeslaCam/ {
-         auth_basic off;
-         auth_basic_user_file /etc/nginx/.htpasswd;
          root /var/www/html;
          fancyindex on;
          fancyindex_css_href /fancyindex.css;

@@ -15,6 +15,10 @@ function log_progress () {
   echo "configure: $1"
 }
 
+function apt_install () {
+  DEBIAN_FRONTEND=noninteractive apt-get install --assume-yes "$@"
+}
+
 if [ "${FLOCKED:-}" != "$0" ]
 then
   PARENT="$(ps -o comm= $PPID)"
@@ -48,45 +52,33 @@ function check_variable () {
     fi
 }
 
-# as of March 2021, Raspberry Pi OS still includes a 3 year old version of
-# rsync, which has a bug (https://bugzilla.samba.org/show_bug.cgi?id=10494)
-# that breaks archiving from snapshots.
-# Check that the default rsync works correctly, and install a newer version
-# if needed.
+# Validate the distro rsync implementation against TeslaUSB's snapshot-link
+# transfer pattern. Setup fails closed instead of downloading an executable
+# directly into /usr/local/bin when the packaged rsync is unsuitable.
 function check_default_rsync {
-  if ! hash rsync
+  local test_dir
+  local status=1
+
+  if ! command -v rsync > /dev/null
   then
-    apt install rsync
+    apt_install rsync
   fi
 
-  rm -rf /tmp/rsynctest
-  mkdir -p /tmp/rsynctest/src /tmp/rsynctest/dst
-  echo testfile > /tmp/testfile.dat
-  echo testfile.dat > /tmp/filelist
-  ln -s /tmp/testfile.dat /tmp/rsynctest/src/
-  if rsync -avhRL --remove-source-files --no-perms --omit-dir-times --files-from=/tmp/filelist /tmp/rsynctest/src/ /tmp/rsynctest/dst
+  test_dir=$(mktemp -d "${TMPDIR:-/tmp}/teslausb-rsync-test.XXXXXX") || return
+  mkdir -p "$test_dir/src" "$test_dir/dst"
+  printf 'testfile\n' > "$test_dir/testfile.dat"
+  printf 'testfile.dat\n' > "$test_dir/filelist"
+  ln -s "$test_dir/testfile.dat" "$test_dir/src/testfile.dat"
+  if rsync -avhRL --remove-source-files --no-perms --omit-dir-times \
+      --files-from="$test_dir/filelist" "$test_dir/src/" "$test_dir/dst"
   then
-    if [ -s /tmp/rsynctest/dst/testfile.dat ] && ! [ -e /tmp/rsynctest/src/testfile.dat ]
+    if [ -s "$test_dir/dst/testfile.dat" ] && ! [ -e "$test_dir/src/testfile.dat" ]
     then
-      rm -rf /tmp/rsynctest
-      return 0
+      status=0
     fi
   fi
-  return 1
-}
-
-function install_prebuilt_rsync {
-  local arch="$(uname -m)"
-  if [ "$arch" = "aarch64" ]
-  then
-    curl -L --fail -o /usr/local/bin/rsync https://github.com/marcone/rsync/releases/download/v3.2.3-arm64/rsync
-  elif [[ $arch =~ arm* ]]
-  then
-    curl -L --fail -o /usr/local/bin/rsync https://github.com/marcone/rsync/releases/download/v3.2.3-rpi/rsync
-  else
-    log_progress "No prebuilt rsync for '$arch'"
-    return 1
-  fi
+  rm -rf -- "$test_dir"
+  return "$status"
 }
 
 function check_rsync {
@@ -96,20 +88,9 @@ function check_rsync {
     return 0
   fi
 
-  log_progress "default rsync doesn't work, installing prebuilt 3.2.3"
-  if install_prebuilt_rsync
-  then
-    chmod a+x /usr/local/bin/rsync
-    apt install -y libxxhash0 libssl-dev
-    if check_default_rsync
-    then
-      log_progress "rsync works OK now"
-      return 0
-    fi
-  fi
-
   log_progress "STOP: rsync doesn't work correctly"
   log_progress "(using '$(which rsync)')"
+  log_progress "Install a supported distro rsync package before retrying setup."
   exit 1
 }
 
@@ -185,8 +166,37 @@ function get_archive_module () {
 }
 
 function pip3_install () {
-  rm -f /usr/lib/$(py3versions -d)/EXTERNALLY-MANAGED
-  pip3 install "$@"
+  local venv="${TESLAUSB_PYTHON_VENV:-/root/teslausb-venv}"
+  local lock_tmp
+
+  if [ -L "$venv" ] || { [ -e "$venv" ] && [ ! -d "$venv" ]; }
+  then
+    log_progress "STOP: Python environment path must be a real directory: $venv"
+    return 1
+  fi
+
+  if [ ! -x "$venv/bin/python" ]
+  then
+    log_progress "Creating isolated Python environment..."
+    if ! python3 -m venv "$venv"
+    then
+      apt_install python3-venv
+      python3 -m venv "$venv"
+    fi
+  fi
+  "$venv/bin/python" -m pip install --disable-pip-version-check --no-input \
+    --retries "${PIP_RETRIES:-3}" --timeout "${PIP_TIMEOUT_SECONDS:-30}" "$@"
+  lock_tmp=$(mktemp "$venv/.teslausb-requirements.XXXXXX")
+  if ! "$venv/bin/python" -m pip freeze > "$lock_tmp"
+  then
+    rm -f -- "$lock_tmp"
+    return 1
+  fi
+  chmod 0644 "$lock_tmp" || {
+    rm -f -- "$lock_tmp"
+    return 1
+  }
+  mv -f "$lock_tmp" "$venv/teslausb-requirements.lock"
 }
 
 function check_at_most_one_wake_api () {
@@ -216,7 +226,7 @@ function check_teslafi_api () {
     if ! command -v jq &>/dev/null
       then
         log_progress "Installing required package for TeslaFi API: jq"
-        DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install jq
+        apt_install jq
     fi
     log_progress "TeslaFi API enabled."
   else
@@ -242,7 +252,7 @@ function check_tessie_api () {
       if ! command -v jq &>/dev/null
       then
         log_progress "Installing required package for Tessie API: jq"
-        DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install jq
+        apt_install jq
       fi
 
       log_progress "Tessie API enabled."
@@ -267,7 +277,7 @@ function check_and_configure_tesla_ble () {
       log_progress "Skipping required package for Tesla BLE API: bluez already installed."
     else
       log_progress "Installing required package for Tesla BLE API: bluez"
-      DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install bluez
+      apt_install bluez
     fi
 
     if [[ -n "$(apt-cache search pi-bluetooth)" ]]
@@ -277,7 +287,7 @@ function check_and_configure_tesla_ble () {
           log_progress "Skipping required package for Tesla BLE API: pi-bluetooth already installed."
         else
           log_progress "Installing required package for Tesla BLE API: pi-bluetooth"
-          DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install pi-bluetooth
+          apt_install pi-bluetooth
         fi
     else
         log_progress "Skipping required package for Tesla BLE API: pi-bluetooth does not exist for this device."
@@ -294,8 +304,13 @@ function check_and_configure_tesla_ble () {
       chmod 600 /root/.ble/key_private.pem
       chmod 644 /root/.ble/key_public.pem
       log_progress "Generated keys for Tesla BLE interface."
-    elif "$install_path/tesla-control" -ble -vin "${TESLA_BLE_VIN^^}" body-controller-state; then
-      if "$install_path/tesla-control" -ble -vin "${TESLA_BLE_VIN^^}" session-info /root/.ble/key_private.pem infotainment; then
+    elif timeout --foreground --kill-after=5s \
+        "${TESLA_BLE_COMMAND_TIMEOUT_SECONDS:-60}s" \
+        "$install_path/tesla-control" -ble -vin "${TESLA_BLE_VIN^^}" body-controller-state; then
+      if timeout --foreground --kill-after=5s \
+          "${TESLA_BLE_COMMAND_TIMEOUT_SECONDS:-60}s" \
+          "$install_path/tesla-control" -ble -vin "${TESLA_BLE_VIN^^}" \
+          session-info /root/.ble/key_private.pem infotainment; then
         log_progress "Tesla BLE keys exist and are paired."
         pairing_needed=false
       else
@@ -370,59 +385,46 @@ function install_archive_scripts () {
   copy_script run/remountfs_rw "$install_path"
   copy_script run/awake_start "$install_path"
   copy_script run/awake_stop "$install_path"
+  copy_script run/keep-awake-pid.sh "$install_path"
+  copy_script run/archive-common.sh "$install_path"
+  copy_script run/archive-rsync-local.sh "$install_path"
   log_progress "Installing archive module scripts"
-  copy_script "$archive_module"/verify-and-configure-archive.sh /tmp
+  copy_script "$archive_module"/verify-and-configure-archive.sh "$CONFIGURE_WORK_DIR"
   copy_script "$archive_module"/archive-clips.sh "$install_path"
   copy_script "$archive_module"/connect-archive.sh "$install_path"
   copy_script "$archive_module"/disconnect-archive.sh "$install_path"
   copy_script "$archive_module"/archive-is-reachable.sh "$install_path"
   if [ -n "${MUSIC_SHARE_NAME:+x}" ] && grep -E "cifs|nfs" <<< "$archive_module"
   then
-    copy_script "$archive_module"/copy-music.sh "$install_path"
+    copy_script run/copy-music.sh "$install_path"
   fi
 }
 
 function install_python3_pip () {
-  if ! command -v pip3 &> /dev/null
+  if ! python3 -m venv --help &> /dev/null
   then
-    setup_progress "Installing support for python packages..."
-    apt-get --assume-yes install python3-pip
+    log_progress "Installing isolated Python environment support..."
+    apt_install python3-venv
   fi
 }
 
 function install_sns_packages () {
   install_python3_pip
-  setup_progress "Installing sns python packages..."
-  pip3_install boto3
+  log_progress "Installing sns python packages..."
+  pip3_install 'boto3==1.34.162'
 }
 
 function install_matrix_packages () {
   install_python3_pip
-  setup_progress "Installing matrix python packages..."
-  pip3_install matrix-nio
+  log_progress "Installing matrix python packages..."
+  pip3_install 'matrix-nio==0.24.0'
 }
 
 function install_tesla_ble_packages () {
   local install_path="$1"
-  local binary_dir=/tmp/binarydir
 
-  umount "$binary_dir" &> /dev/null || true
-  rm -rf "$binary_dir"
-  mkdir -p "$binary_dir"
-  mount -t tmpfs none "$binary_dir"
-  (
-    cd "$binary_dir"
-    curlwrapper -L "https://github.com/MikeBishop/tesla-vehicle-command-arm-binaries/releases/latest/download/vehicle-command-binaries-linux-armv6.tar.gz" | tar zxf - --strip-components=1
-  )
-
-  for binary in tesla-control tesla-keygen; do
-    cp "${binary_dir}/$binary" "$install_path/$binary"
-    chmod +x "$install_path/$binary"
-    setup_progress "Downloaded $install_path/$binary ..."
-  done
-
-  umount "$binary_dir" &> /dev/null || true
-  rm -rf "$binary_dir"
+  copy_script setup/pi/install-tesla-ble-artifact.sh "$CONFIGURE_WORK_DIR"
+  "$CONFIGURE_WORK_DIR/install-tesla-ble-artifact.sh" "$install_path"
 }
 
 function check_signal_configuration () {
@@ -780,6 +782,10 @@ then
 fi
 
 mkdir -p /root/bin
+CONFIGURE_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/teslausb-configure.XXXXXX")
+readonly CONFIGURE_WORK_DIR
+trap 'rm -rf -- "$CONFIGURE_WORK_DIR"' EXIT
+trap 'exit 1' HUP INT TERM
 
 if check_at_most_one_wake_api
 then
@@ -809,7 +815,7 @@ archive_module="$( get_archive_module )"
 log_progress "Using archive module: $archive_module"
 
 install_archive_scripts /root/bin "$archive_module"
-/tmp/verify-and-configure-archive.sh
+"$CONFIGURE_WORK_DIR/verify-and-configure-archive.sh"
 
 systemctl disable teslausb.service || true
 
@@ -823,6 +829,11 @@ After=mutable.mount backingfiles.mount
 Type=simple
 ExecStart=/bin/bash /root/bin/archiveloop
 Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=mixed
+RuntimeDirectory=teslausb
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=backingfiles.mount

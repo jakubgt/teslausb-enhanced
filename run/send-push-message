@@ -3,18 +3,43 @@
 title="$1"
 message="$2"
 type="${3:-}"
+teslausb_python="${TESLAUSB_PYTHON:-/root/teslausb-venv/bin/python}"
+notification_timeout_seconds="${TESLAUSB_NOTIFICATION_TIMEOUT_SECONDS:-45}"
+case "$notification_timeout_seconds" in
+  '' | *[!0-9]*)
+    printf 'Invalid TESLAUSB_NOTIFICATION_TIMEOUT_SECONDS: %s\n' \
+      "$notification_timeout_seconds" >&2
+    exit 2
+    ;;
+esac
+[ "$notification_timeout_seconds" -gt 0 ] || exit 2
+if [ ! -x "$teslausb_python" ]
+then
+  teslausb_python=python3
+fi
+
+function teslausb_curl {
+  command curl --fail --silent --show-error \
+    --connect-timeout "${TESLAUSB_CURL_CONNECT_TIMEOUT:-10}" \
+    --max-time "${TESLAUSB_CURL_MAX_TIME:-30}" "$@"
+}
+
+function teslausb_python_run {
+  timeout --foreground --kill-after=5s "${notification_timeout_seconds}s" \
+    "$teslausb_python" "$@"
+}
 
 function send_signal () {
   log "Sending Signal message."
 
-  curl -X POST -H "Content-Type: application/json" "$SIGNAL_URL/v2/send" \
+  teslausb_curl -X POST -H "Content-Type: application/json" "$SIGNAL_URL/v2/send" \
      -d '{"message": "'"$message"'", "number": "'"$SIGNAL_FROM_NUM"'", "recipients": [ "'"$SIGNAL_TO_NUM"'" ]}'
  }
 
 function send_pushover () {
   log "Sending Pushover message."
 
-  curl -F "token=$PUSHOVER_APP_KEY" \
+  teslausb_curl -F "token=$PUSHOVER_APP_KEY" \
     -F "user=$PUSHOVER_USER_KEY" \
     -F "title=$title" \
     -F "message=$message" \
@@ -24,7 +49,7 @@ function send_pushover () {
 function send_gotify () {
   log "Sending Gotify message."
 
-  curl -X POST \
+  teslausb_curl -X POST \
     -F "title=$title" \
     -F "message=$message" \
     -F "priority=$GOTIFY_PRIORITY" \
@@ -34,7 +59,7 @@ function send_gotify () {
 function send_discord() {
   log "Sending Discord message."
 
-  curl -H "Content-Type: application/json" -d \
+  teslausb_curl -H "Content-Type: application/json" -d \
     '{"username": "'"$title"'", "content": "'"$message"'"}' \
     "$DISCORD_WEBHOOK_URL"
 }
@@ -42,7 +67,7 @@ function send_discord() {
 function send_ifttt () {
   log "Sending IFTTT message."
 
-  curl -X POST -H "Content-Type: application/json" -d \
+  teslausb_curl -X POST -H "Content-Type: application/json" -d \
     '{"value1":"'"$title"'","value2":"'"$message"'"}' \
     "https://maker.ifttt.com/trigger/$IFTTT_EVENT_NAME/with/key/$IFTTT_KEY"
 }
@@ -50,18 +75,22 @@ function send_ifttt () {
 function send_sns () {
   log "Sending SNS message."
 
-  python3 /root/bin/send_sns.py -t "$AWS_SNS_TOPIC_ARN" -s "$title" -m "$message"
+  teslausb_python_run /root/bin/send_sns.py \
+    -t "$AWS_SNS_TOPIC_ARN" -s "$title" -m "$message"
 }
 
 function send_matrix() {
   log "Send Matrix message."
 
-  python3 /root/bin/send_matrix.py "$MATRIX_SERVER_URL" "$MATRIX_USERNAME" "$MATRIX_PASSWORD" "$MATRIX_ROOM" "$title: $message"
+  printf '%s' "$MATRIX_PASSWORD" | env -u MATRIX_PASSWORD \
+    timeout --foreground --kill-after=5s "${notification_timeout_seconds}s" \
+      "$teslausb_python" /root/bin/send_matrix.py "$MATRIX_SERVER_URL" \
+      "$MATRIX_USERNAME" "$MATRIX_ROOM" "$title: $message"
 }
 
 function send_telegram () {
   log "Sending Telegram message."
-  curl -v -H "Content-Type: application/json" -d \
+  teslausb_curl -H "Content-Type: application/json" -d \
     '{"chat_id": "'"$TELEGRAM_CHAT_ID"'", "text": "'"$title: $message"'", "disable_notification": '"$TELEGRAM_SILENT_NOTIFY"' }' \
     https://api.telegram.org/"$TELEGRAM_BOT_TOKEN"/sendMessage
 }
@@ -69,7 +98,7 @@ function send_telegram () {
 function send_webhook () {
   log "Sending Webhook message."
   
-  curl -X POST \
+  teslausb_curl -X POST \
     -d "{\"value1\":\"${title}\",\"value2\":\"${message}\"}" \
     -H "Content-Type: application/json" \
     "$WEBHOOK_URL"
@@ -78,7 +107,7 @@ function send_webhook () {
 function send_slack () {
   log "Sending Slack message."
   payload="{\"text\":\"$title: $message\",\"username\": \"Tesla\",\"icon_emoji\": \":tesla:\"}"
-  curl -X POST --data-urlencode "payload=$payload" "$SLACK_WEBHOOK_URL"
+  teslausb_curl -X POST --data-urlencode "payload=$payload" "$SLACK_WEBHOOK_URL"
 }
 
 function send_shell () {
@@ -94,7 +123,7 @@ function send_shell () {
 function send_ntfy () {
   log "Sending ntfy message."
 
-  curl -X POST \
+  teslausb_curl -X POST \
     -H "Title: $title" \
     -H "Priority: ${NTFY_PRIORITY:-3}" \
     ${NTFY_TOKEN:+-H "Authorization: Bearer $NTFY_TOKEN"} \

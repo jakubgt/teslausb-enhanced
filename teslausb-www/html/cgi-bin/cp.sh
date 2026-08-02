@@ -1,25 +1,30 @@
 #!/bin/bash
 
-declare -a urlargs
-IFS='&' read -r -a urlargs <<<"$QUERY_STRING" 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+# shellcheck source=teslausb-www/html/cgi-bin/cgi-common.sh
+source "$script_dir/cgi-common.sh"
 
-declare -i len=${#urlargs[@]}
-for ((i=0; i<${len}; i++ ))
+cgi_require_mutation
+cgi_parse_query 3 -1
+cgi_resolve_root "${CGI_ARGS[0]}"
+
+declare -a paths=()
+last_index=$((${#CGI_ARGS[@]} - 1))
+for ((i=1; i<last_index; i++))
 do
-  val="${urlargs[i]//+/ }"
-  urlargs[i]="$(echo -e "${val//%/\\x}")"
+  cgi_resolve_path "${CGI_ARGS[i]}"
+  cgi_reject_final_symlink "${CGI_ARGS[i]}"
+  cgi_require_existing any
+  paths+=("$CGI_PATH")
 done
+cgi_resolve_path "${CGI_ARGS[last_index]}" yes
+cgi_reject_final_symlink "${CGI_ARGS[last_index]}"
+paths+=("$CGI_PATH")
 
-cd "$DOCUMENT_ROOT/${urlargs[0]}"
-
-cat << EOF
-HTTP/1.0 200 OK
-Content-type: text/plain
-
-EOF
-if cp "${urlargs[@]:1}"  &> /dev/null
+if cp -- "${paths[@]}" &> /dev/null
 then
-  echo OK
+  cgi_ok 'Copy completed.'
 else
-  echo FAILED
+  cgi_error '409 Conflict' 'Unable to copy the requested path.'
 fi

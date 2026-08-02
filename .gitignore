@@ -1,5 +1,8 @@
 .DS_Store
 *.conf
+teslausb-config-values*.json
+__pycache__/
+*.py[cod]
 *.iml
 *.ipr
 *.iws

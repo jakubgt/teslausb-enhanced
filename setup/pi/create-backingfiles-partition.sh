@@ -12,7 +12,7 @@ function log_progress () {
 # install XFS tools if needed
 if ! hash mkfs.xfs
 then
-  apt-get -y --force-yes install xfsprogs
+  DEBIAN_FRONTEND=noninteractive apt-get -y install xfsprogs
 fi
 
 function partition_prefix_for {
@@ -28,6 +28,103 @@ function partition_prefix_for {
       exit 1
       ;;
   esac
+}
+
+function parent_disk_for_device () {
+  local device="$1"
+  local resolved
+  local device_type
+  local parent_disk
+
+  resolved="$(readlink -f -- "$device")" || return 1
+  device_type="$(lsblk -dnro TYPE -- "$resolved" 2> /dev/null | head -n 1)"
+  if [ "$device_type" = "disk" ]
+  then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+
+  parent_disk="$(lsblk -srpno NAME,TYPE -- "$resolved" 2> /dev/null | awk '$2 == "disk" { print $1; exit }')"
+  if [ -z "$parent_disk" ]
+  then
+    return 1
+  fi
+  readlink -f -- "$parent_disk"
+}
+
+function refuse_system_data_drive () {
+  local resolved_data_drive
+  local data_disk
+  local data_type
+  local candidate
+  local protected_disk
+  local mountpoint
+  local mount_source
+  local -a protected_devices=()
+
+  resolved_data_drive="$(readlink -f -- "$DATA_DRIVE")" || {
+    log_progress "STOP: DATA_DRIVE ($DATA_DRIVE) could not be resolved."
+    exit 1
+  }
+  if [ ! -b "$resolved_data_drive" ]
+  then
+    log_progress "STOP: DATA_DRIVE ($DATA_DRIVE) is not a block device."
+    exit 1
+  fi
+  data_disk="$(parent_disk_for_device "$resolved_data_drive")" || {
+    log_progress "STOP: DATA_DRIVE ($DATA_DRIVE) is not backed by a disk device."
+    exit 1
+  }
+  data_type="$(lsblk -dnro TYPE -- "$data_disk" 2> /dev/null | head -n 1)"
+  if [ "$data_type" != "disk" ]
+  then
+    log_progress "STOP: DATA_DRIVE ($DATA_DRIVE) does not resolve to a whole disk."
+    exit 1
+  fi
+
+  for candidate in "${BOOT_DISK:-}" "${BOOT_PARTITION_DEVICE:-}" "${ROOT_PARTITION_DEVICE:-}"
+  do
+    if [ -n "$candidate" ]
+    then
+      protected_devices+=("$candidate")
+    fi
+  done
+  mount_source="$(findmnt -nro SOURCE --target / 2> /dev/null || true)"
+  if [ -z "$mount_source" ]
+  then
+    log_progress "STOP: unable to identify the disk containing the root filesystem."
+    exit 1
+  fi
+  protected_devices+=("$mount_source")
+
+  for mountpoint in /teslausb /boot /boot/firmware
+  do
+    if [ -e "$mountpoint" ] || [ -L "$mountpoint" ]
+    then
+      mount_source="$(findmnt -nro SOURCE --target "$mountpoint" 2> /dev/null || true)"
+      if [ -z "$mount_source" ]
+      then
+        log_progress "STOP: unable to identify the disk containing $mountpoint."
+        exit 1
+      fi
+      protected_devices+=("$mount_source")
+    fi
+  done
+
+  for candidate in "${protected_devices[@]}"
+  do
+    protected_disk="$(parent_disk_for_device "$candidate")" || {
+      log_progress "STOP: unable to resolve protected system device $candidate to a disk."
+      exit 1
+    }
+    if [ "$data_disk" = "$protected_disk" ]
+    then
+      log_progress "STOP: DATA_DRIVE ($DATA_DRIVE) resolves to system disk $data_disk, which contains the root or boot filesystem."
+      exit 1
+    fi
+  done
+
+  DATA_DRIVE="$resolved_data_drive"
 }
 
 BACKINGFILES_MOUNTPOINT="${1:-none}"
@@ -53,6 +150,7 @@ function update_fstab {
 if [ -n "$DATA_DRIVE" ]
 then
   log_progress "DATA_DRIVE is set to $DATA_DRIVE"
+  refuse_system_data_drive
   PARTITION_PREFIX=$(partition_prefix_for "$DATA_DRIVE")
   P1="${DATA_DRIVE}${PARTITION_PREFIX}1"
   P2="${DATA_DRIVE}${PARTITION_PREFIX}2"
@@ -62,6 +160,10 @@ then
     log_progress "Looks like backingfiles and mutable partitions already exist. Skipping partition creation."
   else
     log_progress "WARNING !!! This will delete EVERYTHING in $DATA_DRIVE."
+    # Re-evaluate the resolved device and every protected root/boot disk at the
+    # last possible moment. This second fail-closed check protects against a
+    # changed device map between preflight and the destructive operation.
+    refuse_system_data_drive
     wipefs -afq "$DATA_DRIVE"
     parted "$DATA_DRIVE" --script mktable gpt
     log_progress "$DATA_DRIVE fully erased. Creating partitions..."
@@ -116,7 +218,16 @@ then
   then
     # special case: convert existing backingfiles from ext4 to xfs
     log_progress "reformatting existing backingfiles as xfs"
-    killall archiveloop || true
+    systemctl stop teslausb.service || true
+    if [ -e /root/bin/archiveloop ]
+    then
+      exec {ARCHIVELOOP_LOCK_FD}< /root/bin/archiveloop
+      if ! flock -n "$ARCHIVELOOP_LOCK_FD"
+      then
+        log_progress "STOP: archiveloop is still running; refusing destructive filesystem conversion."
+        exit 1
+      fi
+    fi
     /root/bin/disable_gadget.sh || true
     if mount | grep -qw "/mnt/cam"
     then

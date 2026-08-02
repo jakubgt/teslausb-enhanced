@@ -9,7 +9,11 @@ fi
 if [ ! -L /teslausb ]
 then
   mount / -o remount,rw
-  rm -rf /teslausb
+  if [ -e /teslausb ] && ! rmdir /teslausb
+  then
+    echo "STOP: /teslausb exists and is not an empty directory or symbolic link" >&2
+    exit 1
+  fi
   if [ -d /boot/firmware ] && findmnt --fstab /boot/firmware &> /dev/null
   then
     ln -s /boot/firmware /teslausb
@@ -18,26 +22,106 @@ then
   fi
 fi
 
-function safesource {
-  cat <<EOF > /tmp/checksetupconf
-#!/bin/bash -eu
-source '$1' &> /tmp/checksetupconf.out
-EOF
-  chmod +x /tmp/checksetupconf
-  if ! /tmp/checksetupconf
+function setup_config_message {
+  if declare -F setup_progress > /dev/null
   then
-    if declare -F setup_progress > /dev/null
-    then
-      setup_progress "Error in $1:"
-      setup_progress "$(cat /tmp/checksetupconf.out)"
-    else
-      echo "Error in $1:"
-      cat /tmp/checksetupconf.out
-    fi
+    setup_progress "$*"
+  else
+    printf '%s\n' "$*" >&2
+  fi
+}
+
+function secure_setup_config_file {
+  local setup_config="$1"
+  local metadata
+  local owner_id
+  local group_id
+  local mode
+
+  if [ -L "$setup_config" ] || [ ! -f "$setup_config" ]
+  then
+    setup_config_message "STOP: $setup_config must be a regular file, not a symbolic link."
+    return 1
+  fi
+  metadata="$(stat -c '%u:%g:%a' -- "$setup_config")" || {
+    setup_config_message "STOP: unable to inspect $setup_config."
+    return 1
+  }
+  IFS=: read -r owner_id group_id mode <<< "$metadata"
+  if [ "$owner_id" != "0" ] || [ "$group_id" != "0" ]
+  then
+    setup_config_message "STOP: $setup_config must be owned by root:root."
+    return 1
+  fi
+  if [ "$mode" != "600" ] && ! chmod 0600 -- "$setup_config"
+  then
+    setup_config_message "STOP: unable to set root-only (0600) permissions on $setup_config. Remount the root filesystem writable and retry."
+    return 1
+  fi
+  mode="$(stat -c '%a' -- "$setup_config")" || return 1
+  if [ "$mode" != "600" ]
+  then
+    setup_config_message "STOP: $setup_config must have mode 0600."
+    return 1
+  fi
+}
+
+function safesource {
+  local setup_config="$1"
+  local failure_output
+
+  secure_setup_config_file "$setup_config" || exit 1
+  # Validate in a subshell and keep diagnostics in memory. This avoids trusting
+  # TMPDIR-like environment state before the root-owned config is loaded and
+  # leaves no secret-bearing validation file behind after an interrupt.
+  if failure_output="$( ( set -eu; source "$setup_config" ) 2>&1 )"
+  then
+    :
+  else
+    setup_config_message "Error in $setup_config:"
+    setup_config_message "$failure_output"
     exit 1
   fi
   # shellcheck disable=SC1090
-  source "$1"
+  source "$setup_config"
+}
+
+function validate_source_coordinates {
+  local ref_component
+  local -a ref_components=()
+
+  if ! [[ "$REPO" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]
+  then
+    setup_config_message "STOP: REPO must be a GitHub owner name (letters, numbers, and non-edge dashes only)."
+    return 1
+  fi
+  if [ -z "$BRANCH" ] || [ "${#BRANCH}" -gt 255 ] ||
+     ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] ||
+     [[ "$BRANCH" == /* || "$BRANCH" == */ || "$BRANCH" == *..* ||
+        "$BRANCH" == *//* || "$BRANCH" == *'@{'* || "$BRANCH" == @ ]]
+  then
+    setup_config_message "STOP: BRANCH is not a safe Git reference."
+    return 1
+  fi
+  IFS=/ read -r -a ref_components <<< "$BRANCH"
+  for ref_component in "${ref_components[@]}"
+  do
+    case "$ref_component" in
+      ''|.*|*.|*.lock)
+        setup_config_message "STOP: BRANCH is not a safe Git reference."
+        return 1
+        ;;
+    esac
+  done
+}
+
+function validate_teslausb_hostname {
+  if [ -z "$TESLAUSB_HOSTNAME" ] || [ "${#TESLAUSB_HOSTNAME}" -gt 63 ] ||
+     ! [[ "$TESLAUSB_HOSTNAME" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]
+  then
+    setup_config_message "STOP: TESLAUSB_HOSTNAME must be a single 1-63 character DNS label."
+    return 1
+  fi
 }
 
 function read_setup_variables {
@@ -45,11 +129,11 @@ function read_setup_variables {
   then
     local -r setup_file=/root/teslausb_setup_variables.conf
   fi
-  if [ -e $setup_file ]
+  if [ -e "$setup_file" ]
   then
     # "shellcheck" doesn't realize setup_file is effectively a constant
     # shellcheck disable=SC1090
-    safesource $setup_file
+    safesource "$setup_file"
   else
     echo "couldn't find $setup_file"
     return 1
@@ -119,12 +203,16 @@ function read_setup_variables {
   else
     BRANCH=${BRANCH:-main-dev}
   fi
+  validate_source_coordinates || return 1
   CONFIGURE_ARCHIVING=${CONFIGURE_ARCHIVING:-true}
   UPGRADE_PACKAGES=${UPGRADE_PACKAGES:-false}
   export TESLAUSB_HOSTNAME=${TESLAUSB_HOSTNAME:-teslausb}
+  validate_teslausb_hostname || return 1
   export NOTIFICATION_TITLE=${NOTIFICATION_TITLE:-${TESLAUSB_HOSTNAME}}
   SAMBA_ENABLED=${SAMBA_ENABLED:-false}
   SAMBA_GUEST=${SAMBA_GUEST:-false}
+  SAMBA_USER=${SAMBA_USER:-pi}
+  SSH_ALLOW_DEFAULT_PASSWORD=${SSH_ALLOW_DEFAULT_PASSWORD:-false}
   INCREASE_ROOT_SIZE=${INCREASE_ROOT_SIZE:-0}
   export CAM_SIZE=${CAM_SIZE:-0}
   export MUSIC_SIZE=${MUSIC_SIZE:-0}
@@ -135,6 +223,18 @@ function read_setup_variables {
 }
 
 read_setup_variables
+
+# Keep credentials as shell variables for the narrow setup steps that need
+# them, but do not leak them into every subsequently spawned process.
+for teslausb_secret_name in WEB_PASSWORD SAMBA_PASSWORD SSH_USER_PASSWORD \
+  SSH_ROOT_PUBLIC_KEY WIFIPASS
+do
+  if [[ -v $teslausb_secret_name ]]
+  then
+    export -n "$teslausb_secret_name"
+  fi
+done
+unset teslausb_secret_name
 
 if [ -t 0 ]
 then

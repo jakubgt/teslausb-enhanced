@@ -79,10 +79,11 @@ function check_archive_mountable () {
 
 function install_required_packages () {
   log_progress "Installing/updating required packages if needed"
-  apt-get -y --force-yes install hping3 nfs-common
+  DEBIAN_FRONTEND=noninteractive apt-get -y install hping3 nfs-common
   if ! command -v nc > /dev/null
   then
-    apt-get -y --force-yes install netcat || apt-get -y --force-yes install netcat-openbsd
+    DEBIAN_FRONTEND=noninteractive apt-get -y install netcat || \
+      DEBIAN_FRONTEND=noninteractive apt-get -y install netcat-openbsd
   fi
   log_progress "Done"
 }

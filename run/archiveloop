@@ -49,6 +49,9 @@ export MUSIC_MOUNT=/mnt/music
 
 # read the setup variables and define other environment variables and functions
 source /root/bin/envsetup.sh
+archive_common="${ARCHIVE_COMMON_SH:-/root/bin/archive-common.sh}"
+# shellcheck source=run/archive-common.sh
+source "$archive_common"
 
 # led triggers may have been built as modules, so try
 # to load them
@@ -323,23 +326,50 @@ function filterfile {
 }
 
 function sortfile {
+  local directory
+  local tmp
+
   touch "$1"
-  sort "$1" > /tmp/sort_tmp.$$
-  mv /tmp/sort_tmp.$$ "$1"
+  directory=$(dirname -- "$1")
+  tmp=$(mktemp "$directory/.teslausb-sort.XXXXXX")
+  if ! sort "$1" > "$tmp"
+  then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  mv -f -- "$tmp" "$1"
 }
 
 function prunefile {
+  local directory
+  local tmp
+
   sortfile "$1"
   sortfile "$2"
-  comm -2 -3 "$1" "$2" > /tmp/prune_tmp.$$
-  mv /tmp/prune_tmp.$$ "$1"
+  directory=$(dirname -- "$1")
+  tmp=$(mktemp "$directory/.teslausb-prune.XXXXXX")
+  if ! comm -2 -3 "$1" "$2" > "$tmp"
+  then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  mv -f -- "$tmp" "$1"
 }
 
 function intersect {
+  local directory
+  local tmp
+
   sortfile "$1"
   sortfile "$2"
-  comm -1 -2 "$1" "$2" > /tmp/prune_tmp.$$
-  mv /tmp/prune_tmp.$$ "$1"
+  directory=$(dirname -- "$1")
+  tmp=$(mktemp "$directory/.teslausb-intersect.XXXXXX")
+  if ! comm -1 -2 "$1" "$2" > "$tmp"
+  then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  mv -f -- "$tmp" "$1"
 }
 
 function clean_cam_mount {
@@ -521,6 +551,43 @@ function archive_teslacam_clips () {
   then
     log "Starting recording archiving"
     local -r start_ts=$(date --utc --date "now" +%s)
+    local archive_run_dir
+    local archive_error_log
+    local pending_manifest
+    local pending_files
+    local pending_bytes
+    local transferred_files=0
+    local transferred_bytes=0
+    local status_started
+    local status_finished
+    status_started=$(archive_timestamp)
+    if ! archive_run_dir=$(mktemp -d \
+        "${ARCHIVE_WORK_ROOT:-/tmp}/teslausb-archive-run.XXXXXX")
+    then
+      status_finished=$(archive_timestamp)
+      archive_status_write error "$status_started" "$status_finished" \
+        0 0 0 0 'Could not create a private archive work directory' \
+        || log 'Failed to update archive status'
+      log 'Could not create a private archive work directory'
+      return 1
+    fi
+    archive_error_log="$archive_run_dir/archive-error.log"
+    pending_manifest="$archive_run_dir/pending.tsv"
+    if ! archive_manifest_create "$overlaymerged" "$sentrylist" "$pending_manifest"
+    then
+      log "Failed to create archive integrity manifest"
+      status_finished=$(archive_timestamp)
+      archive_status_write error "$status_started" "$status_finished" \
+        0 0 0 0 'A recording changed while the archive manifest was created' \
+        || log 'Failed to update archive status'
+      rm -rf -- "$archive_run_dir"
+      umount "$overlaymerged" || log "Failed to unmount archive overlay after manifest error"
+      return 1
+    fi
+    read -r pending_files pending_bytes < <(archive_manifest_stats "$pending_manifest")
+    archive_status_write running "$status_started" '' \
+      "$pending_files" "$pending_bytes" 0 0 'Archive transfer in progress' \
+      || log 'Failed to update archive status'
 
     local message="Archiving "
     if [[ $sentry_count -gt 0 && $trackmode_count -gt 0 ]]
@@ -567,13 +634,18 @@ function archive_teslacam_clips () {
       echo "${TRIGGER_FILE_ANY}" >> "${triggerlist}"
     fi
 
-    if /root/bin/archive-clips.sh "$overlaymerged" "${sentrylist}" "${triggerdir}" "${triggerlist}"
+    export ARCHIVE_ERROR_LOG="$archive_error_log"
+    if archive_retry_run /root/bin/archive-clips.sh \
+        "$overlaymerged" "${sentrylist}" "${triggerdir}" "${triggerlist}"
     then
       message="Archiving completed successfully. "
     else
       message="Error during archiving. "
       archive_success=false
     fi
+    unset ARCHIVE_ERROR_LOG
+    read -r transferred_files transferred_bytes \
+      < <(archive_manifest_removed_stats "$overlaymerged" "$pending_manifest")
 
     local -i sentry_archived=0
     local -i trackmode_archived=0
@@ -614,13 +686,31 @@ function archive_teslacam_clips () {
     local -r end_ts=$(date --utc --date "now" +%s)
     local -r delta=$((end_ts - start_ts))
     message+=" in $(convert_seconds_to_nice_time $delta)"
-    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "${message}" finish
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "${message}" finish \
+      || log "failed to send push message"
 
-    if [ -e /tmp/archive-error.log ]
+    if [ -e "$archive_error_log" ]
     then
-      cat /tmp/archive-error.log >> ${LOG_FILE}
-      rm /tmp/archive-error.log
+      cat "$archive_error_log" >> "$LOG_FILE"
     fi
+    status_finished=$(archive_timestamp)
+    if [ "$archive_success" = "true" ]
+    then
+      archive_status_write success "$status_started" "$status_finished" \
+        "$((pending_files - transferred_files))" "$((pending_bytes - transferred_bytes))" \
+        "$transferred_files" "$transferred_bytes" "$message" \
+        || log 'Failed to update archive status'
+    else
+      archive_status_write error "$status_started" "$status_finished" \
+        "$((pending_files - transferred_files))" "$((pending_bytes - transferred_bytes))" \
+        "$transferred_files" "$transferred_bytes" "$message" \
+        || log 'Failed to update archive status'
+    fi
+    rm -rf -- "$archive_run_dir"
+  else
+    archive_retry_reset
+    archive_status_write idle '' "$(archive_timestamp)" 0 0 0 0 \
+      'No recordings are pending' || log 'Failed to update archive status'
   fi
 
   # overlayfs behavior is undefined if the lower is changed while the overlay is active, so umount first
@@ -834,6 +924,8 @@ export -f log
 
 echo "==============================================" >> "$LOG_FILE"
 log "Starting archiveloop at $(awk '{print $1}' /proc/uptime) seconds uptime..."
+archive_status_write idle '' "$(archive_timestamp)" 0 0 0 0 \
+  'Archive service started' || log 'Failed to initialize archive status'
 
 set_sys_param /proc/sys/vm/dirty_background_bytes DIRTY_BACKGROUND_BYTES 65536
 set_sys_param /proc/sys/vm/dirty_ratio DIRTY_RATIO 80

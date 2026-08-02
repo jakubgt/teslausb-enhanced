@@ -20,7 +20,11 @@ fi
 
 if [ ! -L /teslausb ]
 then
-  rm -rf /teslausb
+  if [ -e /teslausb ] && ! rmdir /teslausb
+  then
+    echo "STOP: /teslausb exists and is not an empty directory or symbolic link" >&2
+    exit 1
+  fi
   if [ -d /boot/firmware ] && findmnt --fstab /boot/firmware &> /dev/null
   then
     ln -s /boot/firmware /teslausb
@@ -29,11 +33,22 @@ then
   fi
 fi
 
+RC_LOCAL_TMPDIR="$(mktemp -d /tmp/teslausb-rc-local.XXXXXX)"
+readonly RC_LOCAL_TMPDIR
+chmod 0700 "$RC_LOCAL_TMPDIR"
+function cleanup_rc_local_tmpdir {
+  # shellcheck disable=SC2317 # Invoked by the EXIT trap.
+  rm -rf -- "$RC_LOCAL_TMPDIR"
+}
+trap cleanup_rc_local_tmpdir EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 if [ -f /teslausb/run_once ]
 then
-  cp /teslausb/run_once /tmp/
-  chmod +x /tmp/run_once
-  /tmp/run_once || echo "run_once failed"
+  install -o root -g root -m 0700 -- /teslausb/run_once "$RC_LOCAL_TMPDIR/run_once"
+  "$RC_LOCAL_TMPDIR/run_once" || echo "run_once failed"
   mv /teslausb/run_once /teslausb/ran_once || true
 fi
 
@@ -71,7 +86,8 @@ function get_script () {
 
   IFS=". " read -r start_time _ < /proc/uptime
 
-  while ! curl -o "$local_path/$name" https://raw.githubusercontent.com/"$REPO"/teslausb/"$BRANCH"/"$remote_path"/"$name"
+  while ! curl --fail --silent --show-error --connect-timeout 15 --max-time 120 \
+    -o "$local_path/$name" https://raw.githubusercontent.com/"$REPO"/teslausb/"$BRANCH"/"$remote_path"/"$name"
   do
     setup_progress "get_script failed, retrying"
     sntp -S time.google.com || true
@@ -102,6 +118,40 @@ function nm_connect_wifi () {
   done
 }
 
+function validate_teslausb_hostname () {
+  [ -n "$TESLAUSB_HOSTNAME" ] && [ "${#TESLAUSB_HOSTNAME}" -le 63 ] &&
+    [[ "$TESLAUSB_HOSTNAME" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]
+}
+
+function write_hostname_files () {
+  local old_host_name="$1"
+  local new_host_name="$2"
+  local hosts_tmp
+  local hostname_tmp
+
+  hosts_tmp="$(mktemp /etc/.hosts.XXXXXX)"
+  hostname_tmp="$(mktemp /etc/.hostname.XXXXXX)"
+  if ! awk -v old="$old_host_name" -v new="$new_host_name" '
+    BEGIN { OFS="\t" }
+    {
+      for (i = 2; i <= NF; i++) {
+        if (substr($i, 1, 1) == "#") break
+        if ($i == old) $i = new
+      }
+      print
+    }
+  ' /etc/hosts > "$hosts_tmp" ||
+     ! printf '%s\n' "$new_host_name" > "$hostname_tmp"
+  then
+    rm -f -- "$hosts_tmp" "$hostname_tmp"
+    return 1
+  fi
+  chown root:root "$hosts_tmp" "$hostname_tmp"
+  chmod 0644 "$hosts_tmp" "$hostname_tmp"
+  mv -fT -- "$hosts_tmp" /etc/hosts
+  mv -fT -- "$hostname_tmp" /etc/hostname
+}
+
 function enable_wifi () {
   setup_progress "Detecting whether to configure wifi"
   if [[ -n "$SSID" ]] && [[ -n "$WIFIPASS" ]]
@@ -123,10 +173,20 @@ function enable_wifi () {
         fi
       else
         setup_progress "Configuring wpa_supplicant"
-        cp /teslausb/wpa_supplicant.conf.sample /teslausb/wpa_supplicant.conf
-        sed -i -e "sTEMPSSID${SSID}g" /teslausb/wpa_supplicant.conf
-        sed -i -e "sTEMPPASS${WIFIPASS}g" /teslausb/wpa_supplicant.conf
-        cp /teslausb/wpa_supplicant.conf /etc/wpa_supplicant/wpa_supplicant.conf
+        wpa_raw="$RC_LOCAL_TMPDIR/wpa_supplicant.raw"
+        wpa_config="$RC_LOCAL_TMPDIR/wpa_supplicant.conf"
+        if ! printf '%s\n' "$WIFIPASS" | wpa_passphrase "$SSID" > "$wpa_raw"
+        then
+          setup_progress "Failed to encode the Wi-Fi credentials"
+          error_strobe &
+          exit 1
+        fi
+        {
+          sed '/^network={[[:space:]]*$/,$d' /teslausb/wpa_supplicant.conf.sample
+          # wpa_passphrase emits a plaintext passphrase comment; never persist it.
+          sed '/^[[:space:]]*#psk=/d' "$wpa_raw"
+        } > "$wpa_config"
+        install -o root -g root -m 0600 -- "$wpa_config" /etc/wpa_supplicant/wpa_supplicant.conf
       fi
 
       # set the host name now if possible, so it's effective immediately after the reboot
@@ -135,8 +195,7 @@ function enable_wifi () {
       if [[ -n "$TESLAUSB_HOSTNAME" ]] && [[ "$TESLAUSB_HOSTNAME" != "$old_host_name" ]]
       then
         local new_host_name="$TESLAUSB_HOSTNAME"
-        sed -i -e "s/$old_host_name/$new_host_name/g" /etc/hosts
-        sed -i -e "s/$old_host_name/$new_host_name/g" /etc/hostname
+        write_hostname_files "$old_host_name" "$new_host_name"
       fi
 
       dpkg-reconfigure -f noninteractive openssh-server
@@ -155,22 +214,201 @@ function enable_wifi () {
   fi
 }
 
-function safesource {
-  cat <<EOF > /tmp/checksetupconf
-#!/bin/bash -eu
-source '$1' &> /tmp/checksetupconf.out
-EOF
-  chmod +x /tmp/checksetupconf
-  if ! /tmp/checksetupconf
+function secure_setup_config_file {
+  local setup_config="$1"
+  local metadata
+  local owner_id
+  local group_id
+  local mode
+
+  if [ -L "$setup_config" ] || [ ! -f "$setup_config" ]
   then
-    setup_progress "Error in $1:"
-    setup_progress "$(cat /tmp/checksetupconf.out)"
+    setup_progress "STOP: $setup_config must be a regular file, not a symbolic link."
+    return 1
+  fi
+  metadata="$(stat -c '%u:%g:%a' -- "$setup_config")" || return 1
+  IFS=: read -r owner_id group_id mode <<< "$metadata"
+  if [ "$owner_id" != "0" ] || [ "$group_id" != "0" ]
+  then
+    setup_progress "STOP: $setup_config must be owned by root:root."
+    return 1
+  fi
+  if [ "$mode" != "600" ] && ! chmod 0600 -- "$setup_config"
+  then
+    setup_progress "STOP: unable to set root-only (0600) permissions on $setup_config. Remount the root filesystem writable and retry."
+    return 1
+  fi
+  mode="$(stat -c '%a' -- "$setup_config")" || return 1
+  if [ "$mode" != "600" ]
+  then
+    setup_progress "STOP: $setup_config must have mode 0600."
+    return 1
+  fi
+}
+
+function safesource {
+  local setup_config="$1"
+  local failure_output
+
+  secure_setup_config_file "$setup_config" || {
+    error_strobe &
+    exit 1
+  }
+  if failure_output="$(
+    (
+      set -eu
+      # shellcheck disable=SC1090 # Path is validated and root-owned above.
+      source "$setup_config"
+    ) 2>&1
+  )"
+  then
+    :
+  else
+    setup_progress "Error in $setup_config:"
+    setup_progress "$failure_output"
     error_strobe &
     exit 1
   fi
   # shellcheck disable=SC1090
-  source "$1"
+  source "$setup_config"
 }
+
+function validate_source_coordinates {
+  local ref_component
+  local -a ref_components=()
+
+  if ! [[ "$REPO" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]
+  then
+    setup_progress "STOP: REPO must be a GitHub owner name (letters, numbers, and non-edge dashes only)."
+    return 1
+  fi
+  if [ -z "$BRANCH" ] || [ "${#BRANCH}" -gt 255 ] ||
+     ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] ||
+     [[ "$BRANCH" == /* || "$BRANCH" == */ || "$BRANCH" == *..* ||
+        "$BRANCH" == *//* || "$BRANCH" == *'@{'* || "$BRANCH" == @ ]]
+  then
+    setup_progress "STOP: BRANCH is not a safe Git reference."
+    return 1
+  fi
+  IFS=/ read -r -a ref_components <<< "$BRANCH"
+  for ref_component in "${ref_components[@]}"
+  do
+    case "$ref_component" in
+      ''|.*|*.|*.lock)
+        setup_progress "STOP: BRANCH is not a safe Git reference."
+        return 1
+        ;;
+    esac
+  done
+}
+
+function install_setup_config {
+  local source_config="$1"
+  local destination_config="$2"
+  local config_tmp
+
+  if [ -L "$source_config" ] || [ ! -f "$source_config" ]
+  then
+    setup_progress "STOP: $source_config must be a regular file, not a symbolic link."
+    return 1
+  fi
+  if [ -L "$destination_config" ]
+  then
+    setup_progress "STOP: refusing to replace symbolic-link config $destination_config."
+    return 1
+  fi
+
+  config_tmp="$(mktemp /root/.teslausb-setup-variables.XXXXXX)"
+  if ! install -o root -g root -m 0600 -- "$source_config" "$config_tmp" ||
+     ! dos2unix "$config_tmp" ||
+     ! mv -fT -- "$config_tmp" "$destination_config"
+  then
+    rm -f -- "$config_tmp"
+    return 1
+  fi
+  rm -f -- "$source_config"
+  secure_setup_config_file "$destination_config"
+}
+
+function default_login_user {
+  awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd
+}
+
+function lock_fresh_image_default_password {
+  local login_user
+  if [ -e /teslausb/TESLAUSB_SETUP_FINISHED ]
+  then
+    return
+  fi
+  login_user="$(default_login_user)"
+  if [ -n "$login_user" ]
+  then
+    passwd --lock "$login_user" > /dev/null
+  fi
+}
+
+function provision_fresh_image_ssh_access {
+  local login_user
+  local ssh_dir
+  local authorized_keys_tmp
+
+  if [ -e /teslausb/TESLAUSB_SETUP_FINISHED ]
+  then
+    return
+  fi
+  login_user="$(default_login_user)"
+  if [ -n "${SSH_USER_PASSWORD:-}" ]
+  then
+    if [ -z "$login_user" ]
+    then
+      setup_progress "STOP: SSH_USER_PASSWORD was set, but no UID 1000 login user exists."
+      exit 1
+    fi
+    case "$SSH_USER_PASSWORD" in
+      *$'\r'*|*$'\n'*)
+        setup_progress "STOP: SSH_USER_PASSWORD must not contain a newline."
+        exit 1
+        ;;
+    esac
+    if [ "$(LC_ALL=C; printf %s "$SSH_USER_PASSWORD" | wc -c)" -lt 12 ] ||
+       [ "${SSH_USER_PASSWORD,,}" = raspberry ] ||
+       [ "${SSH_USER_PASSWORD,,}" = password ]
+    then
+      setup_progress "STOP: SSH_USER_PASSWORD must be a non-default password of at least 12 bytes."
+      exit 1
+    fi
+    printf '%s:%s\n' "$login_user" "$SSH_USER_PASSWORD" | chpasswd
+  elif [ "${SSH_ALLOW_DEFAULT_PASSWORD:-false}" = "true" ] && [ -n "$login_user" ]
+  then
+    setup_progress "WARNING: explicitly retaining the image's default SSH password."
+    passwd --unlock "$login_user" > /dev/null
+  fi
+
+  if [ -n "${SSH_ROOT_PUBLIC_KEY:-}" ]
+  then
+    case "$SSH_ROOT_PUBLIC_KEY" in
+      *$'\r'*|*$'\n'*)
+        setup_progress "STOP: SSH_ROOT_PUBLIC_KEY must contain exactly one public-key line."
+        exit 1
+        ;;
+    esac
+    ssh_dir=/root/.ssh
+    install -d -o root -g root -m 0700 "$ssh_dir"
+    authorized_keys_tmp="$(mktemp "$ssh_dir/.authorized_keys.XXXXXX")"
+    printf '%s\n' "$SSH_ROOT_PUBLIC_KEY" > "$authorized_keys_tmp"
+    if ! ssh-keygen -l -f "$authorized_keys_tmp" > /dev/null
+    then
+      rm -f -- "$authorized_keys_tmp"
+      setup_progress "STOP: SSH_ROOT_PUBLIC_KEY is not a valid OpenSSH public key."
+      exit 1
+    fi
+    chown root:root "$authorized_keys_tmp"
+    chmod 0600 "$authorized_keys_tmp"
+    mv -fT -- "$authorized_keys_tmp" "$ssh_dir/authorized_keys"
+  fi
+}
+
+lock_fresh_image_default_password
 
 if [ -e "/teslausb/teslausb_setup_variables.conf" ]
 then
@@ -178,8 +416,7 @@ then
   then
     /root/bin/remountfs_rw
   fi
-  mv /teslausb/teslausb_setup_variables.conf /root/
-  dos2unix /root/teslausb_setup_variables.conf
+  install_setup_config /teslausb/teslausb_setup_variables.conf /root/teslausb_setup_variables.conf
 fi
 if [ -e "/root/teslausb_setup_variables.conf" ]
 then
@@ -190,6 +427,26 @@ then
 else
   setup_progress "no config file found."
 fi
+
+TESLAUSB_HOSTNAME=${TESLAUSB_HOSTNAME:-teslausb}
+if ! validate_teslausb_hostname
+then
+  setup_progress "STOP: TESLAUSB_HOSTNAME must be a single 1-63 character DNS label."
+  error_strobe &
+  exit 1
+fi
+
+for rc_secret_name in WIFIPASS SSH_USER_PASSWORD SSH_ROOT_PUBLIC_KEY
+do
+  if [[ -v $rc_secret_name ]]
+  then
+    # shellcheck disable=SC2163 # The variable name is intentionally indirect.
+    export -n "$rc_secret_name"
+  fi
+done
+unset rc_secret_name
+
+provision_fresh_image_ssh_access
 
 # check if we previously marked wifi as enabled
 enable_wifi
@@ -207,7 +464,7 @@ then
 
   if [ -e "/root/teslausb_setup_variables.conf" ]
   then
-    source "/root/teslausb_setup_variables.conf"
+    safesource "/root/teslausb_setup_variables.conf"
   else
     # No conf file found, can't complete setup
     setup_progress "Setup appears not to have completed, but you didn't provide a teslausb_setup_variables.conf."
@@ -223,6 +480,11 @@ then
   then
     REPO=${REPO:-marcone}
     BRANCH=${BRANCH:-main-dev}
+    if ! validate_source_coordinates
+    then
+      error_strobe &
+      exit 1
+    fi
     # Script doesn't exist, grab it.
     setup_progress "Grabbing main setup file."
     if ! get_script /root/bin setup-teslausb setup/pi
