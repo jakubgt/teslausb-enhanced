@@ -30,7 +30,7 @@ curl -X POST \
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/v1/capabilities` | Discover the API version and routes |
-| `GET` | `/api/v1/status` | Hardware, network, storage, and archive health |
+| `GET` | `/api/v1/status` | Hardware, network, storage, archive health, and encrypted-clip detection |
 | `GET` | `/api/v1/config` | Discover configured virtual drives and BLE |
 | `GET` | `/api/v1/videos` | List linked TeslaCam recordings |
 | `GET` | `/api/v1/speed-test?SECONDS` | Stream bounded test data; `SECONDS` is 1–30 (the bundled UI requests 15) |
@@ -38,6 +38,7 @@ curl -X POST \
 | `POST` | `/api/v1/actions/sync` | Trigger archive synchronization |
 | `POST` | `/api/v1/actions/reboot` | Queue a Raspberry Pi restart |
 | `POST` | `/api/v1/actions/drives/toggle` | Enable or disable the USB gadget |
+| `POST` | `/api/v1/actions/drives/repair` | Manually rebuild and verify the USB gadget (60-second rate limit) |
 | `POST` | `/api/v1/actions/diagnostics` | Regenerate the diagnostic report |
 | `POST` | `/api/v1/actions/ble/pair` | Start BLE key pairing |
 | `GET` | `/api/v1/files/list` | List a managed media directory |
@@ -55,3 +56,17 @@ separately distributed WebUI; browser calls are accepted only with same-origin
 evidence. New integrations should use `/api/v1` exclusively.
 
 File routes currently preserve the legacy positional query format. For example, list the root of the Music drive with `/api/v1/files/list?fs%2FMusic&.`. The list response remains line-oriented text for compatibility; `/status`, `/config`, `/videos`, BLE status, and action responses are JSON. Mutation failures use a non-2xx status with `{"ok":false,"error":"..."}`; clients should handle both the HTTP status and JSON error instead of assuming a successful body.
+
+The status response includes an `encrypted_clips` object with `available`,
+`schema_version`, `detected`, `locations`, `checked_at`, and `message` fields.
+It is detection metadata only: the endpoint never exposes clip contents,
+credentials, account tokens, or decryption material. `available: false` means the
+detector has not yet produced a trusted status file, not that encryption is
+necessarily absent.
+
+The gadget-repair route is intentionally manual and has no legacy GET form.
+It briefly disconnects all virtual drives, rebuilds the configfs mass-storage
+gadget, and verifies the UDC binding and each expected LUN. Concurrent requests
+and requests made within 60 seconds of the previous attempt return `429`; a
+failed post-repair verification leaves the gadget disconnected instead of
+exposing an uncertain device state.

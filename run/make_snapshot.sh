@@ -12,6 +12,9 @@ BACKINGFILES_ROOT="${BACKINGFILES_ROOT:-/backingfiles}"
 SNAPSHOTS_ROOT="${SNAPSHOTS_ROOT:-$BACKINGFILES_ROOT/snapshots}"
 SNAPSHOT_MOUNT_ROOT="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
 CAM_DISK_IMAGE="${CAM_DISK_IMAGE:-$BACKINGFILES_ROOT/cam_disk.bin}"
+SNAPSHOT_FINDMNT_COMMAND="${SNAPSHOT_FINDMNT_COMMAND:-findmnt}"
+SNAPSHOT_POLICY_HELPER="${SNAPSHOT_POLICY_HELPER:-/root/bin/snapshot_contains_encrypted_clips.sh}"
+readonly SNAPSHOT_FINDMNT_COMMAND SNAPSHOT_POLICY_HELPER
 
 if [ "${FLOCKED:-}" != "$0" ]
 then
@@ -129,11 +132,23 @@ function snapshot {
   # check that the previous snapshot is complete
   if [ ! -e "${oldname}.toc" ] && [ "$oldnum" != "-1" ]
   then
-    log "previous snapshot was incomplete, deleting"
-    rm -rf "$(dirname "$oldname")"
-    newnum=$((oldnum))
-    oldnum=$((oldnum - 1))
-    oldname=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$oldnum")/snap.bin
+    local incomplete_name
+    local incomplete_policy_status=0
+    incomplete_name=$(basename -- "$(dirname -- "$oldname")")
+    SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
+      SNAPSHOT_FINDMNT_COMMAND="$SNAPSHOT_FINDMNT_COMMAND" \
+      "$SNAPSHOT_POLICY_HELPER" "$incomplete_name" || incomplete_policy_status=$?
+    if [ "$incomplete_policy_status" -eq 1 ]
+    then
+      log "previous snapshot was incomplete and confirmed clear, deleting"
+      rm -rf -- "$(dirname -- "$oldname")"
+      newnum=$((oldnum))
+      oldnum=$((oldnum - 1))
+      oldname=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$oldnum")/snap.bin
+    else
+      log "preserving incomplete snapshot $incomplete_name because EncryptedClips is present or its status is unknown"
+      oldname=
+    fi
   fi
 
   newsnapdir=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$newnum")
@@ -214,15 +229,23 @@ function snapshot {
   # check whether this snapshot is actually different from the previous one
   find "$newsnapmnt" -type f -printf '%s %P\n' > "${newsnapname}.toc_"
   log "comparing new snapshot with $oldname"
-  if [[ ! -e "${oldname}.toc" ]] || diff "${oldname}.toc" "${newsnapname}.toc_" | grep -qe '^>'
+  if [[ -z "$oldname" || ! -e "${oldname}.toc" ]] ||
+     diff "${oldname}.toc" "${newsnapname}.toc_" | grep -qe '^>'
   then
     ln -s "$newsnapmnt" "$newsnapdir/mnt"
     make_links_for_snapshot "$newsnapmnt" "$newsnapdir/mnt"
     mv "${newsnapname}.toc_" "${newsnapname}.toc"
   else
     log "new snapshot is identical to previous one, discarding"
-    /root/bin/release_snapshot.sh "$newsnapdir"
-    rm -rf "$newsnapdir"
+    if ! /root/bin/release_snapshot.sh "$newsnapdir"
+    then
+      log "snapshot release was refused; retaining the snapshot"
+      if [ ! -e "$newsnapdir/mnt" ] && [ ! -L "$newsnapdir/mnt" ]
+      then
+        ln -s "$newsnapmnt" "$newsnapdir/mnt"
+      fi
+      mv "${newsnapname}.toc_" "${newsnapname}.toc"
+    fi
   fi
 }
 

@@ -81,6 +81,12 @@ server {
          fastcgi_max_temp_file_size 0;
     }
 
+    # Encrypted recordings are intentionally outside the viewer boundary.
+    # The FUSE layer also resolves and rejects differently-named aliases.
+    location ~* ^/TeslaCam/(?:.*/)?EncryptedClips(?:/|$) {
+         return 404;
+    }
+
     # Music and recordings remain browsable/streamable, but uploaded active
     # content must not execute in the administrative UI's origin. Unknown
     # extensions are already protected from MIME sniffing by the server header.

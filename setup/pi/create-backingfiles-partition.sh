@@ -52,6 +52,30 @@ function parent_disk_for_device () {
   readlink -f -- "$parent_disk"
 }
 
+function data_drive_path_is_lexically_safe () {
+  local candidate="${1:-}"
+  local component
+  local relative
+
+  case "$candidate" in
+    /dev/|*/|*//*) return 1 ;;
+    /dev/*) ;;
+    *) return 1 ;;
+  esac
+  relative=${candidate#/dev/}
+  while [ -n "$relative" ]
+  do
+    component=${relative%%/*}
+    if [ "$component" = "$relative" ]
+    then
+      relative=
+    else
+      relative=${relative#*/}
+    fi
+    [[ "$component" =~ ^[A-Za-z0-9][A-Za-z0-9._+:-]*$ ]] || return 1
+  done
+}
+
 function refuse_system_data_drive () {
   local resolved_data_drive
   local data_disk
@@ -62,6 +86,11 @@ function refuse_system_data_drive () {
   local mount_source
   local -a protected_devices=()
 
+  if ! data_drive_path_is_lexically_safe "$DATA_DRIVE"
+  then
+    log_progress "STOP: DATA_DRIVE must be an absolute whole-disk path under /dev without traversal."
+    exit 1
+  fi
   resolved_data_drive="$(readlink -f -- "$DATA_DRIVE")" || {
     log_progress "STOP: DATA_DRIVE ($DATA_DRIVE) could not be resolved."
     exit 1

@@ -48,12 +48,64 @@
 #include <sys/sysmacros.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
 #include <new>
 
 const char *source;
+
+static bool has_encrypted_clips_component(const char *path) {
+  static const char protected_component[] = "EncryptedClips";
+  const size_t protected_length = sizeof(protected_component) - 1;
+  const char *component = path;
+
+  while (*component != '\0') {
+    while (*component == '/') {
+      component++;
+    }
+    const char *end = component;
+    while (*end != '\0' && *end != '/') {
+      end++;
+    }
+    if ((size_t)(end - component) == protected_length &&
+        strncasecmp(component, protected_component, protected_length) == 0) {
+      return true;
+    }
+    component = end;
+  }
+  return false;
+}
+
+// Reject both literal EncryptedClips paths and differently-named symlinks
+// whose resolved target enters such a directory. realpath resolves metadata;
+// this boundary check never opens recording contents.
+static bool is_encrypted_source_path(const char *path) {
+  if (has_encrypted_clips_component(path)) {
+    return true;
+  }
+
+  char resolved[PATH_MAX];
+  if (realpath(path, resolved) != NULL &&
+      has_encrypted_clips_component(resolved)) {
+    return true;
+  }
+  return false;
+}
+
+static bool is_encrypted_request_path(const char *path) {
+  if (has_encrypted_clips_component(path)) {
+    return true;
+  }
+
+  char pathbuf[PATH_MAX];
+  int length = snprintf(pathbuf, sizeof(pathbuf), "%s%s", source, path);
+  if (length < 0 || (size_t)length >= sizeof(pathbuf)) {
+    return true;
+  }
+  return is_encrypted_source_path(pathbuf);
+}
 
 static void convert_timestamp(struct timespec* ts, struct statx_timestamp* xts) {
   if (sizeof(ts->tv_sec) == 4 && xts->tv_sec > INT32_MAX) {
@@ -145,6 +197,9 @@ static int mystat(const char* path, struct stat *st) {
 
 static int do_getattr( const char *path, struct stat *st ) {
   printf("do_getattr(%s)\n", path);
+  if (is_encrypted_request_path(path)) {
+    return -ENOENT;
+  }
   char pathbuf[PATH_MAX];
   snprintf(pathbuf, sizeof(pathbuf), "%s%s", source, path);
   return mystat(pathbuf, st);
@@ -153,6 +208,10 @@ static int do_getattr( const char *path, struct stat *st ) {
 static int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
                       off_t offset, struct fuse_file_info *fi ) {
   printf("do_readdir(%s)\n", path);
+
+  if (is_encrypted_request_path(path)) {
+    return -ENOENT;
+  }
 
   char pathbuf[PATH_MAX];
   snprintf(pathbuf, sizeof(pathbuf), "%s%s", source, path);
@@ -165,6 +224,13 @@ static int do_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
     struct dirent *ent = readdir(dir);
     if (!ent) {
       break;
+    }
+    char childbuf[PATH_MAX];
+    int child_length = snprintf(childbuf, sizeof(childbuf), "%s/%s",
+                                pathbuf, ent->d_name);
+    if (child_length < 0 || (size_t)child_length >= sizeof(childbuf) ||
+        is_encrypted_source_path(childbuf)) {
+      continue;
     }
     filler(buffer, ent->d_name, NULL, 0);
   }
@@ -259,6 +325,10 @@ typedef struct {
 
 static int do_open(const char *path, struct fuse_file_info *fi) {
   printf("do_open(%s)\n", path);
+
+  if (is_encrypted_request_path(path)) {
+    return -ENOENT;
+  }
 
   if ((fi->flags & (O_WRONLY || O_RDWR)) != 0) {
     printf("write not allowed\n");

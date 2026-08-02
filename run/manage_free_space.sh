@@ -6,10 +6,19 @@ then
   return 1 # shouldn't use exit when sourced
 fi
 
+BACKINGFILES_ROOT="${BACKINGFILES_ROOT:-/backingfiles}"
+SNAPSHOTS_ROOT="${SNAPSHOTS_ROOT:-$BACKINGFILES_ROOT/snapshots}"
+SNAPSHOT_MOUNT_ROOT="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
+SNAPSHOT_FINDMNT_COMMAND="${SNAPSHOT_FINDMNT_COMMAND:-findmnt}"
+SNAPSHOT_POLICY_HELPER="${SNAPSHOT_POLICY_HELPER:-/root/bin/snapshot_contains_encrypted_clips.sh}"
+RELEASE_SNAPSHOT="${RELEASE_SNAPSHOT:-/root/bin/release_snapshot.sh}"
+readonly BACKINGFILES_ROOT SNAPSHOTS_ROOT SNAPSHOT_MOUNT_ROOT
+readonly SNAPSHOT_FINDMNT_COMMAND SNAPSHOT_POLICY_HELPER RELEASE_SNAPSHOT
+
 if [ "${FLOCKED:-}" != "$0" ]
 then
-  mkdir -p /backingfiles/snapshots
-  if FLOCKED="$0" flock -E 99 /backingfiles/snapshots "$0" "$@" || case "$?" in
+  mkdir -p "$SNAPSHOTS_ROOT"
+  if FLOCKED="$0" flock -E 99 "$SNAPSHOTS_ROOT" "$0" "$@" || case "$?" in
   99) echo "failed to lock snapshots dir"
       exit 99
       ;;
@@ -33,19 +42,19 @@ function manage_free_space {
   while true
   do
     local freespace
-    freespace=$(eval "$(stat --file-system --format="echo \$((%f*%S))" /backingfiles/cam_disk.bin)")
+    freespace=$(eval "$(stat --file-system --format="echo \$((%f*%S))" "$BACKINGFILES_ROOT/cam_disk.bin")")
     if [ "$freespace" -gt "$reserve" ]
     then
       exit 0
     fi
-    if ! stat /backingfiles/snapshots/snap-*/snap.bin > /dev/null 2>&1
+    if ! stat "$SNAPSHOTS_ROOT"/snap-*/snap.bin > /dev/null 2>&1
     then
       log "Warning: low space for new snapshots, but no snapshots exist."
       log "Please use a larger storage medium or reduce CAM_SIZE"
       exit 1
     fi
     # if there's only one snapshot then we likely just took it, so don't immediately delete it
-    if [ "$(find /backingfiles/snapshots/ -name snap.bin 2> /dev/null | wc -l)" -lt 2 ]
+    if [ "$(find "$SNAPSHOTS_ROOT" -name snap.bin 2> /dev/null | wc -l)" -lt 2 ]
     then
       # there's only one snapshot and yet we're low on space
       log "Warning: low space for new snapshots, but only one snapshot exists."
@@ -53,10 +62,36 @@ function manage_free_space {
       exit 1
     fi
 
-    oldest=$(find /backingfiles/snapshots -maxdepth 1 -name 'snap-*' | sort | head -1)
+    oldest=
+    while IFS= read -r snapshot_dir
+    do
+      snapshot_name=$(basename -- "$snapshot_dir")
+      policy_status=0
+      SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
+      SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
+      SNAPSHOT_FINDMNT_COMMAND="$SNAPSHOT_FINDMNT_COMMAND" \
+        "$SNAPSHOT_POLICY_HELPER" "$snapshot_name" || policy_status=$?
+      case "$policy_status" in
+        0)
+          log "low-space rotation is preserving $snapshot_name because EncryptedClips is present"
+          ;;
+        1)
+          oldest="$snapshot_dir"
+          break
+          ;;
+        *)
+          log "low-space rotation is preserving $snapshot_name because its EncryptedClips status is unknown"
+          ;;
+      esac
+    done < <(find "$SNAPSHOTS_ROOT" -mindepth 1 -maxdepth 1 -type d \
+      -name 'snap-*' -print | LC_ALL=C sort)
+    if [ -z "$oldest" ]
+    then
+      log "Warning: low space, but no snapshot is confirmed clear of EncryptedClips."
+      exit 1
+    fi
     log "low space, deleting $oldest"
-    /root/bin/release_snapshot.sh "$oldest"
-    rm -rf "$oldest"
+    "$RELEASE_SNAPSHOT" "$oldest"
   done
 }
 

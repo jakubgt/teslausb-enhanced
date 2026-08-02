@@ -9,6 +9,38 @@ function log_progress () {
   echo "verify-and-configure-archive: $1"
 }
 
+function archive_field_is_single_line () {
+  case "$1" in
+    *$'\n'*|*$'\r'*|*$'\t'*) return 1 ;;
+  esac
+}
+
+function fstab_escape () {
+  local input="$1"
+  local output= character
+  while [ -n "$input" ]
+  do
+    character=${input:0:1}
+    input=${input:1}
+    case "$character" in
+      ' ') output+='\040' ;;
+      $'\t') output+='\011' ;;
+      "\\") output+='\134' ;;
+      *) output+="$character" ;;
+    esac
+  done
+  printf '%s' "$output"
+}
+
+if ! archive_field_is_single_line "$ARCHIVE_SERVER" ||
+   ! archive_field_is_single_line "${SHARE_NAME:-}" ||
+   ! archive_field_is_single_line "${MUSIC_SHARE_NAME:-}" ||
+   [[ "$ARCHIVE_SERVER" == -* ]]
+then
+  log_progress "STOP: unsafe archive server or NFS share value"
+  exit 1
+fi
+
 function check_archive_server_reachable () {
   log_progress "Verifying that the archive server $ARCHIVE_SERVER is reachable..."
   local serverunreachable=false
@@ -43,15 +75,19 @@ function check_archive_mountable () {
 
   local mounted=false
   
-  # NFS Mount Command
-  # Forced vers=3 for wider NAS compatibility (Unifi, Synology, etc)
-  # proto=tcp and nolock help with stability over wifi
-  local commandline="mount -t nfs '$ARCHIVE_SERVER:$share_path' '$test_mount_location' -o 'rw,noauto,nolock,proto=tcp,vers=3'"
+  # Forced vers=3 for wider NAS compatibility (Unifi, Synology, etc).
+  # Keep every user value in its own array element; this must never use eval.
+  local -a mount_command=(
+    mount -t nfs "$ARCHIVE_SERVER:$share_path" "$test_mount_location"
+    -o 'rw,noauto,nolock,proto=tcp,vers=3'
+  )
+  local commandline
+  printf -v commandline '%q ' "${mount_command[@]}"
   
   log_progress "Trying NFS mount command-line:"
   log_progress "$commandline"
   
-  if eval "$commandline"
+  if "${mount_command[@]}"
   then
     mounted=true
   fi
@@ -123,7 +159,10 @@ function configure_archive () {
 
   if [ -e /backingfiles/cam_disk.bin ]
   then
-    echo "$ARCHIVE_SERVER:$SHARE_NAME $archive_path nfs rw,noauto,nolock,proto=tcp,vers=3 0 0" >> /etc/fstab
+    local archive_source
+    archive_source=$(fstab_escape "$ARCHIVE_SERVER:$SHARE_NAME")
+    printf '%s %s nfs rw,noauto,nolock,proto=tcp,vers=3 0 0\n' \
+      "$archive_source" "$archive_path" >> /etc/fstab
   elif [ -d "$archive_path" ]
   then
     rmdir "$archive_path" || log_progress "failed to remove $archive_path"
@@ -135,7 +174,10 @@ function configure_archive () {
     then
       mkdir "$music_archive_path"
     fi
-    echo "$ARCHIVE_SERVER:$MUSIC_SHARE_NAME $music_archive_path nfs ro,noauto,nolock,proto=tcp,vers=3 0 0" >> /etc/fstab
+    local music_archive_source
+    music_archive_source=$(fstab_escape "$ARCHIVE_SERVER:$MUSIC_SHARE_NAME")
+    printf '%s %s nfs ro,noauto,nolock,proto=tcp,vers=3 0 0\n' \
+      "$music_archive_source" "$music_archive_path" >> /etc/fstab
   elif [ -d "$music_archive_path" ]
   then
     rmdir "$music_archive_path" || log_progress "failed to remove $music_archive_path"

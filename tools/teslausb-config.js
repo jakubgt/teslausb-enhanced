@@ -13,7 +13,97 @@ const fs = require("node:fs");
 const net = require("node:net");
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_CONFIG_BYTES = 1024 * 1024;
+const MAX_STRING_BYTES = 16 * 1024;
+const MAX_ARRAY_ITEMS = 128;
 const ARCHIVE_SYSTEMS = new Set(["cifs", "nfs", "rsync", "rclone", "none"]);
+const DECLARATIVE_BOOLEAN_NAMES = new Set([
+  "ARCHIVE_RECENTCLIPS", "ARCHIVE_SAVEDCLIPS", "ARCHIVE_SENTRYCLIPS", "ARCHIVE_TRACKMODECLIPS",
+  "CONFIGURE_ARCHIVING", "DISCORD_ENABLED", "GOTIFY_ENABLED", "IFTTT_ENABLED", "MATRIX_ENABLED",
+  "NOTIFICATION_COMMAND_ENABLED", "NTFY_ENABLED", "PUSHOVER_ENABLED", "SAMBA_ENABLED", "SAMBA_GUEST",
+  "SIGNAL_ENABLED", "SKIP_READONLY", "SLACK_ENABLED", "SNAPSHOTS_ENABLED", "SNS_ENABLED",
+  "SSH_ALLOW_DEFAULT_PASSWORD", "SSH_DISABLE_PASSWORD_AUTHENTICATION", "TELEGRAM_ENABLED",
+  "TELEGRAM_SILENT_NOTIFY", "TEMPERATURE_POSTARCHIVE", "UPGRADE_PACKAGES", "USE_EXFAT",
+  "WEBHOOK_ENABLED", "WEB_AUTH_DISABLED"
+]);
+const DECLARATIVE_INTEGER_RANGES = new Map([
+  ["ARCHIVE_DELAY", [0, 86400]],
+  ["ARCHIVE_RETRY_ATTEMPTS_PER_RUN", [1, 20]],
+  ["ARCHIVE_RETRY_BASE_SECONDS", [1, 86400]],
+  ["ARCHIVE_RETRY_MAX_SECONDS", [1, 604800]],
+  ["ARCHIVE_RSYNC_TIMEOUT", [1, 86400]],
+  ["AUTOFS_WAIT_SECONDS", [1, 600]],
+  ["DIRTY_BACKGROUND_BYTES", [0, 2147483647]],
+  ["DIRTY_RATIO", [0, 100]],
+  ["FORCE_SYNC_TIMEOUT_SECONDS", [1, 86400]],
+  ["GOTIFY_PRIORITY", [-2, 10]],
+  ["MUSIC_RSYNC_TIMEOUT", [1, 86400]],
+  ["NTFY_PRIORITY", [1, 5]],
+  ["PIP_RETRIES", [0, 20]],
+  ["PIP_TIMEOUT_SECONDS", [1, 600]],
+  ["RCLONE_CONNECT_TIMEOUT", [1, 3600]],
+  ["RCLONE_IO_TIMEOUT", [1, 86400]],
+  ["RSYNC_SSH_CONNECT_TIMEOUT", [1, 3600]],
+  ["SENTRY_CASE", [1, 3]],
+  ["SNAPSHOT_INTERVAL", [60, 86400]],
+  ["TEMPERATURE_CAUTION", [-100000, 200000]],
+  ["TEMPERATURE_INTERVAL", [1, 86400]],
+  ["TEMPERATURE_WARNING", [-100000, 200000]],
+  ["TESLAUSB_CURL_CONNECT_TIMEOUT", [1, 3600]],
+  ["TESLAUSB_CURL_MAX_TIME", [1, 86400]],
+  ["TESLAUSB_NOTIFICATION_TIMEOUT_SECONDS", [1, 3600]],
+  ["TESLA_BLE_ARTIFACT_MAX_BYTES", [1, 1073741824]],
+  ["TESLA_BLE_COMMAND_TIMEOUT_SECONDS", [1, 3600]]
+]);
+const DECLARATIVE_INTEGER_NAMES = new Set(DECLARATIVE_INTEGER_RANGES.keys());
+const DECLARATIVE_ARRAY_NAMES = new Set(["INSTALL_USER_REQUESTED_PACKAGES", "RCLONE_FLAGS"]);
+const DECLARATIVE_STRING_NAMES = new Set([
+  "AP_IP", "AP_PASS", "AP_SSID", "ARCHIVE_SERVER", "ARCHIVE_SYSTEM", "AWS_ACCESS_KEY_ID",
+  "AWS_REGION", "AWS_SECRET_ACCESS_KEY", "AWS_SNS_TOPIC_ARN", "BOOMBOX_SIZE", "BRANCH",
+  "CAM_SIZE", "CIFS_SEC", "CIFS_VERSION", "CPU_GOVERNOR", "DATA_DRIVE",
+  "DISCORD_WEBHOOK_URL", "GOTIFY_APP_TOKEN", "GOTIFY_DOMAIN", "IFTTT_EVENT_NAME", "IFTTT_KEY",
+  "INCREASE_ROOT_SIZE", "KEEP_AWAKE_WEBHOOK_URL", "LIGHTSHOW_SIZE", "MATRIX_PASSWORD",
+  "MATRIX_ROOM", "MATRIX_SERVER_URL", "MATRIX_USERNAME", "MUSIC_SHARE_NAME", "MUSIC_SIZE",
+  "NOTIFICATION_COMMAND_FINISH", "NOTIFICATION_COMMAND_START", "NOTIFICATION_TITLE", "NTFY_TOKEN",
+  "NTFY_URL", "PUSHOVER_APP_KEY", "PUSHOVER_USER_KEY", "RCLONE_DRIVE", "RCLONE_PATH", "REPO",
+  "RSYNC_PATH", "RSYNC_SERVER", "RSYNC_USER", "SAMBA_PASSWORD", "SAMBA_USER", "SHARE_DOMAIN",
+  "SHARE_NAME", "SHARE_PASSWORD", "SHARE_USER", "SIGNAL_FROM_NUM", "SIGNAL_TO_NUM", "SIGNAL_URL",
+  "SLACK_WEBHOOK_URL", "SSH_ROOT_PUBLIC_KEY", "SSH_USER_PASSWORD", "SSID", "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID", "TESLAFI_API_TOKEN", "TESLAUSB_HOSTNAME", "TESLA_BLE_ARTIFACT_FILE",
+  "TESLA_BLE_ARTIFACT_SHA256", "TESLA_BLE_ARTIFACT_VERSION", "TESLA_BLE_VIN", "TESSIE_API_TOKEN",
+  "TESSIE_VIN", "TIME_ZONE", "TRIGGER_FILE_ANY", "TRIGGER_FILE_RECENT", "TRIGGER_FILE_SAVED",
+  "TRIGGER_FILE_SENTRY", "WEBHOOK_URL", "WEB_ALLOWED_HOSTS", "WEB_PASSWORD", "WEB_USERNAME",
+  "WEBUI_RELEASE", "WEBUI_SHA256", "WIFIPASS"
+]);
+const DECLARATIVE_ALLOWED_NAMES = new Set([
+  ...DECLARATIVE_BOOLEAN_NAMES,
+  ...DECLARATIVE_INTEGER_NAMES,
+  ...DECLARATIVE_ARRAY_NAMES,
+  ...DECLARATIVE_STRING_NAMES
+]);
+const CIFS_VERSIONS = new Set(["default", "1.0", "2.0", "2.1", "3.0", "3.02", "3.1.1"]);
+const CIFS_SECURITY_MODES = new Set([
+  "none", "krb5", "krb5i", "ntlm", "ntlmi", "ntlmv2", "ntlmv2i", "ntlmssp", "ntlmsspi"
+]);
+const NOTIFICATION_REQUIREMENTS = new Map([
+  ["SIGNAL_ENABLED", ["SIGNAL_URL", "SIGNAL_TO_NUM", "SIGNAL_FROM_NUM"]],
+  ["PUSHOVER_ENABLED", ["PUSHOVER_USER_KEY", "PUSHOVER_APP_KEY"]],
+  ["GOTIFY_ENABLED", ["GOTIFY_DOMAIN", "GOTIFY_APP_TOKEN", "GOTIFY_PRIORITY"]],
+  ["DISCORD_ENABLED", ["DISCORD_WEBHOOK_URL"]],
+  ["IFTTT_ENABLED", ["IFTTT_EVENT_NAME", "IFTTT_KEY"]],
+  ["WEBHOOK_ENABLED", ["WEBHOOK_URL"]],
+  ["SLACK_ENABLED", ["SLACK_WEBHOOK_URL"]],
+  ["MATRIX_ENABLED", ["MATRIX_SERVER_URL", "MATRIX_USERNAME", "MATRIX_PASSWORD", "MATRIX_ROOM"]],
+  ["SNS_ENABLED", ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SNS_TOPIC_ARN"]],
+  ["TELEGRAM_ENABLED", ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]],
+  ["NTFY_ENABLED", ["NTFY_URL"]]
+]);
+const KNOWN_PLACEHOLDER_VALUES = new Set([
+  "password", "raspberry", "username", "hostname", "hostname_or_ip",
+  "http://<url>:8080", "http://domain/path/", "https://gotify.domain.com",
+  "country_code_and_number_configured_with_signal", "123456789",
+  "bot123456789:abcdefghijklmnopqrstuvqxyz987654321"
+]);
 const CANONICAL_ORDER = [
   "SSID", "WIFIPASS", "ARCHIVE_SYSTEM", "ARCHIVE_SERVER", "SHARE_NAME",
   "SHARE_USER", "SHARE_PASSWORD", "RSYNC_USER", "RSYNC_SERVER", "RSYNC_PATH",
@@ -236,7 +326,7 @@ function validateLiteralArray(body) {
   }
   if (escaped || quote) throw new Error("unterminated array token");
   finishToken();
-  for (const item of tokens) decodeLiteral(item);
+  return tokens.map((item) => decodeLiteral(item));
 }
 
 function parseConfig(text) {
@@ -269,7 +359,10 @@ function parseConfig(text) {
 }
 
 function looksLikePlaceholder(value) {
-  return /^(?:your(?:_|-)|put[_ -]|password$|username$|hostname(?:_or_ip)?$|your_archive|<.+>|.*GOES_HERE)$/i.test(String(value).trim());
+  const candidate = String(value).trim().toLowerCase();
+  return KNOWN_PLACEHOLDER_VALUES.has(candidate) ||
+    /^(?:your(?:_|-)|put[_ -]|replace(?:_|-)|choose-a-unique-|your_archive)/.test(candidate) ||
+    /<[^>]+>/.test(candidate) || /(?:_|-)goes(?:_|-)here$/.test(candidate);
 }
 
 function isSafeDnsHostname(value) {
@@ -285,6 +378,55 @@ function isAllowedWebHost(value) {
     ? text.slice(1, -1)
     : text;
   return net.isIP(candidate) !== 0 || isSafeDnsHostname(candidate);
+}
+
+function hasControlCharacter(value) {
+  return /[\x00-\x1f\x7f]/.test(String(value));
+}
+
+function isSafeTimeZone(value) {
+  const candidate = String(value);
+  if (candidate === "auto") return true;
+  if (!candidate || Buffer.byteLength(candidate, "utf8") > 255 || candidate.startsWith("/") || candidate.startsWith("\\")) {
+    return false;
+  }
+  return candidate.split("/").every((part) =>
+    part !== "." && part !== ".." && /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(part));
+}
+
+function isSafeTriggerName(value) {
+  const candidate = String(value);
+  return candidate !== "" && candidate !== "." && candidate !== ".." &&
+    !candidate.includes("/") && !candidate.includes("\\") &&
+    Buffer.byteLength(candidate, "utf8") <= 255 && !hasControlCharacter(candidate);
+}
+
+function isSafeDevicePath(value) {
+  const candidate = String(value);
+  if (!candidate.startsWith("/dev/")) return false;
+  return candidate.slice("/dev/".length).split("/").every((part) =>
+    part !== "" && part !== "." && part !== ".." &&
+    /^[A-Za-z0-9][A-Za-z0-9._+:-]*$/.test(part));
+}
+
+function isSafeGitRef(value) {
+  const candidate = String(value);
+  if (!candidate || candidate.length > 255 || !/^[A-Za-z0-9._/-]+$/.test(candidate) ||
+      candidate.startsWith("/") || candidate.endsWith("/") || candidate.includes("..") ||
+      candidate.includes("//") || candidate.includes("@{")) {
+    return false;
+  }
+  return candidate.split("/").every((part) =>
+    part && !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock"));
+}
+
+function declarativeSchema() {
+  return {
+    booleanNames: [...DECLARATIVE_BOOLEAN_NAMES].sort(),
+    integerRanges: Object.fromEntries([...DECLARATIVE_INTEGER_RANGES].sort(([left], [right]) => left.localeCompare(right))),
+    arrayNames: [...DECLARATIVE_ARRAY_NAMES].sort(),
+    stringNames: [...DECLARATIVE_STRING_NAMES].sort()
+  };
 }
 
 function preflightConfig(text) {
@@ -304,6 +446,28 @@ function preflightConfig(text) {
   const requirePair = (left, right) => {
     if (present(left) !== present(right)) add("error", `${left} and ${right} must either both be set or both be omitted`, present(left) ? left : right);
   };
+
+  for (const [name, assignment] of parsed.assignments) {
+    if (hasControlCharacter(assignment.value)) {
+      add("error", `${name} must not contain control characters`, name);
+    }
+    if (!DECLARATIVE_ARRAY_NAMES.has(name) &&
+        Buffer.byteLength(String(assignment.value), "utf8") > MAX_STRING_BYTES) {
+      add("error", `${name} exceeds ${MAX_STRING_BYTES} UTF-8 bytes`, name);
+    }
+  }
+
+  for (const [name, [minimum, maximum]] of DECLARATIVE_INTEGER_RANGES) {
+    if (!present(name)) continue;
+    if (!/^-?[0-9]+$/.test(value(name))) {
+      add("error", `${name} must be a decimal integer`, name);
+      continue;
+    }
+    const integer = Number(value(name));
+    if (!Number.isSafeInteger(integer) || integer < minimum || integer > maximum) {
+      add("error", `${name} must be between ${minimum} and ${maximum}`, name);
+    }
+  }
 
   requirePair("SSID", "WIFIPASS");
   if (!present("SSID") && !present("WIFIPASS")) {
@@ -328,7 +492,7 @@ function preflightConfig(text) {
   }
 
   requireValue("CAM_SIZE");
-  for (const name of ["CAM_SIZE", "MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE"]) {
+  for (const name of ["CAM_SIZE", "MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE", "INCREASE_ROOT_SIZE"]) {
     if (present(name) && !/^[1-9][0-9]*(?:[KMGTP])?$/i.test(value(name))) {
       add("error", `${name} must be a positive size such as 40G or 512M`, name);
     }
@@ -352,8 +516,52 @@ function preflightConfig(text) {
     }
   }
   requirePair("AP_SSID", "AP_PASS");
-  if (present("AP_PASS") && (value("AP_PASS").length < 8 || value("AP_PASS") === "password")) {
-    add("error", "AP_PASS must be at least 8 characters and must not use the sample password", "AP_PASS");
+  if (value("AP_SSID") !== undefined) {
+    const ssidBytes = Buffer.byteLength(value("AP_SSID"), "utf8");
+    if (ssidBytes < 1 || ssidBytes > 32) {
+      add("error", "AP_SSID must be 1-32 UTF-8 bytes", "AP_SSID");
+    }
+  }
+  if (value("AP_PASS") !== undefined) {
+    const passphraseBytes = Buffer.byteLength(value("AP_PASS"), "utf8");
+    if (passphraseBytes < 8 || passphraseBytes > 63 || value("AP_PASS").toLowerCase() === "password") {
+      add("error", "AP_PASS must be 8-63 UTF-8 bytes and must not use the sample password", "AP_PASS");
+    }
+  }
+  if (present("AP_IP")) {
+    const octets = value("AP_IP").split(".");
+    const finalOctet = octets.length === 4 ? Number(octets[3]) : Number.NaN;
+    if (net.isIP(value("AP_IP")) !== 4) {
+      add("error", "AP_IP must be an IPv4 address", "AP_IP");
+    } else if (!Number.isInteger(finalOctet) || finalOctet < 1 || finalOctet > 9) {
+      add("error", "AP_IP must end in .1 through .9, outside the .10-.254 DHCP pool", "AP_IP");
+    }
+  }
+  if (present("ARCHIVE_SERVER") && !isAllowedWebHost(value("ARCHIVE_SERVER"))) {
+    add("error", "ARCHIVE_SERVER must be an exact DNS name or IP address without a port", "ARCHIVE_SERVER");
+  }
+  if (archiveSystem === "nfs" && present("SHARE_NAME") && !value("SHARE_NAME").startsWith("/")) {
+    add("error", "SHARE_NAME must be an absolute exported path for NFS archiving", "SHARE_NAME");
+  }
+  if (present("CIFS_VERSION") && !CIFS_VERSIONS.has(value("CIFS_VERSION"))) {
+    add("error", `CIFS_VERSION must be one of: ${[...CIFS_VERSIONS].sort().join(", ")}`, "CIFS_VERSION");
+  }
+  if (present("CIFS_SEC") && !CIFS_SECURITY_MODES.has(value("CIFS_SEC"))) {
+    add("error", `CIFS_SEC must be one of: ${[...CIFS_SECURITY_MODES].sort().join(", ")}`, "CIFS_SEC");
+  }
+  if (present("REPO") && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value("REPO"))) {
+    add("error", "REPO is not a valid GitHub owner name", "REPO");
+  }
+  if (present("BRANCH") && !isSafeGitRef(value("BRANCH"))) {
+    add("error", "BRANCH is not a safe Git reference", "BRANCH");
+  }
+  if (present("TIME_ZONE") && !isSafeTimeZone(value("TIME_ZONE"))) {
+    add("error", "TIME_ZONE must be auto or a relative zoneinfo name without traversal", "TIME_ZONE");
+  }
+  for (const name of ["TRIGGER_FILE_ANY", "TRIGGER_FILE_RECENT", "TRIGGER_FILE_SAVED", "TRIGGER_FILE_SENTRY"]) {
+    if (value(name) !== undefined && !isSafeTriggerName(value(name))) {
+      add("error", `${name} must be one filename, not a path`, name);
+    }
   }
   if (present("WEB_ALLOWED_HOSTS")) {
     const allowedHosts = String(value("WEB_ALLOWED_HOSTS")).split(/[\s,]+/).filter(Boolean);
@@ -373,6 +581,9 @@ function preflightConfig(text) {
     add("error", "WEBUI_SHA256 must be exactly 64 hexadecimal characters", "WEBUI_SHA256");
   }
   if (present("DATA_DRIVE")) {
+    if (!isSafeDevicePath(value("DATA_DRIVE"))) {
+      add("error", "DATA_DRIVE must be an absolute whole-disk path under /dev without traversal", "DATA_DRIVE");
+    }
     add("warning", `DATA_DRIVE=${value("DATA_DRIVE")} will be wiped and repartitioned during setup`, "DATA_DRIVE");
   }
   if (present("TESLAUSB_HOSTNAME") &&
@@ -388,11 +599,50 @@ function preflightConfig(text) {
       }
     }
   }
+  if (value("WEB_AUTH_DISABLED") === "true" && (present("WEB_USERNAME") || present("WEB_PASSWORD"))) {
+    add("error", "WEB_AUTH_DISABLED cannot be combined with WEB_USERNAME or WEB_PASSWORD", "WEB_AUTH_DISABLED");
+  }
   if (value("SSH_ALLOW_DEFAULT_PASSWORD") === "true") {
     add("warning", "SSH_ALLOW_DEFAULT_PASSWORD=true explicitly retains the image's default SSH password", "SSH_ALLOW_DEFAULT_PASSWORD");
   }
-  if (present("SSH_USER_PASSWORD") && /[\r\n]/.test(value("SSH_USER_PASSWORD"))) {
-    add("error", "SSH_USER_PASSWORD must not contain a newline", "SSH_USER_PASSWORD");
+  if (present("SSH_USER_PASSWORD") && Buffer.byteLength(value("SSH_USER_PASSWORD"), "utf8") < 12) {
+    add("error", "SSH_USER_PASSWORD must be at least 12 UTF-8 bytes with no newline", "SSH_USER_PASSWORD");
+  }
+  if (present("TESLA_BLE_ARTIFACT_SHA256") && !/^[0-9a-f]{64}$/i.test(value("TESLA_BLE_ARTIFACT_SHA256"))) {
+    add("error", "TESLA_BLE_ARTIFACT_SHA256 must be exactly 64 hexadecimal characters", "TESLA_BLE_ARTIFACT_SHA256");
+  }
+  for (const name of ["TESLA_BLE_VIN", "TESSIE_VIN"]) {
+    if (present(name) && !/^[A-HJ-NPR-Za-hj-npr-z0-9]{17}$/.test(value(name))) {
+      add("error", `${name} must be a 17-character VIN`, name);
+    }
+  }
+  const keepAwakeNames = ["TESLAFI_API_TOKEN", "TESSIE_API_TOKEN", "TESLA_BLE_VIN", "KEEP_AWAKE_WEBHOOK_URL"];
+  const keepAwakeConfigured = keepAwakeNames.filter((name) => present(name));
+  if (keepAwakeConfigured.length > 1) {
+    add("error", `Only one keep-awake method may be configured: ${keepAwakeConfigured.join(", ")}`);
+  }
+  if (keepAwakeConfigured.length > 0) {
+    requireValue("SENTRY_CASE", "when a keep-awake method is configured");
+  }
+  if (present("TESLAFI_API_TOKEN") && !/^[12]$/.test(value("SENTRY_CASE") || "")) {
+    add("error", "SENTRY_CASE must be 1 or 2 for TeslaFi", "SENTRY_CASE");
+  }
+  if (present("TESSIE_API_TOKEN")) {
+    requireValue("TESSIE_VIN", "when Tessie is configured");
+  }
+  if (present("ARCHIVE_RETRY_BASE_SECONDS") && present("ARCHIVE_RETRY_MAX_SECONDS") &&
+      Number(value("ARCHIVE_RETRY_BASE_SECONDS")) > Number(value("ARCHIVE_RETRY_MAX_SECONDS"))) {
+    add("error", "ARCHIVE_RETRY_BASE_SECONDS must not exceed ARCHIVE_RETRY_MAX_SECONDS", "ARCHIVE_RETRY_BASE_SECONDS");
+  }
+
+  for (const [enabledName, requiredNames] of NOTIFICATION_REQUIREMENTS) {
+    if (value(enabledName) === "true") {
+      for (const requiredName of requiredNames) requireValue(requiredName, `when ${enabledName}=true`);
+    }
+  }
+  if (value("NOTIFICATION_COMMAND_ENABLED") === "true" &&
+      !present("NOTIFICATION_COMMAND_START") && !present("NOTIFICATION_COMMAND_FINISH")) {
+    add("error", "NOTIFICATION_COMMAND_START or NOTIFICATION_COMMAND_FINISH is required when NOTIFICATION_COMMAND_ENABLED=true", "NOTIFICATION_COMMAND_ENABLED");
   }
 
   for (const [name, assignment] of parsed.assignments) {
@@ -450,6 +700,73 @@ function generateConfig(input) {
   return `${output.join("\n")}\n`;
 }
 
+function migrateConfig(text) {
+  const result = preflightConfig(text);
+  const errors = result.issues.filter((issue) => issue.level === "error");
+  if (errors.length > 0) {
+    throw new Error(`Legacy configuration failed preflight: ${errors.map((issue) => issue.message).join("; ")}`);
+  }
+
+  const unsupported = [...result.assignments.keys()]
+    .filter((name) => !DECLARATIVE_ALLOWED_NAMES.has(name))
+    .sort();
+  if (unsupported.length > 0) {
+    throw new Error(`Unsupported variable(s) cannot be migrated: ${unsupported.join(", ")}`);
+  }
+
+  const variables = {};
+  for (const [name, assignment] of result.assignments) {
+    if (DECLARATIVE_BOOLEAN_NAMES.has(name)) {
+      if (assignment.value !== "true" && assignment.value !== "false") {
+        throw new Error(`${name} must be exactly true or false before migration`);
+      }
+      variables[name] = assignment.value === "true";
+    } else if (DECLARATIVE_INTEGER_NAMES.has(name)) {
+      if (!/^-?[0-9]+$/.test(assignment.value)) {
+        throw new Error(`${name} must be a decimal integer before migration`);
+      }
+      const integer = Number(assignment.value);
+      if (!Number.isSafeInteger(integer)) {
+        throw new Error(`${name} is outside JavaScript's safe integer range`);
+      }
+      const [minimum, maximum] = DECLARATIVE_INTEGER_RANGES.get(name);
+      if (integer < minimum || integer > maximum) {
+        throw new Error(`${name} must be between ${minimum} and ${maximum} before migration`);
+      }
+      variables[name] = integer;
+    } else if (DECLARATIVE_ARRAY_NAMES.has(name)) {
+      const raw = stripInlineComment(assignment.raw).trim();
+      if (raw.startsWith("(") && raw.endsWith(")")) {
+        variables[name] = validateLiteralArray(raw.slice(1, -1));
+      } else if (name === "INSTALL_USER_REQUESTED_PACKAGES") {
+        variables[name] = String(assignment.value).trim().split(/\s+/).filter(Boolean);
+      } else {
+        throw new Error(`${name} must use a literal shell array before migration`);
+      }
+      if (variables[name].length > MAX_ARRAY_ITEMS) {
+        throw new Error(`${name} contains more than ${MAX_ARRAY_ITEMS} items`);
+      }
+      for (const [index, item] of variables[name].entries()) {
+        if (hasControlCharacter(item) || Buffer.byteLength(item, "utf8") > MAX_STRING_BYTES) {
+          throw new Error(`${name}[${index}] is too large or contains a control character`);
+        }
+        if (name === "INSTALL_USER_REQUESTED_PACKAGES" &&
+            !/^[A-Za-z0-9][A-Za-z0-9+.-]*$/.test(item)) {
+          throw new Error(`unsupported package name: ${item}`);
+        }
+      }
+    } else {
+      variables[name] = String(assignment.value);
+    }
+  }
+
+  const output = `${JSON.stringify({schema_version: 1, variables}, null, 2)}\n`;
+  if (Buffer.byteLength(output, "utf8") > MAX_CONFIG_BYTES) {
+    throw new Error(`migrated JSON exceeds ${MAX_CONFIG_BYTES} bytes`);
+  }
+  return output;
+}
+
 function sanitizeConfig(text) {
   const output = [
     "# SANITIZED TESLAUSB CONFIGURATION COPY",
@@ -495,6 +812,7 @@ function usage() {
   return [
     "Usage:",
     "  node tools/teslausb-config.js generate VALUES.json [OUTPUT.conf]",
+    "  node tools/teslausb-config.js migrate CONFIG.conf [OUTPUT.json]",
     "  node tools/teslausb-config.js preflight CONFIG.conf",
     "  node tools/teslausb-config.js sanitize CONFIG.conf [SANITIZED.conf]",
     "",
@@ -504,7 +822,7 @@ function usage() {
 
 function main(argv) {
   const [command, inputPath, outputPath] = argv;
-  if (!command || !inputPath || !["generate", "preflight", "sanitize"].includes(command)) {
+  if (!command || !inputPath || !["generate", "migrate", "preflight", "sanitize"].includes(command)) {
     process.stderr.write(`${usage()}\n`);
     return 2;
   }
@@ -518,6 +836,10 @@ function main(argv) {
   }
   if (command === "sanitize") {
     writeNewFile(outputPath || "-", sanitizeConfig(readText(inputPath)));
+    return 0;
+  }
+  if (command === "migrate") {
+    writeNewFile(outputPath || "-", migrateConfig(readText(inputPath)));
     return 0;
   }
   const result = preflightConfig(readText(inputPath));
@@ -536,8 +858,10 @@ if (require.main === module) {
 
 module.exports = {
   bashQuote,
+  declarativeSchema,
   decodeLiteral,
   generateConfig,
+  migrateConfig,
   parseConfig,
   preflightConfig,
   sanitizeConfig

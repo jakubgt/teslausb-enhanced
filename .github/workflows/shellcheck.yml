@@ -27,7 +27,9 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
           ./check.sh
       - name: Compile Python helpers
-        run: python3 -m compileall -q ./run
+        run: >-
+          python3 -m compileall -q ./run ./tests
+          ./pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py
       - name: Run Python helper tests
         run: python3 -m unittest discover -s ./tests -p 'test_*.py' -v
       - name: Compile the FUSE helper
@@ -56,7 +58,12 @@ jobs:
           bash ./tests/ble-artifact-test.sh
           bash ./tests/runtime-qol-test.sh
           bash ./tests/dependency-strategy-test.sh
+          bash ./tests/gadget-repair-test.sh
+          bash ./tests/prepare-image-test.sh
+          sudo bash ./tests/declarative-config-test.sh
+          sudo bash ./tests/encrypted-clips-test.sh
           sudo bash ./tests/setup-security-test.sh
+          bash ./tests/transactional-upgrade-test.sh
           bash ./tests/web-config-security-test.sh
       - name: Run JavaScript helper tests
         run: >-

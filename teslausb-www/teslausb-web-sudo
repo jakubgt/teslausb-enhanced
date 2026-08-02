@@ -16,6 +16,7 @@ export LC_ALL
 umask 077
 
 readonly setup_variables='/root/teslausb_setup_variables.conf'
+readonly declarative_setup='/root/teslausb_setup.json'
 TESLA_BLE_VIN=
 
 usage_error() {
@@ -59,16 +60,45 @@ parse_ble_vin_line() {
 
 read_ble_vin() {
   local line
+  local helper
+  local raw_vin
 
   TESLA_BLE_VIN=
-  while IFS= read -r line
-  do
-    if [[ "$line" == 'export TESLA_BLE_VIN='* ]]
+  if [[ -e "$declarative_setup" ]]
+  then
+    if [[ -L "$declarative_setup" || ! -f "$declarative_setup" ||
+          "$(stat -c '%u:%g:%a' -- "$declarative_setup")" != 0:0:600 ]]
     then
-      parse_ble_vin_line "$line" || true
-      break
+      printf 'teslausb-web-sudo: declarative setup file is not protected as root:root 0600\n' >&2
+      return 1
     fi
-  done < "$setup_variables"
+    helper=
+    for helper in /root/bin/teslausb_config.py /usr/local/lib/teslausb/teslausb_config.py
+    do
+      [[ -x "$helper" ]] && break
+      helper=
+    done
+    if [[ -z "$helper" ]]
+    then
+      printf 'teslausb-web-sudo: declarative configuration validator is unavailable\n' >&2
+      return 1
+    fi
+    raw_vin=$("$helper" get-ble-vin "$declarative_setup") || return 1
+    if [[ "$raw_vin" =~ ^[A-HJ-NPR-Z0-9a-hj-npr-z]{17}$ ]]
+    then
+      TESLA_BLE_VIN="${raw_vin^^}"
+    fi
+  elif [[ -f "$setup_variables" && ! -L "$setup_variables" ]]
+  then
+    while IFS= read -r line
+    do
+      if [[ "$line" == 'export TESLA_BLE_VIN='* ]]
+      then
+        parse_ble_vin_line "$line" || true
+        break
+      fi
+    done < "$setup_variables"
+  fi
 
   if [[ -z "$TESLA_BLE_VIN" ]]
   then
@@ -128,10 +158,19 @@ case "$1" in
     run_reboot
     ;;
   gadget-enable)
+    unset TESLAUSB_GADGET_LOCK_HELD
     exec /root/bin/enable_gadget.sh
     ;;
   gadget-disable)
+    unset TESLAUSB_GADGET_LOCK_HELD
     exec /root/bin/disable_gadget.sh
+    ;;
+  gadget-repair)
+    unset TESLAUSB_REPAIR_ALLOW_TEST_OVERRIDES TESLAUSB_BACKINGFILES_ROOT \
+      TESLAUSB_REPAIR_RUN_DIR TESLAUSB_ENABLE_GADGET \
+      TESLAUSB_DISABLE_GADGET TESLAUSB_UDC_CLASS TESLAUSB_CONFIGFS_ROOT \
+      TESLAUSB_GADGET_LOCK_HELD
+    exec /root/bin/repair_gadget.sh
     ;;
   ble-configured)
     ble_is_configured

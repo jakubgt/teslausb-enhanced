@@ -44,6 +44,7 @@ shellcheck --exclude=SC1091 \
            ./setup/pi/setup-teslausb \
            ./setup/pi/configure-web.sh \
            ./setup/pi/install-tesla-ble-artifact.sh \
+           ./setup/pi/transactional-upgrade.sh \
            ./pi-gen-sources/00-teslausb-tweaks/files/rc.local \
            ./run/archiveloop \
            ./run/auto.teslausb \
@@ -56,10 +57,14 @@ shellcheck --exclude=SC1091 \
            ./run/cifs_archive/verify-and-configure-archive.sh \
            ./run/cifs_archive/archive-clips.sh \
            ./run/copy-music.sh \
+           ./run/detect_encrypted_clips.sh \
+           ./run/guarded_snapshot.sh \
            ./run/force_sync.sh \
            ./run/make_snapshot.sh \
            ./run/mountimage \
            ./run/mountoptsforimage \
+           ./run/repair_gadget.sh \
+           ./run/snapshot_contains_encrypted_clips.sh \
            ./run/remountfs_rw \
            ./run/send-push-message \
            ./run/nfs_archive/archive-clips.sh \
@@ -82,6 +87,7 @@ shellcheck --exclude=SC1091 \
            ./teslausb-www/html/cgi-bin/pairBLEkey.sh \
            ./teslausb-www/html/cgi-bin/randomdata.sh \
            ./teslausb-www/html/cgi-bin/reboot.sh \
+           ./teslausb-www/html/cgi-bin/repairgadget.sh \
            ./teslausb-www/html/cgi-bin/reload.sh \
            ./teslausb-www/html/cgi-bin/rm.sh \
            ./teslausb-www/html/cgi-bin/status.sh \
@@ -93,9 +99,14 @@ shellcheck --exclude=SC1091 \
            ./tests/archive-common-test.sh \
            ./tests/ble-artifact-test.sh \
            ./tests/copy-music-test.sh \
+           ./tests/declarative-config-test.sh \
            ./tests/dependency-strategy-test.sh \
+           ./tests/encrypted-clips-test.sh \
+           ./tests/gadget-repair-test.sh \
            ./tests/make-snapshot-failure-test.sh \
            ./tests/mount-helpers-test.sh \
+           ./tests/prepare-image-test.sh \
            ./tests/runtime-qol-test.sh \
            ./tests/setup-security-test.sh \
+           ./tests/transactional-upgrade-test.sh \
            ./tests/web-config-security-test.sh

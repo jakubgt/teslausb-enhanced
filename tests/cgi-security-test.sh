@@ -115,6 +115,21 @@ response="$(run_api GET '/api/v1/capabilities')"
 assert_contains 'the v1 capability endpoint is available' "$response" 'Status: 200 OK'
 assert_contains 'v1 responses advertise their version' "$response" 'X-TeslaUSB-API-Version: 1'
 assert_contains 'the capability document requires POST mutations' "$response" '"mutations": "POST"'
+assert_contains 'the capability document advertises manual gadget repair' "$response" '"drives/repair"'
+
+response="$(run_api GET '/api/v1/actions/drives/repair')"
+assert_contains 'manual gadget repair rejects GET requests' "$response" 'Status: 405 Method Not Allowed'
+
+mkdir -p "$test_dir/fake-sudo"
+# shellcheck disable=SC2016 # These lines form an isolated fixture executable.
+printf '%s\n' \
+  '#!/bin/sh' \
+  '[ "$*" = "-n /usr/local/sbin/teslausb-web-sudo gadget-repair" ] || exit 99' \
+  'printf "fixture repair completed\n"' > "$test_dir/fake-sudo/sudo"
+chmod +x "$test_dir/fake-sudo/sudo"
+response="$(PATH="$test_dir/fake-sudo:$PATH" run_api POST '/api/v1/actions/drives/repair')"
+assert_contains 'manual gadget repair accepts a protected POST request' "$response" 'Status: 200 OK'
+assert_contains 'manual gadget repair returns a structured success' "$response" '"ok":true'
 
 response="$(GATEWAY_INTERFACE=CGI/1.1 HTTP_HOST=teslausb.local \
   REQUEST_METHOD=GET PATH_INFO=/api/v1/speed-test QUERY_STRING=31 \

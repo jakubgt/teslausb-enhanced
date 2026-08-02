@@ -169,6 +169,74 @@ function retry () {
   return
 }
 
+encrypted_warning_logged=false
+function update_encrypted_clip_status () {
+  local detector=/root/bin/detect_encrypted_clips.sh
+  local latest_snapshot=
+  local status
+  local -a search_roots=(/mnt/cam/TeslaCam /mutable/TeslaCam)
+  if [ ! -x "$detector" ]
+  then
+    return
+  fi
+  latest_snapshot=$(find /backingfiles/snapshots -mindepth 2 -maxdepth 2 \
+    -type l -name mnt -printf '%p\n' 2>/dev/null | sort | tail -n 1)
+  if [ -n "$latest_snapshot" ]
+  then
+    search_roots+=("$latest_snapshot/TeslaCam")
+  fi
+  if ! status="$("$detector" --status-file \
+      /mutable/teslausb/encrypted-clips-status.json "${search_roots[@]}")"
+  then
+    log "Failed to update encrypted-clip detection status"
+    return
+  fi
+  if [[ "$status" == *'"detected":true'* ]]
+  then
+    if [ "$encrypted_warning_logged" = false ]
+    then
+      log "WARNING: Tesla EncryptedClips detected. TeslaUSB will not decrypt, archive, play, or clean those clips."
+      encrypted_warning_logged=true
+    fi
+  else
+    encrypted_warning_logged=false
+  fi
+}
+
+# Return 75 when an encrypted-clip directory intentionally blocks snapshot
+# creation or another gadget operation owns the lock. Other non-zero statuses
+# are operational failures. The external helper owns the shared gadget lock
+# across disconnect, the live directory-entry check, unmount verification, and
+# the raw block-level snapshot.
+function prepare_camera_snapshot () {
+  local snapshot_mode="${1:-}"
+  local snapshot_status=0
+  local -a snapshot_args=(--leave-disconnected)
+
+  if [ -n "$snapshot_mode" ]
+  then
+    snapshot_args+=("$snapshot_mode")
+  fi
+  /root/bin/guarded_snapshot.sh "${snapshot_args[@]}" || snapshot_status=$?
+  case "$snapshot_status" in
+    0)
+      update_encrypted_clip_status
+      ;;
+    75)
+      if [ "$encrypted_warning_logged" = false ]
+      then
+        log "WARNING: Tesla EncryptedClips may be present or another gadget operation is active; camera snapshot and camera-clip archiving skipped"
+        encrypted_warning_logged=true
+      fi
+      return 75
+      ;;
+    *)
+      log "Guarded camera snapshot failed; camera-clip archiving skipped"
+      return "$snapshot_status"
+      ;;
+  esac
+}
+
 function ensure_mountpoint_is_mounted () {
   local mount_point="$1"
 
@@ -393,19 +461,26 @@ function clean_cam_mount {
 
   log "cleaning cam mount"
   ensure_cam_file_is_mounted
+  update_encrypted_clip_status
 
   # Delete the files that fsck "recovered". These are generally files
   # that were deleted previously by the car or teslausb
-  find "${CAM_MOUNT}" \( \( -type f -name FSCK\*.REC \) -o \( -type f -name "*~[0-9].MP4" \) \) -print0 | xargs -0 rm -rf
+  find "${CAM_MOUNT}" ! -path "${CAM_MOUNT}/TeslaCam/EncryptedClips/*" \
+    \( \( -type f -name FSCK\*.REC \) -o \( -type f -name "*~[0-9].MP4" \) \) \
+    -print0 | xargs -0 rm -rf
 
   # Delete short recordings
-  (cd "${CAM_MOUNT}"; find . -type f -name \*.mp4 -size -100000c -printf '%P\n' ) | xargs rm -rf
+  (cd "${CAM_MOUNT}"; find . -type f -name \*.mp4 \
+    ! -path './TeslaCam/EncryptedClips/*' -size -100000c -printf '%P\n' ) | xargs rm -rf
 
   if [ "$mode" = "freespace" ]
   then
     # Remove files, oldest first, until there is at least 20GB of free space
  
-    (cd "${CAM_MOUNT}"; find . -type f -a \( -path './TeslaCam/*' -o -path './TeslaTrackMode/*' \) -printf '%P\0') > /tmp/rmcandidates.txt
+    (cd "${CAM_MOUNT}"; find . -type f \
+      ! -path './TeslaCam/EncryptedClips/*' \
+      -a \( -path './TeslaCam/*' -o -path './TeslaTrackMode/*' \) \
+      -printf '%P\0') > /tmp/rmcandidates.txt
     if [ -s /tmp/rmcandidates.txt ]
     then
       (cd "${CAM_MOUNT}"; xargs -a /tmp/rmcandidates.txt -0 ls -cr1) > /tmp/rmcandidatesbytime.txt
@@ -435,6 +510,30 @@ function clean_cam_mount {
   unmount_cam_file
 
   log "done cleaning cam mount"
+}
+
+function create_archive_trigger_file () {
+  local destination_dir="$1"
+  local trigger_name="$2"
+  local relative_prefix="$3"
+  local trigger_list="$4"
+
+  if [ -z "$trigger_name" ] || [ "$trigger_name" = . ] ||
+     [ "$trigger_name" = .. ] || [[ "$trigger_name" == */* ]] ||
+     [[ "$trigger_name" == *\\* ]]
+  then
+    log "Skipping unsafe trigger filename"
+    return 1
+  fi
+  case "$trigger_name" in
+    *$'\n'*|*$'\r'*|*$'\t'*)
+      log "Skipping trigger filename containing a control character"
+      return 1
+      ;;
+  esac
+
+  touch -- "$destination_dir/$trigger_name"
+  printf '%s%s\n' "$relative_prefix" "$trigger_name" >> "$trigger_list"
 }
 
 # Directory structure car uses:
@@ -468,10 +567,19 @@ function archive_teslacam_clips () {
   mount -t overlay overlay -o "lowerdir=$overlaylower,upperdir=$overlayupper,workdir=$overlaywork" "$overlaymerged"
 
   # Build list of the files to be archived.
-  local -r sentrylist=/tmp/sentry_files
-  local -r sentrylist_archived=/tmp/sentry_files_archived
+  local candidate_work_dir
+  if ! candidate_work_dir=$(mktemp -d \
+      "${ARCHIVE_WORK_ROOT:-/tmp}/teslausb-archive-candidates.XXXXXX")
+  then
+    log "Could not create a private archive candidate directory"
+    umount "$overlaymerged" || log "Failed to unmount archive overlay after candidate setup error"
+    return 1
+  fi
+  chmod 0700 "$candidate_work_dir"
+  local -r sentrylist="$candidate_work_dir/sentry_files"
+  local -r sentrylist_archived="$candidate_work_dir/sentry_files_archived"
   local -r sentrylist_previously_archived=/mutable/sentry_files_archived
-  local -r ignorelist=/tmp/ignore_files
+  local -r ignorelist="$candidate_work_dir/ignore_files"
 
   # Find files by name only. Don't follow the symlinks yet, since that
   # would cause all snapshots to be mounted.
@@ -497,6 +605,7 @@ function archive_teslacam_clips () {
   then
     recentclipsopt=("-o" "-path" "./RecentClips/*")
   fi
+  true > "$sentrylist"
   (cd "$overlaylower"; find . \( \( "${savedclipsopt[@]}" "${sentryclipsopt[@]}" "${trackmodeclipsopt[@]}" "${recentclipsopt[@]}" \) -type l \) \
         -a -fprintf "$sentrylist" '%P\n')
 
@@ -521,7 +630,7 @@ function archive_teslacam_clips () {
     (cd "$overlaymerged"; xargs -a "${sentrylist}" echo "find -L" | while read -r line
         do
           eval "$line \( -name \*.mp4 -a -size -100000c -printf '%p\n' \)"
-        done) > ${ignorelist}
+        done) > "${ignorelist}"
   else
     true > "${ignorelist}"
   fi
@@ -531,6 +640,17 @@ function archive_teslacam_clips () {
 
   # apply custom removals/additions
   filterfile "${sentrylist}"
+  # Re-apply the built-in boundary after the trusted root archive-filter hook.
+  # The helper resolves candidate symlinks without opening recording contents,
+  # and removes literal or aliased paths that reach EncryptedClips.
+  if ! /root/bin/detect_encrypted_clips.sh --prune-archive-list "$sentrylist" \
+      --archive-root "$overlaymerged"
+  then
+    log "Failed to enforce the EncryptedClips archive exclusion"
+    rm -rf -- "$candidate_work_dir"
+    umount "$overlaymerged" || log "Failed to unmount archive overlay after policy error"
+    return 1
+  fi
 
   local -r sentry_count=$(grep -c -v TeslaTrackMode "$sentrylist")
   local -r trackmode_count=$(grep -c TeslaTrackMode "$sentrylist")
@@ -569,6 +689,8 @@ function archive_teslacam_clips () {
         0 0 0 0 'Could not create a private archive work directory' \
         || log 'Failed to update archive status'
       log 'Could not create a private archive work directory'
+      rm -rf -- "$candidate_work_dir"
+      umount "$overlaymerged" || log "Failed to unmount archive overlay after work-directory error"
       return 1
     fi
     archive_error_log="$archive_run_dir/archive-error.log"
@@ -581,6 +703,7 @@ function archive_teslacam_clips () {
         0 0 0 0 'A recording changed while the archive manifest was created' \
         || log 'Failed to update archive status'
       rm -rf -- "$archive_run_dir"
+      rm -rf -- "$candidate_work_dir"
       umount "$overlaymerged" || log "Failed to unmount archive overlay after manifest error"
       return 1
     fi
@@ -615,23 +738,23 @@ function archive_teslacam_clips () {
     true > "${triggerlist}"
     if [ -n "${TRIGGER_FILE_SAVED+x}" ]
     then
-      touch "${triggerdir}/SavedClips/${TRIGGER_FILE_SAVED}"
-      echo "SavedClips/${TRIGGER_FILE_SAVED}" >> "${triggerlist}"
+      create_archive_trigger_file "$triggerdir/SavedClips" \
+        "$TRIGGER_FILE_SAVED" 'SavedClips/' "$triggerlist"
     fi
     if [ -n "${TRIGGER_FILE_SENTRY+x}" ]
     then
-      touch "${triggerdir}/SentryClips/${TRIGGER_FILE_SENTRY}"
-      echo "SentryClips/${TRIGGER_FILE_SENTRY}" >> "${triggerlist}"
+      create_archive_trigger_file "$triggerdir/SentryClips" \
+        "$TRIGGER_FILE_SENTRY" 'SentryClips/' "$triggerlist"
     fi
     if [ -n "${TRIGGER_FILE_RECENT+x}" ]
     then
-      touch "${triggerdir}/RecentClips/${TRIGGER_FILE_RECENT}"
-      echo "RecentClips/${TRIGGER_FILE_RECENT}" >> "${triggerlist}"
+      create_archive_trigger_file "$triggerdir/RecentClips" \
+        "$TRIGGER_FILE_RECENT" 'RecentClips/' "$triggerlist"
     fi
     if [ -n "${TRIGGER_FILE_ANY+x}" ]
     then
-      touch "${triggerdir}/${TRIGGER_FILE_ANY}"
-      echo "${TRIGGER_FILE_ANY}" >> "${triggerlist}"
+      create_archive_trigger_file "$triggerdir" \
+        "$TRIGGER_FILE_ANY" '' "$triggerlist"
     fi
 
     export ARCHIVE_ERROR_LOG="$archive_error_log"
@@ -664,7 +787,7 @@ function archive_teslacam_clips () {
         esac
         echo "$line" >> "${sentrylist_archived}"
       fi
-    done < ${sentrylist}
+    done < "${sentrylist}"
 
     # copy the list of archived files back to /mutable if it has changed
     if ! diff -q -N "${sentrylist_archived}" "${sentrylist_previously_archived}" > /dev/null
@@ -715,6 +838,7 @@ function archive_teslacam_clips () {
 
   # overlayfs behavior is undefined if the lower is changed while the overlay is active, so umount first
   umount "$overlaymerged"
+  rm -rf -- "$candidate_work_dir"
 
   if archive_is_reachable
   then
@@ -747,6 +871,8 @@ function has_cam_disk () {
 }
 
 function archive_clips () {
+  local camera_archive_allowed="${1:-true}"
+
   log "Archiving..."
 
   if ! /root/bin/connect-archive.sh
@@ -758,6 +884,9 @@ function archive_clips () {
   if ! has_cam_disk
   then
     log "Skipping archiving (no cam disk)"
+  elif [ "$camera_archive_allowed" != true ]
+  then
+    log "Skipping camera clip archiving because the live camera was not safe to snapshot"
   elif archive_teslacam_clips
   then
     log "Finished archiving."
@@ -825,7 +954,13 @@ function snapshotloop {
   do
     sleep "${SNAPSHOT_INTERVAL:-3480}"
     /root/bin/waitforidle || true
-    /root/bin/make_snapshot.sh
+    local snapshot_status=0
+    prepare_camera_snapshot || snapshot_status=$?
+    if [ "$snapshot_status" -ne 0 ] && [ "$snapshot_status" -ne 75 ]
+    then
+      log "Background camera snapshot failed with status $snapshot_status"
+    fi
+    connect_usb_drives_to_host || log "Failed to reconnect USB drives after background snapshot check"
   done
 }
 
@@ -945,10 +1080,16 @@ fix_errors_in_images
 # always remove files that fsck recoverd
 clean_cam_mount boot
 
+camera_archive_allowed=true
 if has_cam_disk
 then
   # don't need another fsck because fix_errors_in_images already did that
-  /root/bin/make_snapshot.sh nofsck
+  snapshot_status=0
+  prepare_camera_snapshot nofsck || snapshot_status=$?
+  if [ "$snapshot_status" -ne 0 ]
+  then
+    camera_archive_allowed=false
+  fi
 fi
 
 connect_usb_drives_to_host
@@ -961,7 +1102,7 @@ then
 
   /root/bin/awake_start || true
 
-  archive_clips
+  archive_clips "$camera_archive_allowed"
 
   /root/bin/awake_stop || true
 
@@ -986,13 +1127,20 @@ do
 
   sleep "${ARCHIVE_DELAY:-20}"
 
-  # take a snapshot before archive_clips starts deleting files
+  # Inspect the mounted live camera before taking a snapshot. EncryptedClips
+  # blocks both snapshot creation and archive processing for this cycle.
+  camera_archive_allowed=true
   if has_cam_disk
   then
-    /root/bin/make_snapshot.sh
+    snapshot_status=0
+    prepare_camera_snapshot || snapshot_status=$?
+    if [ "$snapshot_status" -ne 0 ]
+    then
+      camera_archive_allowed=false
+    fi
   fi
 
-  archive_clips
+  archive_clips "$camera_archive_allowed"
 
   /root/bin/awake_stop || true
 

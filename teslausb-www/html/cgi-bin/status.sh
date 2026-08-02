@@ -111,6 +111,31 @@ then
   fi
 fi
 
+encrypted_status_file="${ENCRYPTED_CLIPS_STATUS_FILE:-/mutable/teslausb/encrypted-clips-status.json}"
+encrypted_status_json='{"schema_version":1,"detected":false,"locations":0,"checked_at":"","message":"Encrypted-clip detection has not run yet.","available":false}'
+if [[ -f "$encrypted_status_file" && ! -L "$encrypted_status_file" ]]
+then
+  encrypted_uid="$(stat --format='%u' -- "$encrypted_status_file" 2>/dev/null || true)"
+  encrypted_mode="$(stat --format='%a' -- "$encrypted_status_file" 2>/dev/null || true)"
+  encrypted_size="$(stat --format='%s' -- "$encrypted_status_file" 2>/dev/null || true)"
+  if [[ "$encrypted_uid" == 0 && "$encrypted_mode" =~ ^[0-7]{3,4}$ &&
+        "$encrypted_size" =~ ^[0-9]+$ ]] &&
+     (( (8#$encrypted_mode & 022) == 0 && encrypted_size <= 8192 ))
+  then
+    encrypted_candidate="$(<"$encrypted_status_file")"
+    if [[ "$encrypted_candidate" == \{*\} &&
+          "$encrypted_candidate" == *'"schema_version":1'* &&
+          "$encrypted_candidate" == *'"detected":'* &&
+          "$encrypted_candidate" == *'"locations":'* &&
+          "$encrypted_candidate" == *'"checked_at":'* &&
+          "$encrypted_candidate" == *'"message":'* ]]
+    then
+      encrypted_status_json="${encrypted_candidate%\}}"
+      encrypted_status_json+=',"available":true}'
+    fi
+  fi
+fi
+
 cgi_json_quote "$cpu_temp"; cpu_temp_json="$CGI_JSON"
 cgi_json_quote "$fan_speed"; fan_speed_json="$CGI_JSON"
 cgi_json_quote "$external_5v"; external_5v_json="$CGI_JSON"
@@ -151,6 +176,7 @@ cat << EOF
    "wifi_ip": $wifi_ip_json,
    "ether_ip": $ether_ip_json,
    "ether_speed": $ether_speed_json,
-   "archive_status": $archive_status_json
+   "archive_status": $archive_status_json,
+   "encrypted_clips": $encrypted_status_json
 }
 EOF

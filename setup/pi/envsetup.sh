@@ -86,6 +86,22 @@ function safesource {
   source "$setup_config"
 }
 
+TESLAUSB_CONFIG_LOADER_LOADED=false
+for teslausb_loader_candidate in \
+  "$(dirname "${BASH_SOURCE[0]}")/teslausb-config-loader.sh" \
+  /root/bin/teslausb-config-loader.sh \
+  /usr/local/lib/teslausb/teslausb-config-loader.sh
+do
+  if [ -r "$teslausb_loader_candidate" ]
+  then
+    # shellcheck source=/dev/null
+    source "$teslausb_loader_candidate"
+    TESLAUSB_CONFIG_LOADER_LOADED=true
+    break
+  fi
+done
+unset teslausb_loader_candidate
+
 function validate_source_coordinates {
   local ref_component
   local -a ref_components=()
@@ -125,17 +141,31 @@ function validate_teslausb_hostname {
 }
 
 function read_setup_variables {
-  if [ -z "${setup_file+x}" ]
+  local selected_setup_file
+  if [ -n "${setup_file+x}" ]
   then
-    local -r setup_file=/root/teslausb_setup_variables.conf
-  fi
-  if [ -e "$setup_file" ]
+    selected_setup_file="$setup_file"
+  elif [ -e /root/teslausb_setup.json ]
   then
-    # "shellcheck" doesn't realize setup_file is effectively a constant
-    # shellcheck disable=SC1090
-    safesource "$setup_file"
+    selected_setup_file=/root/teslausb_setup.json
   else
-    echo "couldn't find $setup_file"
+    selected_setup_file=/root/teslausb_setup_variables.conf
+  fi
+  if [ -e "$selected_setup_file" ]
+  then
+    if [ "$TESLAUSB_CONFIG_LOADER_LOADED" = true ]
+    then
+      teslausb_load_config "$selected_setup_file"
+    elif [[ "$selected_setup_file" = *.conf ]]
+    then
+      setup_config_message "WARNING: declarative config loader unavailable; using deprecated legacy shell configuration."
+      safesource "$selected_setup_file"
+    else
+      setup_config_message "STOP: declarative config loader unavailable for $selected_setup_file."
+      return 1
+    fi
+  else
+    echo "couldn't find $selected_setup_file"
     return 1
   fi
 

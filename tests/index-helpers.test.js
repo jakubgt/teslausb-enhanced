@@ -43,6 +43,10 @@ vm.runInContext(
   context
 );
 vm.runInContext(
+  extractBetween("function renderEncryptedClipStatus", "var statusvals"),
+  context
+);
+vm.runInContext(
   extractBetween("function parseVideoListResponse", "readfile({url:'/api/v1/videos'"),
   context
 );
@@ -82,6 +86,60 @@ assert.equal(
   context.archiveStatusView({archive_status: {available: false}}).state,
   "unavailable");
 
+const encryptedView = context.encryptedClipStatusView({
+  encrypted_clips: {
+    available: true,
+    schema_version: 1,
+    detected: true,
+    locations: 1,
+    message: "server-provided text is not rendered"
+  }
+});
+assert.equal(encryptedView.visible, true);
+assert.match(encryptedView.message, /leaves these recordings untouched/);
+assert.doesNotMatch(encryptedView.message, /server-provided/);
+assert.equal(
+  context.encryptedClipStatusView({
+    encrypted_clips: {available: true, schema_version: 1, detected: false}
+  }).visible,
+  false);
+assert.equal(
+  context.encryptedClipStatusView({
+    encrypted_clips: {available: false, schema_version: 1, detected: true}
+  }).visible,
+  false);
+assert.equal(
+  context.encryptedClipStatusView({
+    encrypted_clips: {available: true, schema_version: 2, detected: true}
+  }).visible,
+  true,
+  "a positive detection remains fail-safe across status schema updates");
+
+const encryptedMessage = {textContent: ""};
+const encryptedContainer = {
+  hidden: true,
+  querySelector(selector) {
+    assert.equal(selector, ".status_encrypted_message");
+    return encryptedMessage;
+  }
+};
+context.document = {
+  querySelector(selector) {
+    assert.equal(selector, ".status_encrypted");
+    return encryptedContainer;
+  }
+};
+context.renderEncryptedClipStatus({
+  encrypted_clips: {available: true, schema_version: 1, detected: true}
+});
+assert.equal(encryptedContainer.hidden, false);
+assert.match(encryptedMessage.textContent, /cannot archive or play/);
+context.renderEncryptedClipStatus({
+  encrypted_clips: {available: true, schema_version: 1, detected: false}
+});
+assert.equal(encryptedContainer.hidden, true);
+assert.equal(encryptedMessage.textContent, "");
+
 assert.deepEqual(
   Array.from(context.parseVideoListResponse('{"videos":["SavedClips/a/front.mp4"]}')),
   ["SavedClips/a/front.mp4"]);
@@ -96,6 +154,11 @@ assert.match(
 );
 assert.doesNotMatch(inlineScript, /callcgi\(['"]cgi-bin\//, "mutations must not call legacy CGI routes");
 assert.doesNotMatch(html, /cgi-bin\//, "the bundled dashboard must use versioned API routes");
+assert.match(inlineScript, /callcgi\('\/api\/v1\/actions\/drives\/repair', \{timeout:60000\}\)/);
+assert.match(inlineScript, /Confirm USB gadget repair/);
+assert.match(html, /id="repairgadgettext" role="status" aria-live="polite"/);
+assert.match(html, /class="status_encrypted" hidden role="alert"/);
+assert.match(inlineScript, /renderEncryptedClipStatus\(statusvals\)/);
 assert.match(inlineScript, /fetch\('\/api\/v1\/speed-test\?' \+ SPEED_TEST_SECONDS/);
 assert.match(diagnosticsHtml, /fetchWithTimeout\("\/api\/v1\/actions\/diagnostics",\s*\{\s*method: "POST"/);
 assert.match(diagnosticsHtml, /"X-TeslaUSB-Request": "1"/);

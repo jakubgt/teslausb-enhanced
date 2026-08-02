@@ -149,5 +149,5 @@ cat <<- EOF > /etc/samba/smb.conf
 	   create mask = 0775
 	   veto files = /._*/.DS_Store/
 	   delete veto files = yes
-	   root preexec = /root/bin/make_snapshot.sh
+	   root preexec = /root/bin/guarded_snapshot.sh
 	EOF
