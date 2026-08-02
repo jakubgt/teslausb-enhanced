@@ -5,7 +5,7 @@ set -eu
 BASH_BIN="${BASH_BIN:-$BASH}"
 readonly BASH_BIN
 
-TEST_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+TEST_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly TEST_DIR
 REPO_ROOT=$(dirname "$TEST_DIR")
 readonly REPO_ROOT

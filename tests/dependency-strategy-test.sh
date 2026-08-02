@@ -18,6 +18,7 @@ grep -F "matrix-nio==0.24.0" "$CONFIGURE" > /dev/null \
   || fail 'Matrix dependency is not pinned'
 grep -F 'python3 -m venv' "$CONFIGURE" > /dev/null \
   || fail 'isolated Python environment is not used'
+# shellcheck disable=SC2016 # The assertion intentionally searches literal shell source.
 grep -F -- '--retries "${PIP_RETRIES:-3}" --timeout "${PIP_TIMEOUT_SECONDS:-30}"' \
   "$CONFIGURE" > /dev/null || fail 'Python dependency installation is not bounded'
 if grep -F 'EXTERNALLY-MANAGED' "$CONFIGURE" > /dev/null
@@ -43,6 +44,7 @@ then
 fi
 grep -F 'unsupported archive member type' "$BLE_INSTALLER" > /dev/null \
   || fail 'BLE archive member types are not validated'
+# shellcheck disable=SC2016 # The assertion intentionally searches literal shell source.
 grep -F -- '--max-filesize "$artifact_max_bytes"' "$BLE_INSTALLER" > /dev/null \
   || fail 'BLE artifact download size is not bounded'
 grep -F 'tesla-vehicle-command-current' "$BLE_INSTALLER" > /dev/null \

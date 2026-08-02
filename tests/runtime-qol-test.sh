@@ -102,8 +102,10 @@ then
   cat "$TEST_TMP/killall.txt" >&2
   fail 'runtime scripts still use process-global killall'
 fi
+# shellcheck disable=SC2016 # The assertion intentionally searches literal shell source.
 grep -F -- '--timeout="${MUSIC_RSYNC_TIMEOUT:-60}"' "$REPO_ROOT/run/copy-music.sh" > /dev/null \
   || fail 'music rsync lacks an I/O timeout'
+# shellcheck disable=SC2016 # The assertion intentionally searches literal shell source.
 grep -F -- '--timeout="${ARCHIVE_RSYNC_TIMEOUT:-60}"' \
   "$REPO_ROOT/run/archive-rsync-local.sh" > /dev/null \
   || fail 'local archive rsync lacks an I/O timeout'
@@ -143,8 +145,10 @@ kill "$reused_pid" 2> /dev/null || true
 wait "$reused_pid" 2> /dev/null || true
 tracked_test_pids[1]=
 
+# shellcheck disable=SC2016 # The assertion intentionally searches literal shell source.
 grep -F 'source "$keep_awake_pid_helper"' "$REPO_ROOT/run/awake_start" > /dev/null \
   || fail 'awake_start does not use exact-process PID tracking'
+# shellcheck disable=SC2016 # The assertion intentionally searches literal shell source.
 grep -F 'source "$keep_awake_pid_helper"' "$REPO_ROOT/run/awake_stop" > /dev/null \
   || fail 'awake_stop does not use exact-process PID tracking'
 if grep -RFn '/tmp/keep_awake_task_pid' "$REPO_ROOT/run/awake_start" "$REPO_ROOT/run/awake_stop"

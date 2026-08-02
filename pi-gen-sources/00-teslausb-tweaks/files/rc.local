@@ -37,6 +37,7 @@ RC_LOCAL_TMPDIR="$(mktemp -d /tmp/teslausb-rc-local.XXXXXX)"
 readonly RC_LOCAL_TMPDIR
 chmod 0700 "$RC_LOCAL_TMPDIR"
 function cleanup_rc_local_tmpdir {
+  # shellcheck disable=SC2317 # Invoked by the EXIT trap.
   rm -rf -- "$RC_LOCAL_TMPDIR"
 }
 trap cleanup_rc_local_tmpdir EXIT
@@ -253,7 +254,13 @@ function safesource {
     error_strobe &
     exit 1
   }
-  if failure_output="$( ( set -eu; source "$setup_config" ) 2>&1 )"
+  if failure_output="$(
+    (
+      set -eu
+      # shellcheck disable=SC1090 # Path is validated and root-owned above.
+      source "$setup_config"
+    ) 2>&1
+  )"
   then
     :
   else
@@ -433,6 +440,7 @@ for rc_secret_name in WIFIPASS SSH_USER_PASSWORD SSH_ROOT_PUBLIC_KEY
 do
   if [[ -v $rc_secret_name ]]
   then
+    # shellcheck disable=SC2163 # The variable name is intentionally indirect.
     export -n "$rc_secret_name"
   fi
 done

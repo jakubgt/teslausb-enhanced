@@ -173,10 +173,11 @@ then
   exit 73
 fi
 archive_temp_dir=$(mktemp -d "$archive_temp_root/run.XXXXXX")
-[ ! -L "$archive_temp_dir" ] && [ -d "$archive_temp_dir" ] || {
+if [ -L "$archive_temp_dir" ] || [ ! -d "$archive_temp_dir" ]
+then
   write_archive_error "failed to create a private archive temporary directory"
   exit 73
-}
+fi
 archive_temp_dir_safe=true
 archive_temp_relative=".teslausbtmp/${archive_temp_dir##*/}"
 

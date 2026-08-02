@@ -170,7 +170,13 @@ function safesource {
   local failure_output
 
   secure_setup_config_file "$setup_config" || exit 1
-  if failure_output="$( ( set -eu; source "$setup_config" ) 2>&1 )"
+  if failure_output="$(
+    (
+      set -eu
+      # shellcheck disable=SC1090 # Path is validated and root-owned above.
+      source "$setup_config"
+    ) 2>&1
+  )"
   then
     :
   else
@@ -222,6 +228,7 @@ then
   do
     if [[ -v $setup_secret_name ]]
     then
+      # shellcheck disable=SC2163 # The variable name is intentionally indirect.
       export -n "$setup_secret_name"
     fi
   done

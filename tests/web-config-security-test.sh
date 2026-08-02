@@ -38,7 +38,9 @@ assert_count() {
 assert_count 1 'auth_basic off;' "$nginx_config"
 assert_count 1 'auth_basic_user_file /etc/nginx/.htpasswd;' "$nginx_config"
 assert_contains "$configure_web" 'WEB_USERNAME and WEB_PASSWORD must both be set'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_web" 'htpasswd -Bci "$htpasswd_tmp" "$WEB_USERNAME"'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_web" 'chmod 0640 "$htpasswd_tmp"'
 
 auth_validator_source="$(sed -n '/^validate_web_auth_config() {$/,/^}$/p' "$configure_web")"
@@ -80,6 +82,7 @@ then
 fi
 WEB_USERNAME=user
 WEB_PASSWORD='correct horse battery staple'
+# shellcheck disable=SC2034 # Variable is consumed by the extracted function.
 WEB_AUTH_DISABLED=false
 validate_web_auth_config
 if (WEB_USERNAME=user; WEB_PASSWORD=raspberry; validate_web_auth_config) 2>/dev/null
@@ -87,6 +90,7 @@ then
   echo "Auth validator accepted the default Raspberry Pi password" >&2
   exit 1
 fi
+# shellcheck disable=SC2034 # Variables are consumed by the extracted function.
 if (WEB_USERNAME=user; WEB_PASSWORD="$(printf 'x%.0s' {1..73})"; validate_web_auth_config) 2>/dev/null
 then
   echo "Auth validator accepted a bcrypt-truncated password" >&2
@@ -143,7 +147,9 @@ assert_contains "$nginx_config" 'add_header Cross-Origin-Resource-Policy "same-o
 # Host validation is server-wide (not just CGI), and the private IPv6 rules
 # require a literal colon so a public DNS name beginning with fd/fc/fe cannot
 # masquerade as a local address.
+# shellcheck disable=SC2016 # Assertions intentionally search literal nginx source.
 assert_contains "$nginx_config" 'map $host $teslausb_host_allowed {'
+# shellcheck disable=SC2016 # Assertions intentionally search literal nginx source.
 assert_contains "$nginx_config" 'if ($teslausb_host_allowed = 0) {'
 assert_contains "$nginx_config" '~^f[cd][0-9a-f:]*:[0-9a-f:]+$ 1;'
 if grep -Eq '^[[:space:]]*"?fd-attacker\.example' "$nginx_config"
@@ -153,11 +159,14 @@ then
 fi
 assert_contains "$nginx_config" 'location ~ ^/api/v1(?:/.*)?$ {'
 assert_contains "$nginx_config" 'fastcgi_param SCRIPT_FILENAME /var/www/html/cgi-bin/api-v1.sh;'
+# shellcheck disable=SC2016 # Assertions intentionally search literal nginx source.
 assert_contains "$nginx_config" 'fastcgi_param PATH_INFO $uri;'
 
 # External UI downloads are opt-in, release/checksum pinned, size-bounded, and
 # switched only after extraction into a content-addressed release directory.
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_web" 'local webui_release="${WEBUI_RELEASE:-}"'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_web" 'local webui_expected_sha256="${WEBUI_SHA256:-}"'
 assert_contains "$configure_web" 'requires both WEBUI_RELEASE and WEBUI_SHA256'
 assert_contains "$configure_web" '--max-filesize 67108864'
@@ -168,6 +177,7 @@ then
   exit 1
 fi
 assert_contains "$configure_web" 'webui_verification=sha256-pinned'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_web" 'mv -Tf "$webui_next_link" /var/www/html/new'
 assert_contains "$configure_web" '-path /var/www/html/new -prune'
 assert_contains "$configure_web" "find /var/www/html/cgi-bin -xdev -type f -name '*.sh' -exec chmod 0755"
@@ -179,8 +189,10 @@ for function_name in validate_ipv6_literal validate_ipv4_literal \
 do
   eval "$(sed -n "/^${function_name}() {$/,/^}$/p" "$configure_web")"
 done
+# shellcheck disable=SC2034 # Array is consumed by the extracted function.
 declare -a TESLAUSB_ALLOWED_WEB_HOSTS=()
 TESLAUSB_FASTCGI_ALLOWED_HOSTS=
+# shellcheck disable=SC2034 # Variable is consumed by the extracted function.
 TESLAUSB_HOSTNAME=teslausb
 unset WEB_ALLOWED_HOSTS
 prepare_allowed_web_hosts

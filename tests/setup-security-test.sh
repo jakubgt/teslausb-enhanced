@@ -43,6 +43,7 @@ do
 done
 for bad_branch in '../main' '/main' 'main/' 'main..evil' 'main?query' 'main//evil' '.hidden' 'main.lock'
 do
+  # shellcheck disable=SC2034 # Variables are consumed by the extracted function.
   if (REPO=marcone; BRANCH="$bad_branch"; validate_source_coordinates) 2>/dev/null
   then
     fail "source validator accepted BRANCH=$bad_branch"
@@ -53,6 +54,7 @@ TESLAUSB_HOSTNAME=teslausb-2
 validate_teslausb_hostname
 for bad_hostname in 'bad/name' 'bad&name' 'two.labels' '-leading' 'trailing-' ''
 do
+  # shellcheck disable=SC2034 # Variable is consumed by the extracted function.
   if (TESLAUSB_HOSTNAME="$bad_hostname"; validate_teslausb_hostname) 2>/dev/null
   then
     fail "hostname validator accepted $bad_hostname"
@@ -63,9 +65,11 @@ done
 # the final call immediately before wipefs. Device identification is
 # fail-closed and destructive conversion holds archiveloop's exact flock.
 assert_contains "$envsetup" 'STOP: TESLAUSB_HOSTNAME must be a single 1-63 character DNS label.'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$partition_script" 'DATA_DRIVE ($DATA_DRIVE) is not a block device.'
 assert_contains "$partition_script" 'unable to identify the disk containing the root filesystem.'
 assert_contains "$partition_script" 'exec {ARCHIVELOOP_LOCK_FD}< /root/bin/archiveloop'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$partition_script" 'flock -n "$ARCHIVELOOP_LOCK_FD"'
 assert_absent "$partition_script" 'killall archiveloop'
 assert_absent "$setup_script" 'killall archiveloop'
@@ -99,12 +103,16 @@ assert_contains "$rc_local" 'if ! validate_source_coordinates'
 # Wi-Fi and hostname values are passed as data, not interpolated into sed
 # programs. The plaintext passphrase comment produced by wpa_passphrase is
 # removed before either config copy is installed.
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'wpa_passphrase "$SSID"'
 assert_contains "$rc_local" "sed '/^[[:space:]]*#psk=/d'"
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_absent "$rc_local" '"$wpa_config" /teslausb/wpa_supplicant.conf'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'awk -v old="$old_host_name" -v new="$new_host_name"'
 assert_absent "$rc_local" 'TEMPSSID'
 assert_absent "$rc_local" 'TEMPPASS'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_absent "$setup_script" 'sed -i -e "s/$old_host_name/$new_host_name/g"'
 
 # No setup path may override apt authentication failures. Samba never creates
@@ -116,10 +124,14 @@ then
 fi
 assert_absent "$configure_samba" 'raspberry\nraspberry'
 assert_contains "$configure_samba" 'SAMBA_PASSWORD is required when SAMBA_GUEST is false.'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_samba" 'smbpasswd -s -a "$SAMBA_USER"'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_ssh" 'ssh-keygen -l -f "$authorized_keys_tmp"'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$configure_ssh" 'mv -fT -- "$authorized_keys_tmp" "$ssh_dir/authorized_keys"'
 assert_contains "$rc_local" 'SSH_USER_PASSWORD must be a non-default password of at least 12 bytes.'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'ssh-keygen -l -f "$authorized_keys_tmp"'
 
 # Checked-in CGI modes are normalized during every deployment, including API

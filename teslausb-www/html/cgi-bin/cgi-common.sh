@@ -490,8 +490,10 @@ cgi_resolve_path() {
   CGI_PATH="$resolved"
   if [[ "$resolved" == "$CGI_ROOT" ]]
   then
+    # shellcheck disable=SC2034 # Return value consumed by sourcing endpoints.
     CGI_RELATIVE_PATH='.'
   else
+    # shellcheck disable=SC2034 # Return value consumed by sourcing endpoints.
     CGI_RELATIVE_PATH="${resolved#"$CGI_ROOT"/}"
   fi
 }
@@ -542,6 +544,7 @@ cgi_html_escape() {
       *) output+="$character" ;;
     esac
   done
+  # shellcheck disable=SC2034 # Return value consumed by sourcing endpoints.
   CGI_ESCAPED="$output"
 }
 
@@ -559,7 +562,7 @@ cgi_json_quote() {
     character="${input:i:1}"
     case "$character" in
       '"') output+='\"' ;;
-      '\') output+='\\' ;;
+      \\) output+=$'\\\\' ;;
       $'\b') output+='\b' ;;
       $'\f') output+='\f' ;;
       $'\n') output+='\n' ;;

@@ -21,6 +21,9 @@ cleanup_diagnostics() {
 trap cleanup_diagnostics EXIT
 trap 'exit 1' HUP INT TERM
 
+# The unprivileged CGI process intentionally owns this private capture file;
+# sudo is needed only for the fixed diagnostics command.
+# shellcheck disable=SC2024
 if ! sudo -n /usr/local/sbin/teslausb-web-sudo diagnose > "$tempfile" 2>&1
 then
   cgi_error '500 Internal Server Error' 'Diagnostics generation failed.'
