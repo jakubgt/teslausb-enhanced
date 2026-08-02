@@ -1,0 +1,12 @@
+Cmnd_Alias TESLAUSB_WEB = /usr/local/sbin/teslausb-web-sudo diagnose, \
+    /usr/local/sbin/teslausb-web-sudo reboot, \
+    /usr/local/sbin/teslausb-web-sudo gadget-enable, \
+    /usr/local/sbin/teslausb-web-sudo gadget-disable, \
+    /usr/local/sbin/teslausb-web-sudo ble-configured, \
+    /usr/local/sbin/teslausb-web-sudo ble-status, \
+    /usr/local/sbin/teslausb-web-sudo ble-pair, \
+    /usr/local/sbin/teslausb-web-sudo pmic-ext5v, \
+    /usr/local/sbin/teslausb-web-sudo pmic-batt, \
+    /usr/local/sbin/teslausb-web-sudo get-throttled
+
+www-data ALL=(root) NOPASSWD: NOSETENV: TESLAUSB_WEB

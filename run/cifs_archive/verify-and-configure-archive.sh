@@ -2,6 +2,17 @@
 
 VERS_OPT=
 SEC_OPT=
+TMP_CREDENTIALS_FILE=
+
+function cleanup_credentials () {
+  if [ -n "$TMP_CREDENTIALS_FILE" ]
+  then
+    rm -f -- "$TMP_CREDENTIALS_FILE"
+    TMP_CREDENTIALS_FILE=
+  fi
+}
+
+trap cleanup_credentials EXIT
 
 function log_progress () {
   if declare -F setup_progress > /dev/null
@@ -31,14 +42,30 @@ function check_archive_server_reachable () {
 }
 
 function write_archive_configs_to {
-  (
-    echo "username=$SHARE_USER"
-    echo "password=$SHARE_PASSWORD"
+  local destination="$1"
+  local temporary
+  temporary=$(mktemp "${destination}.tmp.XXXXXX")
+  chmod 0600 "$temporary"
+
+  if ! (
+    printf 'username=%s\n' "$SHARE_USER"
+    printf 'password=%s\n' "$SHARE_PASSWORD"
     if [ -n "${SHARE_DOMAIN+x}" ]
     then
-      echo "domain=$SHARE_DOMAIN"
+      printf 'domain=%s\n' "$SHARE_DOMAIN"
     fi
-  ) > "$1"
+  ) > "$temporary"
+  then
+    rm -f -- "$temporary"
+    return 1
+  fi
+
+  if ! mv -f -- "$temporary" "$destination"
+  then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  chmod 0600 "$destination"
 }
 
 function check_archive_mountable () {
@@ -51,12 +78,14 @@ function check_archive_mountable () {
     mkdir "$test_mount_location"
   fi
 
-  local tmp_credentials_file_path="/tmp/teslaCamArchiveCredentials"
-  write_archive_configs_to "$tmp_credentials_file_path"
+  TMP_CREDENTIALS_FILE=$(mktemp /tmp/teslaCamArchiveCredentials.XXXXXX)
+  write_archive_configs_to "$TMP_CREDENTIALS_FILE"
 
   local mounted=false
   local try_versions="${CIFS_VERSION:-default 3.1.1 3.0 2.1 2.0 @@}"
   local try_secs="${CIFS_SEC:-@@ ntlmssp ntlmv2 ntlm}"
+  local -a mount_command=()
+  local commandline=
 
   echo "Trying all combinations of vers=($try_versions) and sec=($try_secs)"
   for vers in $try_versions
@@ -73,10 +102,20 @@ function check_archive_mountable () {
       then
         secopt="sec=$sec"
       fi
-      local commandline="mount -t cifs '//$1/$2' '$test_mount_location' -o '$3,credentials=${tmp_credentials_file_path},iocharset=utf8,file_mode=0777,dir_mode=0777,$versopt,$secopt'"
+      local mount_options="$3,credentials=${TMP_CREDENTIALS_FILE},iocharset=utf8,file_mode=0777,dir_mode=0777"
+      if [ -n "$versopt" ]
+      then
+        mount_options+=",$versopt"
+      fi
+      if [ -n "$secopt" ]
+      then
+        mount_options+=",$secopt"
+      fi
+      mount_command=(mount -t cifs "//$1/$2" "$test_mount_location" -o "$mount_options")
+      printf -v commandline '%q ' "${mount_command[@]}"
       log_progress "Trying mount command-line:"
       log_progress "$commandline"
-      if eval "$commandline"
+      if "${mount_command[@]}"
       then
         mounted=true
         break 2
@@ -109,14 +148,16 @@ function check_archive_mountable () {
   fi
 
   umount "$test_mount_location"
+  cleanup_credentials
 }
 
 function install_required_packages () {
   log_progress "Installing/updating required packages if needed"
-  apt-get -y --force-yes install hping3 cifs-utils
+  DEBIAN_FRONTEND=noninteractive apt-get -y install hping3 cifs-utils
   if ! command -v nc > /dev/null
   then
-    apt-get -y --force-yes install netcat || apt-get -y --force-yes install netcat-openbsd
+    DEBIAN_FRONTEND=noninteractive apt-get -y install netcat || \
+      DEBIAN_FRONTEND=noninteractive apt-get -y install netcat-openbsd
   fi
   log_progress "Done"
 }

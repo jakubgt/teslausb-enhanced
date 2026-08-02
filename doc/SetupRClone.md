@@ -31,7 +31,7 @@ Below are the old instructions in case you want to do things the hard way.
 
 > **Note** it is recommended you follow the "Easy rclone setup" instructions listed above instead
 
-You must perform these steps **after** getting a shell on the Pi and **before** running the `setup-teslacam` script on the Pi.
+You must perform these steps **after** getting a shell on the Pi and **before** running `/root/bin/setup-teslausb` on the Pi.
 
 **Make sure to run all commands in these instructions in a single command shell as root. When you return to the [Main Instructions](/README.md) continue running the commands there in this same shell.** This is necessary because:
 
@@ -133,4 +133,4 @@ Run this command to cause the setup processes which you'll resume in the main in
 export ARCHIVE_SYSTEM=rclone
 ```
 
-Now stay in your `sudo -i` session and return to the section "Set up the USB storage functionality" in the [main instructions](../README.md).
+Persist these settings in `/root/teslausb_setup_variables.conf`, then run `/root/bin/setup-teslausb` from the same `sudo -i` session. See the [one-step setup guide](OneStepSetup.md) for the current setup flow.

@@ -27,6 +27,45 @@ then
   fi
 fi
 
+TESLAUSB_SETUP_TMPDIR="$(mktemp -d /tmp/teslausb-setup.XXXXXX)"
+readonly TESLAUSB_SETUP_TMPDIR
+export TESLAUSB_SETUP_TMPDIR
+chmod 0700 "$TESLAUSB_SETUP_TMPDIR"
+TESLAUSB_SCRIPT_TMPDIR="$TESLAUSB_SETUP_TMPDIR/scripts"
+readonly TESLAUSB_SCRIPT_TMPDIR
+mkdir -m 0700 "$TESLAUSB_SCRIPT_TMPDIR"
+
+function cleanup_setup_tmpdir () {
+  local status=$?
+  local cleanup_safe=true
+  trap - EXIT
+  if mountpoint -q -- "$TESLAUSB_SETUP_TMPDIR/diagnostic-root" 2> /dev/null
+  then
+    if ! umount "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    then
+      cleanup_safe=false
+      printf '%s\n' "WARNING: could not unmount the private diagnostics staging directory" >&2
+    fi
+  fi
+  if mountpoint -q -- "$TESLAUSB_SETUP_TMPDIR/sourcedir" 2> /dev/null
+  then
+    if ! umount "$TESLAUSB_SETUP_TMPDIR/sourcedir"
+    then
+      cleanup_safe=false
+      printf '%s\n' "WARNING: could not unmount the private source staging directory" >&2
+    fi
+  fi
+  if [ "$cleanup_safe" = "true" ]
+  then
+    rm -rf -- "$TESLAUSB_SETUP_TMPDIR"
+  fi
+  exit "$status"
+}
+trap cleanup_setup_tmpdir EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 function setup_progress () {
   local setup_logfile=/teslausb/teslausb-headless-setup.log
   if [ -w $setup_logfile ]
@@ -39,15 +78,17 @@ function setup_progress () {
 function curlwrapper () {
   setup_progress "curl $*" > /dev/null
   local attempts=0
-  while ! curl -s -S --stderr /tmp/curl.err --fail "$@"
+  local curl_error="$TESLAUSB_SETUP_TMPDIR/curl.err"
+  while ! curl -s -S --stderr "$curl_error" --fail \
+    --connect-timeout 15 --max-time 300 "$@"
   do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 20 ]
     then
       setup_progress "giving up after 20 tries"
-      if [ -e /tmp/curl.err ]
+      if [ -e "$curl_error" ]
       then
-        setup_progress "$(cat /tmp/curl.err)"
+        setup_progress "$(cat "$curl_error")"
       else
         setup_progress '(no reason given)'
       fi
@@ -70,11 +111,9 @@ function copy_script () {
     then
       download_sources
     else
-      export SOURCE_DIR=/tmp/sourcedir
-      umount "$SOURCE_DIR" &> /dev/null || true
-      rm -rf "$SOURCE_DIR"
-      mkdir -p "$SOURCE_DIR"
-      mount -t tmpfs none "$SOURCE_DIR"
+      export SOURCE_DIR="$TESLAUSB_SETUP_TMPDIR/sourcedir"
+      mkdir -m 0700 "$SOURCE_DIR"
+      mount -t tmpfs -o nodev,nosuid,mode=0700 none "$SOURCE_DIR"
       (
         cd "$SOURCE_DIR"
         curlwrapper -L "https://github.com/${REPO}/teslausb/archive/${BRANCH}.tar.gz" | tar zxf - --strip-components=1
@@ -87,20 +126,89 @@ function copy_script () {
   setup_progress "Downloaded $local_path/$name ..."
 }
 
-function safesource {
-  cat <<EOF > /tmp/checksetupconf
-#!/bin/bash -eu
-source '$1' &> /tmp/checksetupconf.out
-EOF
-  chmod +x /tmp/checksetupconf
-  if ! /tmp/checksetupconf
+function setup_config_message {
+  setup_progress "$*"
+}
+
+function secure_setup_config_file {
+  local setup_config="$1"
+  local metadata
+  local owner_id
+  local group_id
+  local mode
+
+  if [ -L "$setup_config" ] || [ ! -f "$setup_config" ]
   then
-    setup_progress "Error in $1:"
-    setup_progress "$(cat /tmp/checksetupconf.out)"
+    setup_config_message "STOP: $setup_config must be a regular file, not a symbolic link."
+    return 1
+  fi
+  metadata="$(stat -c '%u:%g:%a' -- "$setup_config")" || {
+    setup_config_message "STOP: unable to inspect $setup_config."
+    return 1
+  }
+  IFS=: read -r owner_id group_id mode <<< "$metadata"
+  if [ "$owner_id" != "0" ] || [ "$group_id" != "0" ]
+  then
+    setup_config_message "STOP: $setup_config must be owned by root:root."
+    return 1
+  fi
+  if [ "$mode" != "600" ] && ! chmod 0600 -- "$setup_config"
+  then
+    setup_config_message "STOP: unable to set root-only (0600) permissions on $setup_config. Remount the root filesystem writable and retry."
+    return 1
+  fi
+  mode="$(stat -c '%a' -- "$setup_config")" || return 1
+  if [ "$mode" != "600" ]
+  then
+    setup_config_message "STOP: $setup_config must have mode 0600."
+    return 1
+  fi
+}
+
+function safesource {
+  local setup_config="$1"
+  local failure_output
+
+  secure_setup_config_file "$setup_config" || exit 1
+  if failure_output="$( ( set -eu; source "$setup_config" ) 2>&1 )"
+  then
+    :
+  else
+    setup_config_message "Error in $setup_config:"
+    setup_config_message "$failure_output"
     exit 1
   fi
   # shellcheck disable=SC1090
-  source "$1"
+  source "$setup_config"
+}
+
+function validate_source_coordinates {
+  local ref_component
+  local -a ref_components=()
+
+  if ! [[ "$REPO" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]
+  then
+    setup_config_message "STOP: REPO must be a GitHub owner name (letters, numbers, and non-edge dashes only)."
+    return 1
+  fi
+  if [ -z "$BRANCH" ] || [ "${#BRANCH}" -gt 255 ] ||
+     ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] ||
+     [[ "$BRANCH" == /* || "$BRANCH" == */ || "$BRANCH" == *..* ||
+        "$BRANCH" == *//* || "$BRANCH" == *'@{'* || "$BRANCH" == @ ]]
+  then
+    setup_config_message "STOP: BRANCH is not a safe Git reference."
+    return 1
+  fi
+  IFS=/ read -r -a ref_components <<< "$BRANCH"
+  for ref_component in "${ref_components[@]}"
+  do
+    case "$ref_component" in
+      ''|.*|*.|*.lock)
+        setup_config_message "STOP: BRANCH is not a safe Git reference."
+        return 1
+        ;;
+    esac
+  done
 }
 
 THISDIR=$(dirname "$(readlink -f "$0")")
@@ -109,8 +217,18 @@ then
   # source the conf file directly to get REPO, BRANCH or download_sources
   # in case they're set
   safesource /root/teslausb_setup_variables.conf
+  for setup_secret_name in WEB_PASSWORD SAMBA_PASSWORD SSH_USER_PASSWORD \
+    SSH_ROOT_PUBLIC_KEY WIFIPASS
+  do
+    if [[ -v $setup_secret_name ]]
+    then
+      export -n "$setup_secret_name"
+    fi
+  done
+  unset setup_secret_name
   REPO=${REPO:-marcone}
   BRANCH=${BRANCH:-main-dev}
+  validate_source_coordinates || exit 1
   copy_script setup/pi/envsetup.sh "$THISDIR"
 fi
 # SC can't follow non-constant source
@@ -208,9 +326,9 @@ function headless_setup_progress_flash () {
 }
 
 function verify_configuration () {
-  copy_script setup/pi/verify-configuration.sh /tmp
+  copy_script setup/pi/verify-configuration.sh "$TESLAUSB_SCRIPT_TMPDIR"
 
-  /tmp/verify-configuration.sh
+  "$TESLAUSB_SCRIPT_TMPDIR/verify-configuration.sh"
 }
 
 function get_common_scripts () {
@@ -305,8 +423,8 @@ function create_usb_drive_backing_files () {
     mkdir "$MUTABLE_MOUNTPOINT"
   fi
 
-  copy_script setup/pi/create-backingfiles-partition.sh /tmp
-  /tmp/create-backingfiles-partition.sh "$BACKINGFILES_MOUNTPOINT" "$MUTABLE_MOUNTPOINT"
+  copy_script setup/pi/create-backingfiles-partition.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/create-backingfiles-partition.sh" "$BACKINGFILES_MOUNTPOINT" "$MUTABLE_MOUNTPOINT"
 
   if ! findmnt --mountpoint $BACKINGFILES_MOUNTPOINT > /dev/null
   then
@@ -323,8 +441,8 @@ function create_usb_drive_backing_files () {
   fi
 
   setup_progress "Creating backing disk files."
-  copy_script setup/pi/create-backingfiles.sh /tmp
-  /tmp/create-backingfiles.sh "$CAM_SIZE" "$MUSIC_SIZE" "$LIGHTSHOW_SIZE" "$BOOMBOX_SIZE" "$BACKINGFILES_MOUNTPOINT" "$USE_EXFAT"
+  copy_script setup/pi/create-backingfiles.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/create-backingfiles.sh" "$CAM_SIZE" "$MUSIC_SIZE" "$LIGHTSHOW_SIZE" "$BOOMBOX_SIZE" "$BACKINGFILES_MOUNTPOINT" "$USE_EXFAT"
 
   update_backingfiles_fstab_entry $BACKINGFILES_MOUNTPOINT/cam_disk.bin /mnt/cam
   update_backingfiles_fstab_entry $BACKINGFILES_MOUNTPOINT/music_disk.bin /mnt/music
@@ -351,10 +469,10 @@ function create_usb_drive_backing_files () {
       # server.
       if [ ! -e "$sentrylist_previously_archived" ] && [ -d "$MUTABLE_MOUNTPOINT/TeslaCam" ]
       then
-        find "$MUTABLE_MOUNTPOINT/TeslaCam" -type l -printf '%P\n' | sort > /tmp/allfiles.txt
-        find /mnt/cam/TeslaCam /mnt/cam/ -type f -printf '%P\n' | sort > /tmp/stilloncard.txt
-        comm -2 -3 /tmp/allfiles.txt /tmp/stilloncard.txt > "$sentrylist_previously_archived"
-        rm -f /tmp/allfiles.txt /tmp/stilloncard.txt
+        find "$MUTABLE_MOUNTPOINT/TeslaCam" -type l -printf '%P\n' | sort > "$TESLAUSB_SETUP_TMPDIR/allfiles.txt"
+        find /mnt/cam/TeslaCam /mnt/cam/ -type f -printf '%P\n' | sort > "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt"
+        comm -2 -3 "$TESLAUSB_SETUP_TMPDIR/allfiles.txt" "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt" > "$sentrylist_previously_archived"
+        rm -f -- "$TESLAUSB_SETUP_TMPDIR/allfiles.txt" "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt"
       fi
 
       umount -l /mnt/cam || setup_progress "failed to unmount /mnt/cam"
@@ -389,19 +507,51 @@ function create_usb_drive_backing_files () {
 function configure_hostname () {
   local new_host_name="$TESLAUSB_HOSTNAME"
   local old_host_name
+  local hosts_tmp
+  local hostname_tmp
+  local hostname_attempt
   old_host_name=$(hostname)
 
   # Set the specified hostname if it differs from the current name
   if [ "$new_host_name" != "$old_host_name" ]
   then
     setup_progress "Configuring the hostname..."
-    sed -i -e "s/$old_host_name/$new_host_name/g" /etc/hosts
-    sed -i -e "s/$old_host_name/$new_host_name/g" /etc/hostname
-    while ! hostnamectl set-hostname "$new_host_name"
+    hosts_tmp="$(mktemp /etc/.hosts.XXXXXX)"
+    hostname_tmp="$(mktemp /etc/.hostname.XXXXXX)"
+    if ! awk -v old="$old_host_name" -v new="$new_host_name" '
+      BEGIN { OFS="\t" }
+      {
+        for (i = 2; i <= NF; i++) {
+          if (substr($i, 1, 1) == "#") break
+          if ($i == old) $i = new
+        }
+        print
+      }
+    ' /etc/hosts > "$hosts_tmp" ||
+       ! printf '%s\n' "$new_host_name" > "$hostname_tmp"
+    then
+      rm -f -- "$hosts_tmp" "$hostname_tmp"
+      setup_progress "STOP: failed to stage hostname configuration"
+      exit 1
+    fi
+    chown root:root "$hosts_tmp" "$hostname_tmp"
+    chmod 0644 "$hosts_tmp" "$hostname_tmp"
+    mv -fT -- "$hosts_tmp" /etc/hosts
+    mv -fT -- "$hostname_tmp" /etc/hostname
+    for hostname_attempt in {1..30}
     do
+      if hostnamectl set-hostname "$new_host_name"
+      then
+        break
+      fi
       if [ ! -e /lib/systemd/system/dbus.service ]
       then
         break
+      fi
+      if [ "$hostname_attempt" -eq 30 ]
+      then
+        setup_progress "STOP: hostnamectl failed after 30 attempts"
+        exit 1
       fi
       setup_progress "hostnamectl failed, retrying"
       sleep 1
@@ -412,8 +562,8 @@ function configure_hostname () {
 }
 
 function make_root_fs_readonly () {
-  copy_script setup/pi/make-root-fs-readonly.sh /tmp
-  /tmp/make-root-fs-readonly.sh
+  copy_script setup/pi/make-root-fs-readonly.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/make-root-fs-readonly.sh"
 }
 
 function update_package_index () {
@@ -533,16 +683,17 @@ function cmd_upgrade {
     echo "STOP: previous setup didn't finish, can't upgrade unfinished install"
     exit 1
   fi
-  copy_script setup/pi/setup-teslausb /tmp &> /dev/null
-  copy_script setup/pi/envsetup.sh /tmp &> /dev/null
-  exec bash -c "/tmp/setup-teslausb upgrade_prepare && NO_REBOOT_PROMPT=1 /tmp/setup-teslausb && /tmp/setup-teslausb upgrade_finish"
+  export TESLAUSB_UPGRADE_DIR="$TESLAUSB_SETUP_TMPDIR/upgrade"
+  mkdir -m 0700 "$TESLAUSB_UPGRADE_DIR"
+  copy_script setup/pi/setup-teslausb "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script setup/pi/envsetup.sh "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  exec bash -c '"$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_prepare && NO_REBOOT_PROMPT=1 "$TESLAUSB_UPGRADE_DIR/setup-teslausb" && "$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_finish'
 }
 
 function cmd_upgrade_prepare {
   setup_progress "preparing for full upgrade"
   (
-    systemctl stop teslausb || true
-    killall archiveloop || true
+    systemctl stop teslausb.service || true
     service smbd stop || true
     service autofs stop || true
     umount /backingfiles/snapshots/snap*/mnt || true
@@ -552,6 +703,7 @@ function cmd_upgrade_prepare {
     umount /mnt/archive /mnt/musicarchive || true
     /root/bin/disable_gadget.sh || true
     /root/bin/remountfs_rw
+    secure_setup_config_file /root/teslausb_setup_variables.conf
     # a previous bookworm install may have the makers in /boot, so move
     # them to /teslausb (/boot/firmware)
     if [ ! /boot -ef /teslausb ]
@@ -568,8 +720,15 @@ function cmd_upgrade_prepare {
 }
 
 function cmd_upgrade_finish {
-  mv /tmp/setup-teslausb /root/bin/setup-teslausb
-  mv /tmp/envsetup.sh /root/bin/envsetup.sh
+  if [ -z "${TESLAUSB_UPGRADE_DIR:-}" ] || [ -L "$TESLAUSB_UPGRADE_DIR" ] || \
+     [ ! -f "$TESLAUSB_UPGRADE_DIR/setup-teslausb" ] || \
+     [ ! -f "$TESLAUSB_UPGRADE_DIR/envsetup.sh" ]
+  then
+    setup_progress "STOP: the private upgrade staging directory is unavailable"
+    exit 1
+  fi
+  install -o root -g root -m 0755 -- "$TESLAUSB_UPGRADE_DIR/setup-teslausb" /root/bin/setup-teslausb
+  install -o root -g root -m 0755 -- "$TESLAUSB_UPGRADE_DIR/envsetup.sh" /root/bin/envsetup.sh
   setup_progress "upgrade finished"
   for i in {5..1}
   do
@@ -796,16 +955,16 @@ function diagnose {
     mount
 
     echo -e "====== initial setup boot log ======"
-    mkdir /tmp/root$$
-    mount --bind / /tmp/root$$
-    if [ -e /tmp/root$$/var/log/boot.log ]
+    mkdir -m 0700 "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    mount --bind / "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    if [ -e "$TESLAUSB_SETUP_TMPDIR/diagnostic-root/var/log/boot.log" ]
     then
-      cat /tmp/root$$/var/log/boot.log
+      cat "$TESLAUSB_SETUP_TMPDIR/diagnostic-root/var/log/boot.log"
     else
       echo "no boot log found"
     fi
-    umount /tmp/root$$
-    rmdir /tmp/root$$
+    umount "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    rmdir "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
 
     echo -e "====== rc.local log ======"
     journalctl -u rc-local
@@ -905,8 +1064,8 @@ fi
 
 configure_hostname
 
-tmpdir=/tmp/$$
-mkdir -p "$tmpdir"
+tmpdir="$TESLAUSB_SETUP_TMPDIR/update-check"
+mkdir -m 0700 "$tmpdir"
 copy_script setup/pi/setup-teslausb "$tmpdir"  &> /dev/null
 if cmp -s "$tmpdir/setup-teslausb" "$0"
 then
@@ -965,8 +1124,8 @@ then
   setup_progress "calling configure.sh"
   export -f curlwrapper
   export -f copy_script
-  copy_script setup/pi/configure.sh /tmp
-  /tmp/configure.sh
+  copy_script setup/pi/configure.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/configure.sh"
 else
   setup_progress "skipping configure.sh"
 fi
@@ -974,24 +1133,30 @@ fi
 if [ "$SAMBA_ENABLED" = "true" ]
 then
   export SAMBA_GUEST
-  copy_script setup/pi/configure-samba.sh /tmp
-  /tmp/configure-samba.sh
+  export SAMBA_USER SAMBA_PASSWORD
+  copy_script setup/pi/configure-samba.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/configure-samba.sh"
+  export -n SAMBA_PASSWORD
 fi
 
 if [ -n "${AP_SSID:+x}" ]
 then
-  copy_script setup/pi/configure-ap.sh /tmp
-  /tmp/configure-ap.sh
+  copy_script setup/pi/configure-ap.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/configure-ap.sh"
 fi
 
-copy_script setup/pi/configure-automount.sh /tmp
-/tmp/configure-automount.sh
+copy_script setup/pi/configure-automount.sh "$TESLAUSB_SCRIPT_TMPDIR"
+"$TESLAUSB_SCRIPT_TMPDIR/configure-automount.sh"
 
-copy_script setup/pi/configure-web.sh /tmp
-/tmp/configure-web.sh
+copy_script setup/pi/configure-web.sh "$TESLAUSB_SCRIPT_TMPDIR"
+export WEB_AUTH_DISABLED WEB_USERNAME WEB_PASSWORD WEB_ALLOWED_HOSTS WEBUI_RELEASE WEBUI_SHA256
+"$TESLAUSB_SCRIPT_TMPDIR/configure-web.sh"
+export -n WEB_PASSWORD
 
-copy_script setup/pi/configure-ssh.sh /tmp
-/tmp/configure-ssh.sh
+export SSH_ALLOW_DEFAULT_PASSWORD SSH_USER_PASSWORD SSH_DISABLE_PASSWORD_AUTHENTICATION SSH_ROOT_PUBLIC_KEY
+copy_script setup/pi/configure-ssh.sh "$TESLAUSB_SCRIPT_TMPDIR"
+"$TESLAUSB_SCRIPT_TMPDIR/configure-ssh.sh"
+export -n SSH_USER_PASSWORD SSH_ROOT_PUBLIC_KEY
 
 # source setup-teslausb from .bashrc to set up completion
 if ! grep -q envsetup.sh /root/.bashrc
@@ -1048,7 +1213,7 @@ if [ -n "${INSTALL_USER_REQUESTED_PACKAGES:-}" ]
 then
   setup_progress "Installing user requested packages: ${INSTALL_USER_REQUESTED_PACKAGES}"
   read -r -a EXTRA_PACKAGES <<< "${INSTALL_USER_REQUESTED_PACKAGES[@]}"
-  DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install "${EXTRA_PACKAGES[@]}"
+  DEBIAN_FRONTEND=noninteractive apt-get -y install "${EXTRA_PACKAGES[@]}"
 fi
 
 setup_progress "Running post-setup tasks"
@@ -1061,8 +1226,8 @@ setup_progress "Running post-setup tasks"
     if [ ! -e "/mutable/once/$sum" ]
     then
       setup_progress "$i"
-      copy_script "$i" /tmp/
-      "/tmp/$(basename "$i")"
+      copy_script "$i" "$TESLAUSB_SCRIPT_TMPDIR"
+      "$TESLAUSB_SCRIPT_TMPDIR/$(basename "$i")"
       touch "/mutable/once/$sum"
     else
       setup_progress "skipping $i ($sum)"

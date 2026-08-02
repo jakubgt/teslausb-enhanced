@@ -29,13 +29,13 @@ Now, on the Pi:
 
    If you can't reach the archive server by name but you can by IP address then use its IP address, below, for the `ARCHIVE_SERVER` variable.
 
-4. Run these commands, subsituting your values:
+4. Run these commands, substituting your values. Use single quotes for passwords so characters such as `$` are not expanded by Bash:
    ```
    export ARCHIVE_SYSTEM="cifs"
    export ARCHIVE_SERVER="Nautilus"
    export SHARE_NAME="SailfishCam"
    export SHARE_USER="sailfish"
-   export SHARE_PASSWORD="pa$$w0rd"
+   export SHARE_PASSWORD='pa$$w0rd'
    ```
 
-Now stay in your `sudo -i` session and return to the section "Set up the USB storage functionality" in the [main instructions](/README.md).
+Persist these settings in `/root/teslausb_setup_variables.conf`, then run `/root/bin/setup-teslausb` from the same `sudo -i` session. See the [one-step setup guide](OneStepSetup.md) for the current setup flow.

@@ -9,6 +9,107 @@ function check_variable () {
   fi
 }
 
+function parent_disk_for_device () {
+  local device="$1"
+  local resolved
+  local device_type
+  local parent_disk
+
+  resolved="$(readlink -f -- "$device")" || return 1
+  device_type="$(lsblk -dnro TYPE -- "$resolved" 2> /dev/null | head -n 1)"
+  if [ "$device_type" = "disk" ]
+  then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+
+  parent_disk="$(lsblk -srpno NAME,TYPE -- "$resolved" 2> /dev/null | awk '$2 == "disk" { print $1; exit }')"
+  if [ -z "$parent_disk" ]
+  then
+    return 1
+  fi
+  readlink -f -- "$parent_disk"
+}
+
+function refuse_system_data_drive () {
+  local resolved_data_drive
+  local data_disk
+  local data_type
+  local candidate
+  local protected_disk
+  local mountpoint
+  local mount_source
+  local -a protected_devices=()
+
+  resolved_data_drive="$(readlink -f -- "$DATA_DRIVE")" || {
+    setup_progress "STOP: DATA_DRIVE ($DATA_DRIVE) could not be resolved."
+    exit 1
+  }
+  if [ ! -b "$resolved_data_drive" ]
+  then
+    setup_progress "STOP: DATA_DRIVE ($DATA_DRIVE) is not a block device."
+    exit 1
+  fi
+  data_disk="$(parent_disk_for_device "$resolved_data_drive")" || {
+    setup_progress "STOP: DATA_DRIVE ($DATA_DRIVE) is not backed by a disk device."
+    exit 1
+  }
+  data_type="$(lsblk -dnro TYPE -- "$data_disk" 2> /dev/null | head -n 1)"
+  if [ "$data_type" != "disk" ]
+  then
+    setup_progress "STOP: DATA_DRIVE ($DATA_DRIVE) does not resolve to a whole disk."
+    exit 1
+  fi
+
+  for candidate in "${BOOT_DISK:-}" "${BOOT_PARTITION_DEVICE:-}" "${ROOT_PARTITION_DEVICE:-}"
+  do
+    if [ -n "$candidate" ]
+    then
+      protected_devices+=("$candidate")
+    fi
+  done
+
+  # Root is mandatory. If its device cannot be identified, abort rather than
+  # guessing that a destructive target is safe.
+  mount_source="$(findmnt -nro SOURCE --target / 2> /dev/null || true)"
+  if [ -z "$mount_source" ]
+  then
+    setup_progress "STOP: unable to identify the disk containing the root filesystem."
+    exit 1
+  fi
+  protected_devices+=("$mount_source")
+
+  for mountpoint in /teslausb /boot /boot/firmware
+  do
+    if [ -e "$mountpoint" ] || [ -L "$mountpoint" ]
+    then
+      mount_source="$(findmnt -nro SOURCE --target "$mountpoint" 2> /dev/null || true)"
+      if [ -z "$mount_source" ]
+      then
+        setup_progress "STOP: unable to identify the disk containing $mountpoint."
+        exit 1
+      fi
+      protected_devices+=("$mount_source")
+    fi
+  done
+
+  for candidate in "${protected_devices[@]}"
+  do
+    protected_disk="$(parent_disk_for_device "$candidate")" || {
+      setup_progress "STOP: unable to resolve protected system device $candidate to a disk."
+      exit 1
+    }
+    if [ "$data_disk" = "$protected_disk" ]
+    then
+      setup_progress "STOP: DATA_DRIVE ($DATA_DRIVE) resolves to system disk $data_disk, which contains the root or boot filesystem."
+      exit 1
+    fi
+  done
+
+  DATA_DRIVE="$resolved_data_drive"
+  export DATA_DRIVE
+}
+
 function check_supported_hardware () {
   if ! grep -q  'Raspberry Pi' /sys/firmware/devicetree/base/model
   then
@@ -46,23 +147,32 @@ function check_udc () {
 }
 
 function check_xfs () {
+  local xfs_test_dir
+  local xfs_image
+  local xfs_mount
+
   setup_progress "Checking XFS support"
   # install XFS tools if needed
   if ! hash mkfs.xfs
   then
-    apt-get -y --force-yes install xfsprogs
+    DEBIAN_FRONTEND=noninteractive apt-get -y install xfsprogs
   fi
-  truncate -s 1GB /tmp/xfs.img
-  mkfs.xfs -m reflink=1 -f /tmp/xfs.img > /dev/null
-  mkdir -p /tmp/xfsmnt
-  if ! mount /tmp/xfs.img /tmp/xfsmnt
+  xfs_test_dir="$(mktemp -d /tmp/teslausb-xfs-check.XXXXXX)"
+  chmod 0700 "$xfs_test_dir"
+  xfs_image="$xfs_test_dir/xfs.img"
+  xfs_mount="$xfs_test_dir/mnt"
+  truncate -s 1GB "$xfs_image"
+  mkfs.xfs -m reflink=1 -f "$xfs_image" > /dev/null
+  mkdir -p "$xfs_mount"
+  if ! mount "$xfs_image" "$xfs_mount"
   then
+    rm -rf -- "$xfs_test_dir"
     setup_progress "STOP: xfs does not support required features"
     exit 1
   fi
 
-  umount /tmp/xfsmnt
-  rm -rf /tmp/xfs.img /tmp/xfsmnt
+  umount "$xfs_mount"
+  rm -rf -- "$xfs_test_dir"
   setup_progress "XFS supported"
 }
 
@@ -118,6 +228,8 @@ function check_available_space_sd () {
 
 function check_available_space_usb () {
   setup_progress "Verifying that there is sufficient space available on the USB drive ..."
+
+  refuse_system_data_drive
 
   # Verify that the disk has been provided and not a partition
   local drive_type

@@ -1,14 +1,22 @@
 #!/bin/bash
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+# shellcheck source=teslausb-www/html/cgi-bin/cgi-common.sh
+source "$script_dir/cgi-common.sh"
+
+cgi_require_mutation
+
 if [ -e "/sys/kernel/config/usb_gadget/teslausb/" ]
 then
-  sudo /root/bin/disable_gadget.sh
+  action=gadget-disable
 else
-  sudo /root/bin/enable_gadget.sh
+  action=gadget-enable
 fi
 
-cat << EOF
-HTTP/1.0 200 OK
-Content-type: application/json
+if ! sudo -n /usr/local/sbin/teslausb-web-sudo "$action" &> /dev/null
+then
+  cgi_error '500 Internal Server Error' 'Unable to change the USB gadget state.'
+fi
 
-EOF
+cgi_ok 'USB gadget state changed.'

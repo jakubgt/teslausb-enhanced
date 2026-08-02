@@ -1,30 +1,139 @@
-<html><head><title>TeslaUSB</title></head>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>TeslaUSB diagnostics</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0 auto; max-width: 80rem; padding: 1rem; }
+    h1 { font-size: 1.5rem; margin-top: 0; }
+    .actions { align-items: center; display: flex; flex-wrap: wrap; gap: .75rem; }
+    button, .download { border: 1px solid #777; border-radius: .25rem; font: inherit; padding: .65rem .9rem; }
+    button { cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .65; }
+    .download { color: inherit; text-decoration: none; }
+    .download[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+    progress { max-width: 18rem; width: 100%; }
+    #status { min-height: 1.5em; }
+    #status.error { color: #b00020; font-weight: 600; }
+    pre { border: 1px solid #777; border-radius: .25rem; box-sizing: border-box; min-height: 20rem; overflow: auto; padding: .75rem; white-space: pre-wrap; width: 100%; }
+    button:focus-visible, .download:focus-visible { outline: 3px solid #1769aa; outline-offset: 2px; }
+    @media (max-width: 40rem) {
+      body { padding: .75rem; }
+      button, .download { min-height: 44px; }
+      pre { font-size: .78rem; min-height: 55vh; }
+    }
+  </style>
+</head>
 <body>
-<iframe id="cgiframe" type="text/plain" src="cgi-bin/diagnose.sh" style="width:0;height:0;border:0"></iframe>
+  <main>
+    <h1>TeslaUSB diagnostics</h1>
+    <p>The report can contain network names, device details, and configuration metadata. Review it before sharing.</p>
+    <div class="actions">
+      <button type="button" id="generate">Generate diagnostics</button>
+      <a id="download" class="download" href="#" download="diagnostics.txt" aria-disabled="true">Download report</a>
+      <progress id="progress" hidden aria-label="Generating diagnostics"></progress>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <pre id="report" tabindex="0" aria-label="Diagnostics report">No report has been generated yet.</pre>
+  </main>
 
-<div id="wait">Please wait, gathering diagnostics...</div>
+  <script>
+  "use strict";
 
-<div id="afterload" style="display:block; visibility:hidden;">
-<iframe id="diagnosticsframe" type="text/plain" width="900" height="500" border="1"></iframe>
-<p>
-<a id="dl" href="diagnostics.txt" download="diagnostics.txt">Download diagnostics</a>
-<p>
-</div>
+  var reportUrl;
 
-<script>
-var myIframe = document.getElementById('cgiframe');
-myIframe.onload = function () {
-    console.log('onload called');
+  async function fetchWithTimeout(url, options, timeoutMs) {
+    if (typeof AbortController === "undefined") return fetch(url, options);
+    var controller = new AbortController();
+    var timer = window.setTimeout(function() { controller.abort(); }, timeoutMs);
+    try {
+      return await fetch(url, Object.assign({}, options, {signal: controller.signal}));
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("Request timed out; TeslaUSB may still be busy");
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
 
-    var df=document.getElementById('diagnosticsframe');
-    df.src='diagnostics.txt';
+  async function responseError(response) {
+    var message = "HTTP " + response.status + (response.statusText ? " " + response.statusText : "");
+    try {
+      var payload = await response.json();
+      if (payload && payload.error) message = payload.error + " (HTTP " + response.status + ")";
+    } catch (error) {
+      // Keep the HTTP error when the response is not JSON.
+    }
+    return new Error(message);
+  }
 
-    var waitdiv=document.getElementById('wait');
-    waitdiv.style.visibility='hidden'
+  async function generateDiagnostics() {
+    var button = document.getElementById("generate");
+    var download = document.getElementById("download");
+    var progress = document.getElementById("progress");
+    var status = document.getElementById("status");
+    var report = document.getElementById("report");
 
-    var aldiv=document.getElementById('afterload');
-    aldiv.style.visibility='visible'
-}
-</script>
+    button.disabled = true;
+    button.textContent = "Generating...";
+    download.setAttribute("aria-disabled", "true");
+    progress.hidden = false;
+    status.classList.remove("error");
+    status.textContent = "Gathering diagnostics. This can take a moment...";
+    report.textContent = "Generating diagnostics...";
+
+    try {
+      var action = await fetchWithTimeout("/api/v1/actions/diagnostics", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Accept": "application/json",
+          "X-TeslaUSB-Request": "1"
+        }
+      }, 120000);
+      if (!action.ok) throw await responseError(action);
+      var actionPayload = await action.json();
+      if (!actionPayload || actionPayload.ok !== true) {
+        throw new Error(actionPayload && actionPayload.error ? actionPayload.error : "Diagnostics generation was not confirmed");
+      }
+
+      var response = await fetchWithTimeout(
+        "diagnostics.txt",
+        {cache: "no-store", credentials: "same-origin"},
+        30000);
+      if (!response.ok) throw await responseError(response);
+      var text = await response.text();
+      if (!text.trim()) throw new Error("The generated report was empty");
+
+      report.textContent = text;
+      if (reportUrl) URL.revokeObjectURL(reportUrl);
+      reportUrl = URL.createObjectURL(new Blob([text], {type: "text/plain;charset=utf-8"}));
+      download.href = reportUrl;
+      download.setAttribute("aria-disabled", "false");
+      status.textContent = "Diagnostics are ready. Review the report before sharing it.";
+    } catch (error) {
+      report.textContent = "Diagnostics could not be generated. Select Retry to try again.\n\n" + error.message;
+      status.textContent = "Diagnostics failed: " + error.message;
+      status.classList.add("error");
+    } finally {
+      progress.hidden = true;
+      button.disabled = false;
+      button.textContent = status.classList.contains("error") ? "Retry" : "Regenerate diagnostics";
+    }
+  }
+
+  document.getElementById("generate").addEventListener("click", generateDiagnostics);
+  document.getElementById("download").addEventListener("click", function(event) {
+    if (event.currentTarget.getAttribute("aria-disabled") === "true") event.preventDefault();
+  });
+  window.addEventListener("beforeunload", function() {
+    if (reportUrl) URL.revokeObjectURL(reportUrl);
+  });
+  generateDiagnostics();
+  </script>
 </body>
 </html>

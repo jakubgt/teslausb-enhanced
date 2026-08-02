@@ -1,5 +1,19 @@
 #!/bin/bash -eu
 
+function teslausb_curl {
+  command curl --connect-timeout "${TESLAUSB_CURL_CONNECT_TIMEOUT:-10}" \
+    --max-time "${TESLAUSB_CURL_MAX_TIME:-30}" "$@"
+}
+
+function teslausb_ble {
+  timeout --foreground --kill-after=5s \
+    "${TESLA_BLE_COMMAND_TIMEOUT_SECONDS:-60}s" /root/bin/tesla-control "$@"
+}
+
+keep_awake_pid_helper="${KEEP_AWAKE_PID_HELPER:-/root/bin/keep-awake-pid.sh}"
+# shellcheck source=run/keep-awake-pid.sh
+source "$keep_awake_pid_helper"
+
 if [[ ( -z "${TESLAFI_API_TOKEN:+x}" ) && ( -z "${TESSIE_API_TOKEN:+x}" ) && ( -z "${TESLA_BLE_VIN:+x}" ) && ( -z "${KEEP_AWAKE_WEBHOOK_URL:+x}" ) ]]
 then
   log "Not configured to keep car awake."
@@ -12,7 +26,7 @@ else
       if [[ -n "${TESSIE_API_TOKEN:+x}" ]]
       # Use Tessie API to nudge the car
       then
-        http_response=$(curl -s -w "%{http_code}" \
+        http_response=$(teslausb_curl -s -w "%{http_code}" \
           -H "Authorization: Bearer $TESSIE_API_TOKEN" \
           -H "Accept: application/json" \
           -H "User-Agent: github.com/marcone/teslausb" \
@@ -42,7 +56,8 @@ else
       if [[ -n "${TESLA_BLE_VIN:+x}" ]]
       # use Tesla BLE API to nudge the car
       then
-        if ! BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
+        if ! BLE_response=$(teslausb_ble -ble -key-file /root/.ble/key_private.pem \
+            -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
         then
           # check false-negative BLE responses
           if [[ ( "$BLE_response" != *"already closed"* ) && ( "$BLE_response" != *"cable connected"* ) ]]
@@ -65,7 +80,7 @@ else
       elif [[ -n "${KEEP_AWAKE_WEBHOOK_URL:+x}" ]]
       # Use webhook to send nudge message
       then
-        http_response=$(curl -s -w "%{http_code}" POST \
+        http_response=$(teslausb_curl -s -w "%{http_code}" POST \
           -d "{\"awake_command\":\"nudge\"}" \
           -H "Content-Type: application/json" \
           "$KEEP_AWAKE_WEBHOOK_URL")
@@ -97,7 +112,7 @@ else
       if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
       # Use TeslaFi API to enable Sentry Mode
       then
-        http_response=$(curl -s -w "%{http_code}" \
+        http_response=$(teslausb_curl -s -w "%{http_code}" \
           -H "Authorization: Bearer $TESLAFI_API_TOKEN" \
           -H "Accept: application/json" \
           -H "User-Agent: github.com/marcone/teslausb" \
@@ -139,7 +154,7 @@ else
       elif [[ -n "${TESSIE_API_TOKEN:+x}" ]]
       # Use Tessie API to enable Sentry Mode
       then
-        http_response=$(curl -s -w "%{http_code}" \
+        http_response=$(teslausb_curl -s -w "%{http_code}" \
           -H "Authorization: Bearer $TESSIE_API_TOKEN" \
           -H "Accept: application/json" \
           -H "User-Agent: github.com/marcone/teslausb" \
@@ -174,7 +189,8 @@ else
       elif [[ -n "${TESLA_BLE_VIN:+x}" ]]
       # Use Tesla BLE API to enable Sentry Mode
       then
-        if /root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" sentry-mode on
+        if teslausb_ble -ble -key-file /root/.ble/key_private.pem \
+            -vin "${TESLA_BLE_VIN^^}" sentry-mode on
         then
           log "Tesla BLE: Command sent to enable Sentry Mode."
         else
@@ -183,7 +199,7 @@ else
       elif [[ -n "${KEEP_AWAKE_WEBHOOK_URL:+x}" ]]
       # Use webhook to send start command
       then
-        http_response=$(curl -s -w "%{http_code}" POST \
+        http_response=$(teslausb_curl -s -w "%{http_code}" POST \
           -d "{\"awake_command\":\"start\"}" \
           -H "Content-Type: application/json" \
           "$KEEP_AWAKE_WEBHOOK_URL")
@@ -203,9 +219,21 @@ else
       ;;
     3)
       # Nudge car periodically without using Sentry Mode
-      log "Starting background task to keep car awake."
-      nudge &
-      echo $! > /tmp/keep_awake_task_pid
+      if keep_awake_pid_read
+      then
+        log "Background task to keep car awake is already running."
+      else
+        rm -f -- "$KEEP_AWAKE_PID_FILE"
+        log "Starting background task to keep car awake."
+        nudge &
+        keep_awake_pid=$!
+        if ! keep_awake_pid_write "$keep_awake_pid"
+        then
+          kill "$keep_awake_pid" 2> /dev/null || true
+          log "Failed to record the keep-awake process identity."
+          exit 1
+        fi
+      fi
       ;;
     *)
       log "Invalid or no SENTRY_CASE defined."

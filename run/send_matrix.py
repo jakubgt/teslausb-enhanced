@@ -6,11 +6,15 @@ import socket
 
 from nio import AsyncClient, LoginResponse
 
-if len(sys.argv) != 6:
-    sys.stderr.write('usage: %s HOMESERVER_URL USERNAME PASSWORD ROOM_ID MESSAGE_TEXT\n' % sys.argv[0])
+if len(sys.argv) != 5:
+    sys.stderr.write('usage: %s HOMESERVER_URL USERNAME ROOM_ID MESSAGE_TEXT < PASSWORD\n' % sys.argv[0])
     sys.exit(1)
 
-(homeserver, username, password, room_id, message) = sys.argv[1:6]
+(homeserver, username, room_id, message) = sys.argv[1:5]
+password = sys.stdin.read()
+if not password:
+    sys.stderr.write('Matrix password was not provided on standard input.\n')
+    sys.exit(1)
 
 if homeserver.endswith('/'):
     homeserver = homeserver[:-1]

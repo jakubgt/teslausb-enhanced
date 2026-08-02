@@ -1,14 +1,17 @@
 #!/bin/dash
 
+backingfiles_root="${BACKINGFILES_ROOT:-/backingfiles}"
+mountoptsforimage="${MOUNTOPTSFORIMAGE:-/root/bin/mountoptsforimage}"
+
 case "$1" in
   Music)
-    diskimage="/backingfiles/music_disk.bin"
+    diskimage="$backingfiles_root/music_disk.bin"
     ;;
   LightShow)
-    diskimage="/backingfiles/lightshow_disk.bin"
+    diskimage="$backingfiles_root/lightshow_disk.bin"
     ;;
   Boombox)
-    diskimage="/backingfiles/boombox_disk.bin"
+    diskimage="$backingfiles_root/boombox_disk.bin"
     ;;
   *)
     exit 1
@@ -24,15 +27,28 @@ fi
 
 if [ ! -f "$optfile" ]
 then
-  rm -rf "$optfile"
-  /root/bin/mountoptsforimage "${diskimage}" | {
-    read -r fstype opts
-    if [ -z "$fstype" ]
-    then
-      exit 1
-    fi
-    echo "-fstype=${fstype},rw,${opts} :${diskimage}" > "$optfile"
-  }
+  if [ -e "$optfile" ] || [ -L "$optfile" ]
+  then
+    rm -f "$optfile" || exit 1
+  fi
+
+  mount_options=$("$mountoptsforimage" "$diskimage") || exit 1
+  set -f
+  # mountoptsforimage emits exactly two whitespace-separated fields.
+  # shellcheck disable=SC2086
+  set -- $mount_options
+  set +f
+  if [ "$#" -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]
+  then
+    exit 1
+  fi
+
+  tmpfile=$(mktemp "${optfile}.tmp.XXXXXX") || exit 1
+  trap 'rm -f "$tmpfile"' 0
+  trap 'exit 1' HUP INT TERM
+  printf '%s\n' "-fstype=$1,rw,$2 :${diskimage}" > "$tmpfile"
+  mv -f "$tmpfile" "$optfile"
+  trap - 0 HUP INT TERM
 fi
 
 cat "$optfile"

@@ -1,6 +1,6 @@
 # One-step setup
 
-This is a streamlined process for setting up the Pi. You'll flash a preconfigured version of Raspbian Buster Lite and then fill out a config file.
+This is a streamlined process for setting up the Pi. You'll flash the preconfigured Raspberry Pi OS Bookworm Lite image and then fill out a config file.
 
 ## Notes
 
@@ -18,24 +18,26 @@ This is a streamlined process for setting up the Pi. You'll flash a preconfigure
     A sample conf file is located in the `boot` folder on the SD card. The latest sample is also available [from GitHub](https://github.com/marcone/teslausb/blob/main-dev/pi-gen-sources/00-teslausb-tweaks/files/teslausb_setup_variables.conf.sample).
     The sample file contains documentation and suggestions for values.
 
+    If you have a local checkout of this repository and Node.js installed, the optional [configuration helper](ConfigTool.md) can generate the file from JSON, preflight an edited file without executing it, and create a redacted copy for support requests.
+
     > **Note** When creating/editing the configuration file on Windows, ensure that it is saved with the correct extension. It is recommended to disable the "hide extensions for known file types" option in Windows so you can see the full file name.
 
-    Be sure that all values, especially your WiFi SSID and password are properly quoted and/or escaped according to [bash quoting rules](https://www.gnu.org/software/bash/manual/bash.html#Quoting), and that in addition any `&`, `/` and `\` are also escaped by prefixing them with a `\`.
-    If the password does not contain a single quote character, you can enclose the entire password in single quotes, like so:
+    Be sure that all values, especially your WiFi SSID and password, are properly quoted according to [Bash quoting rules](https://www.gnu.org/software/bash/manual/bash.html#Quoting).
+    If a value does not contain a single quote character, enclose the entire value in single quotes. Characters such as spaces, `&`, `/`, `\`, `*`, and `$` are preserved literally inside single quotes and do not need additional escaping:
 
     ```
     export WIFIPASS='password'
     ```
 
-    even if it contains other characters that might otherwise be special to bash, like \\, \* and $ (but note that the \\ should still be escaped with an additional \\ in order for the password to be correctly handled)
+    This works even when the value contains characters that would otherwise be special to Bash.
 
-    If the password does contain a single quote, you will need to use a different syntax. E.g. if the password is `pass'word`, you would use:
+    If the value contains a single quote, use Bash's ANSI-C quoting syntax. For example, if the password is `pass'word`, use:
 
     ```
     export WIFIPASS=$'pass\'word'
     ```
 
-    and if the password contains both a single quote and a backslash, e.g. `pass'wo\rd`you'd use:
+    ANSI-C quoted values do interpret backslash escapes, so double literal backslashes. For example, if the password is `pass'wo\rd`, use:
 
     ```
     export WIFIPASS=$'pass\'wo\\rd'
@@ -70,7 +72,7 @@ This is a streamlined process for setting up the Pi. You'll flash a preconfigure
     | 4                         | Create partition and files to store camera clips/music)            |
     | 5                         | Setup completed; remounting filesystems as read-only and rebooting |
 
-The Pi should be available for `ssh` at `pi@teslausb.local`, over Wifi (if automatic setup works) or USB networking (if it doesn't). It takes about 5 minutes, or more depending on network speed, etc. The default password for user `pi@teslausb.local` is `raspberry`.
+The Pi should be reachable at `teslausb.local` over Wifi (if automatic setup works) or USB networking (if it doesn't). Fresh images lock the known default login password. To use SSH, configure `SSH_USER_PASSWORD` before first boot or, preferably, configure `SSH_ROOT_PUBLIC_KEY`; explicitly retaining the image default with `SSH_ALLOW_DEFAULT_PASSWORD=true` is insecure. Setup takes about 5 minutes, or more depending on network speed.
 
 If plugged into just a power source, or your car, give it a few minutes until the LED starts pulsing steadily which means the archive loop is running and you're good to go.
 
@@ -82,7 +84,9 @@ Given that the Pi contains sensitive information like your home wifi password an
 
 1. If WiFi Access Point is configured, ensure it is configured with a strong password. Make it something better than Passw0rd, more than 8 characters. The longer the password the better. See [here](https://en.wikipedia.org/wiki/Password_strength) or [here](https://xkcd.com/936/) for password strength.
 
-2. Change the password for the pi account to something other than the default "raspberry". To do that, ssh into the Pi, run the following commands, and enter a new password when prompted:
+2. Web authentication is enabled by default. For a headless first boot, strongly prefer setting both `WEB_USERNAME` and a unique 12–72-byte `WEB_PASSWORD` in `teslausb_setup_variables.conf` so you already know the login. If both are omitted, setup generates a random login in the root-only file `/root/teslausb-web-credentials`; retrieve it from a local console or with `sudo cat /root/teslausb-web-credentials` after configuring SSH access. `WEB_AUTH_DISABLED=true` is an explicit insecure opt-out that should be used only on a fully trusted network. The web interface can view recordings and trigger administrative actions, so do not expose it directly to the internet (for example, with router port forwarding). HTTP Basic Authentication protects access but does not encrypt traffic; use it only on a network you trust or access TeslaUSB through a secure VPN.
+
+3. If you enabled an SSH login password, keep it unique. To rotate it later, SSH into the Pi, run the following commands, and enter a new password when prompted:
 
 ```
    sudo -i
@@ -91,10 +95,11 @@ Given that the Pi contains sensitive information like your home wifi password an
    reboot
 ```
 
-3. Remember that the Pi contains a configuration file with sensitive information. If your Pi is stolen or you suspect an unauthorized person accessed it, immediately change your Tesla account password (if you configured the Pi to use your Tesla credentials to keep the car awake during archiving) and home wifi password.
+4. Remember that the Pi contains a configuration file with sensitive information. If your Pi is stolen or you suspect an unauthorized person accessed it, immediately change your Tesla account password (if you configured the Pi to use your Tesla credentials to keep the car awake during archiving) and home wifi password.
 
 ### Troubleshooting
 
+- TeslaUSB has two web interfaces. The bundled legacy interface is `/` and the separately downloaded newer interface is `/new/`. If a saved preference redirects to a broken interface, open `http://teslausb.local/?ui=legacy` to force and remember the legacy interface, or open `http://teslausb.local/new/` directly. Clear the browser's site data for `teslausb.local` if a redirect loop remains. Trying the Pi's IP address can distinguish name-resolution problems from web-server problems.
 - If everything seems to be working, but you still don't see the USB drive(s) either on your local machine, or in the car, check that you are indeed using a USB data cable, and not a charge-only cable. Also ensure you are plugged into the USB port on the Raspberry PI, and not the power port.
 - `ssh` to `pi@teslausb.local` (assuming Wifi came up, or your Pi is connected to your computer via USB) and look at the `/teslausb/teslausb-headless-setup.log`.
 - Try `sudo -i` and then run `/etc/rc.local`. The scripts are fairly resilient to restarting and not re-running previous steps, and will tell you about progress/failure.

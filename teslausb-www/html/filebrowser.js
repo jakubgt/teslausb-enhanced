@@ -1,3 +1,41 @@
+const FILE_BROWSER_API_ROUTES = Object.freeze({
+  "ls.sh": "files/list",
+  "download.sh": "files/download",
+  "downloadzip.sh": "files/download-zip",
+  "upload.sh": "files/upload",
+  "cp.sh": "files/copy",
+  "mv.sh": "files/move",
+  "rm.sh": "files/delete",
+  "mkdir.sh": "files/mkdir"
+});
+
+function fileBrowserCgiUrl(script, ...args) {
+  const route = FILE_BROWSER_API_ROUTES[script];
+  if (!route) throw new Error(`Unsupported file API operation: ${script}`);
+  const query = args.map((arg) => encodeURIComponent(String(arg))).join("&");
+  return `/api/v1/${route}${query ? "?" + query : ""}`;
+}
+
+function fileBrowserEncodePath(path) {
+  return String(path).split("/").map((part) => encodeURIComponent(part)).join("/");
+}
+
+function fileBrowserIsSameOrDescendantPath(parentPath, candidatePath) {
+  const parent = String(parentPath).replace(/\/+$/, "");
+  const candidate = String(candidatePath).replace(/\/+$/, "");
+  return candidate === parent || candidate.startsWith(parent + "/");
+}
+
+function fileBrowserDeleteConfirmation(names) {
+  const cleanNames = names.map((name) =>
+    String(name).replace(/[\r\n]+/g, " ").slice(0, 100));
+  const preview = cleanNames.slice(0, 5).map((name) => `\u2022 ${name}`).join("\n");
+  const remaining = cleanNames.length - 5;
+  const more = remaining > 0 ? `\n\u2022 and ${remaining} more` : "";
+  const subject = cleanNames.length === 1 ? "this item" : `these ${cleanNames.length} items`;
+  return `Delete ${subject}?\n\n${preview}${more}\n\nThis cannot be undone.`;
+}
+
 class FileBrowser {
   DEBUG = false;
   splitter_active = false;
@@ -26,21 +64,22 @@ class FileBrowser {
       <div class="fb-dropinfo-holder">
         <div class="fb-dropinfo">
           <div class="fb-dropinfo-line1"></div>
-          <div class="fb-dropinfo-closebutton">&#x2716</div>
+          <button type="button" class="fb-dropinfo-closebutton" aria-label="Close upload dialog" title="Close upload dialog">&#x2716;</button>
           <div class="fb-dropinfo-line2"></div>
           <progress class="fb-dropinfo-progress" value="0" max="100"></progress>
           <div class="fb-dropinfo-line3"></div>
-          <button class="fb-dropinfo-cancel">Cancel</button>
+          <button type="button" class="fb-dropinfo-cancel">Cancel</button>
         </div>
       </div>
-      <div class="fb-buttonbar">
-      <div class="fb-pencilbutton fb-barbutton"></div>
-      <div class="fb-locksoundbutton fb-barbutton"></div>
-      <div class="fb-newfolderbutton fb-barbutton"></div>
-      <div class="fb-downloadbutton fb-barbutton"></div>
-      <div class="fb-uploadbutton fb-barbutton"></div>
-      <div class="fb-trashbutton fb-barbutton"></div>
+      <div class="fb-buttonbar" role="toolbar" aria-label="File actions">
+      <button type="button" class="fb-pencilbutton fb-barbutton" aria-label="Rename selected item" title="Rename selected item"></button>
+      <button type="button" class="fb-locksoundbutton fb-barbutton" aria-label="Use selected WAV file as lock sound" title="Use selected WAV file as lock sound"></button>
+      <button type="button" class="fb-newfolderbutton fb-barbutton" aria-label="Create new folder" title="Create new folder"></button>
+      <button type="button" class="fb-downloadbutton fb-barbutton" aria-label="Download selected items" title="Download selected items"></button>
+      <button type="button" class="fb-uploadbutton fb-barbutton" aria-label="Upload files" title="Upload files"></button>
+      <button type="button" class="fb-trashbutton fb-barbutton" aria-label="Delete selected items" title="Delete selected items"></button>
       </div>
+      <div class="fb-status" role="status" aria-live="polite"></div>
       <canvas class="fb-dragimage"></canvas>
       <div class="fb-treediv">
         <div class="fb-treerootpath"></div>
@@ -76,6 +115,8 @@ class FileBrowser {
     this.splitterSetFlagPos();
 
     const fileList = this.anchor_elem.querySelector('.fb-fileslist');
+    fileList.setAttribute("role", "listbox");
+    fileList.setAttribute("aria-multiselectable", "true");
     fileList.onpointerdown = (e) => { this.listPointerDown(e); };
     fileList.oncontextmenu = (e) => { this.showContextMenu(e); };
     fileList.addEventListener("dragstart", this.dragStart);
@@ -83,13 +124,18 @@ class FileBrowser {
 
     const rootlabel = this.anchor_elem.querySelector(".fb-treerootpath");
     if (this.drives.length > 1) {
-      var rootlabeldropdown = '<select name="drive" class="fb-driveselector">';
+      const selector = document.createElement("select");
+      selector.name = "drive";
+      selector.className = "fb-driveselector";
+      selector.setAttribute("aria-label", "Storage area");
       for (var i = 0; i < this.drives.length; i++) {
-        rootlabeldropdown += `<option value="${i}">${this.drives[i].label}</option>`
+        const option = document.createElement("option");
+        option.value = i;
+        option.textContent = this.drives[i].label;
+        selector.appendChild(option);
       }
-      rootlabeldropdown += '</select><span class="fb-diskinfo-outer"><div class="fb-diskinfo-inner"><span class="fb-diskinfo"></span></div></span>'
-      rootlabel.innerHTML = rootlabeldropdown;
-      const selector = this.anchor_elem.querySelector(".fb-driveselector");
+      rootlabel.appendChild(selector);
+      this.appendDiskInfo(rootlabel);
       selector.onchange = (e) => {
         this.curdrive = selector.value;
         this.root_path = this.drives[this.curdrive].path;
@@ -99,7 +145,11 @@ class FileBrowser {
         this.updateButtonBar();
       };
     } else {
-      rootlabel.innerHTML = `<span class="fb-treerootpathsinglelabel">${this.drives[0].label}</span><span class="fb-diskinfo-outer"><div class="fb-diskinfo-inner"><span class="fb-diskinfo"></span></div></span>`;
+      const label = document.createElement("span");
+      label.className = "fb-treerootpathsinglelabel";
+      label.textContent = this.drives[0].label;
+      rootlabel.appendChild(label);
+      this.appendDiskInfo(rootlabel);
     }
 
     this.buttonbar = this.anchor_elem.querySelector(".fb-buttonbar");
@@ -121,10 +171,75 @@ class FileBrowser {
     this.updateButtonBar();
   }
 
+  appendDiskInfo(parent) {
+    const outer = document.createElement("span");
+    outer.className = "fb-diskinfo-outer";
+    outer.tabIndex = 0;
+    outer.setAttribute("aria-label", "Storage capacity");
+    const inner = document.createElement("span");
+    inner.className = "fb-diskinfo-inner";
+    const info = document.createElement("span");
+    info.className = "fb-diskinfo";
+    info.setAttribute("role", "tooltip");
+    inner.appendChild(info);
+    outer.appendChild(inner);
+    parent.appendChild(outer);
+  }
+
   log(msg) {
     if (this.DEBUG) {
       console.log(msg);
     }
+  }
+
+  findByFullPath(root, path, selector = "[data-fullpath]") {
+    const encodedPath = this.stringEncode(path);
+    return Array.from(root.querySelectorAll(selector)).find(
+      (item) => item.dataset.fullpath === encodedPath) || null;
+  }
+
+  showOperationError(action, error, response) {
+    const status = error
+      ? (error.status ? ` (HTTP ${error.status})` : ` (${error.statusText || "Network error"})`)
+      : "";
+    const detail = response ? `\n\n${String(response).trim().slice(0, 200)}` : "";
+    const message = `Could not ${action}${status}.${detail}`;
+    this.showOperationStatus(message, true);
+    window.alert(message);
+  }
+
+  showOperationStatus(message, isError = false) {
+    const status = this.anchor_elem && this.anchor_elem.querySelector(".fb-status");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("fb-error", Boolean(isError));
+  }
+
+  runMutation(url, action, onSuccess) {
+    this.readfile({
+      url,
+      method: "POST",
+      headers: {"X-TeslaUSB-Request": "1"},
+      callback: (response, data, error) => {
+        var result;
+        try {
+          result = response == null ? null : JSON.parse(response);
+        } catch (parseError) {
+          error = error || {statusText: "Invalid response from TeslaUSB"};
+        }
+        if (error || !result || result.ok !== true) {
+          const detail = result && result.error
+            ? result.error
+            : (error && error.responseText ? error.responseText : response);
+          this.showOperationError(action, error, detail);
+          return;
+        }
+        if (onSuccess) {
+          onSuccess();
+        }
+        this.showOperationStatus(`${action.charAt(0).toUpperCase() + action.slice(1)} completed.`);
+      }
+    });
   }
 
   async refreshLists(callback) {
@@ -133,7 +248,9 @@ class FileBrowser {
     tree.querySelectorAll("details[open] > summary").forEach((s) => { openPaths.push(s.dataset.fullpath); });
     await this.ls(".", false);
     openPaths.forEach((path) => {
-      var detail = tree.querySelector(`details:has(summary[data-fullpath="${path}"])`);
+      const summary = this.findByFullPath(
+        tree, this.stringDecode(path), "summary[data-fullpath]");
+      var detail = summary ? summary.closest("details") : null;
       if (detail != null) {
         detail.open = true;
       }
@@ -149,20 +266,20 @@ class FileBrowser {
     for (var i = 1; i < 100; i++) {
       var str = `${this.current_path == "." ? "" : this.current_path + "/"}New folder${i == 1 ? '' : " (" + i + ")"}`;
       this.log(str);
-      var item = fl.querySelector(`[data-fullpath="${this.stringEncode(str)}"]`);
+      var item = this.findByFullPath(fl, str);
       if (item == null) {
-        this.readfile(
-          {url:`cgi-bin/mkdir.sh?${encodeURIComponent(this.root_path)}&${encodeURIComponent(str)}`,
-            callback:(response, data) => {
-              this.refreshLists(() => {
-                var item = fl.querySelector(`[data-fullpath="${this.stringEncode(str)}"]`);
+        this.runMutation(
+          fileBrowserCgiUrl("mkdir.sh", this.root_path, str),
+          "create the folder",
+          () => {
+            this.refreshLists(() => {
+                var item = this.findByFullPath(fl, str);
                 if (item) {
                   item.scrollIntoView({block: "nearest"});
                   this.selectItem(item);
                   this.renameItem(item);
                 }
-              });
-            }
+            });
           });
         return;
       }
@@ -171,19 +288,19 @@ class FileBrowser {
   }
 
   deleteItems(items) {
-    var pathsList = "";
-    items.forEach((item) => {
-      const fullpath = this.stringDecode(item.dataset.fullpath)
-      pathsList += "&";
-      pathsList += encodeURIComponent(fullpath);
-    });
-    this.readfile(
-      {url:`cgi-bin/rm.sh?${this.root_path}${pathsList}`,
-      callback:(response, data) => {
-        this.log(response);
-        this.refreshLists();
-      }
-      });
+    const itemList = Array.from(items);
+    if (itemList.length === 0) {
+      return;
+    }
+    const names = itemList.map((item) => item.textContent);
+    if (!window.confirm(fileBrowserDeleteConfirmation(names))) {
+      return;
+    }
+    const paths = itemList.map((item) => this.stringDecode(item.dataset.fullpath));
+    this.runMutation(
+      fileBrowserCgiUrl("rm.sh", this.root_path, ...paths),
+      itemList.length === 1 ? "delete the item" : "delete the selected items",
+      () => { this.refreshLists(); });
   }
 
   deleteItem(item) {
@@ -223,13 +340,10 @@ class FileBrowser {
     const oldname = fullpath.substr(idx + 1);
     var newname = item.textContent;
     this.log('renaming "' + oldname + '" to "' + newname + '"');
-    this.readfile(
-      {url:`cgi-bin/mv.sh?${this.root_path}/${this.current_path}&${encodeURIComponent(oldname)}&${encodeURIComponent(newname)}`,
-      callback:(response, data) => {
-        this.log(response);
-        this.refreshLists();
-      }
-      });
+    this.runMutation(
+      fileBrowserCgiUrl("mv.sh", `${this.root_path}/${this.current_path}`, oldname, newname),
+      "rename the item",
+      () => { this.refreshLists(); });
   }
 
   stopEditingItem(item, oldValue) {
@@ -267,20 +381,26 @@ class FileBrowser {
 
   makeLockChime(item) {
     // copy the selected item
-     this.readfile(
-      {url:`cgi-bin/cp.sh?${this.root_path}&${encodeURIComponent(item.dataset.fullpath)}&LockChime.wav`,
-      callback:(response, data) => {
-        this.log(response);
-        this.refreshLists();
-      }
-      });
+    this.runMutation(
+      fileBrowserCgiUrl(
+        "cp.sh",
+        this.root_path,
+        this.stringDecode(item.dataset.fullpath),
+        "LockChime.wav"),
+      "set the lock sound",
+      () => { this.refreshLists(); });
   }
 
   showButton(name, show) {
+    const button = this.buttonbar.querySelector(name);
     if (show) {
-      this.buttonbar.querySelector(name).classList.add("fb-visiblebarbutton");
+      button.classList.add("fb-visiblebarbutton");
+      button.disabled = false;
+      button.removeAttribute("aria-hidden");
     } else {
-      this.buttonbar.querySelector(name).classList.remove("fb-visiblebarbutton");
+      button.classList.remove("fb-visiblebarbutton");
+      button.disabled = true;
+      button.setAttribute("aria-hidden", "true");
     }
   }
 
@@ -444,15 +564,20 @@ class FileBrowser {
     selectRectElem.parentElement.querySelectorAll(".fb-direntry, .fb-fileentry").forEach((item) => {
       if (this.intersects({x: x + window.scrollX, y: y + window.scrollY, height, width}, item.getBoundingClientRect())){
         item.classList.add("fb-selected");
+        item.setAttribute("aria-selected", "true");
       } else {
         item.classList.remove("fb-selected");
+        item.setAttribute("aria-selected", "false");
       }
     } );
     this.updateButtonBar();
   }
 
   unselectAll() {
-    this.selection().forEach((e) => { e.classList.remove("fb-selected");});
+    this.selection().forEach((e) => {
+      e.classList.remove("fb-selected");
+      e.setAttribute("aria-selected", "false");
+    });
     this.updateButtonBar();
   }
 
@@ -462,6 +587,7 @@ class FileBrowser {
 
   selectItem(elem) {
     elem.classList.add("fb-selected");
+    elem.setAttribute("aria-selected", "true");
     this.updateButtonBar();
   }
 
@@ -613,8 +739,30 @@ class FileBrowser {
       div.style.background = "#0008";
       div.onclick = (e) => { if (e.target === div) div.remove(); };
       document.firstElementChild.append(div);
-      div.innerHTML = `<div class="fb-player"><div class="fb-playertitle">${displaypath}</div><audio autoplay controls src="${encodeURIComponent(this.root_path + "/" + path)}"></div>`;
-      div.querySelector(".fb-playertitle").scrollLeft=1000;
+      const player = document.createElement("div");
+      player.className = "fb-player";
+      player.setAttribute("role", "dialog");
+      player.setAttribute("aria-label", `Playing ${displaypath}`);
+      const title = document.createElement("div");
+      title.className = "fb-playertitle";
+      title.textContent = displaypath;
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.controls = true;
+      audio.src = fileBrowserEncodePath(`${this.root_path}/${path}`);
+      audio.onerror = () => {
+        this.showOperationStatus(`Could not play ${displaypath}. The file may be unsupported or unavailable.`, true);
+      };
+      player.onkeydown = (e) => {
+        if (e.key === "Escape") {
+          div.remove();
+        }
+      };
+      player.tabIndex = -1;
+      player.append(title, audio);
+      div.appendChild(player);
+      player.focus();
+      title.scrollLeft=1000;
     }
   }
 
@@ -647,13 +795,17 @@ class FileBrowser {
 
   createTreeItem(label, fullPath) {
     var li = document.createElement("li");
-    li.innerHTML = '<details>' +
-       '<summary class="fb-treedirentry" data-fullpath="' + this.stringEncode(fullPath) + '" draggable=true>' + label + '</summary>' +
-       '<ul></ul></details>';
-    const s = li.querySelector("summary");
+    const details = document.createElement("details");
+    const s = document.createElement("summary");
+    s.className = "fb-treedirentry";
+    s.dataset.fullpath = this.stringEncode(fullPath);
+    s.draggable = true;
+    s.textContent = label;
+    const u = document.createElement("ul");
+    details.append(s, u);
+    li.appendChild(details);
     s.onclick = (e) => { this.dirClicked(e, this.stringDecode(e.target.dataset.fullpath)); };
     s.ondragstart = this.dragStart;
-    const u = li.querySelector("ul");
     u.dataset.fullpath = fullPath;
     this.addCommonDragHooks(u);
     return li;
@@ -668,7 +820,7 @@ class FileBrowser {
       } else {
         pathSoFar = pathParts[i];
       }
-      var node = root.querySelector(`[data-fullpath="${this.stringEncode(pathSoFar)}"]`);
+      var node = this.findByFullPath(root, pathSoFar, "summary[data-fullpath]");
       if (node == null) {
         /* level 'i' doesn't exist yet, add it */
         var newPath = this.createTreeItem(pathParts[i], pathSoFar);
@@ -682,25 +834,48 @@ class FileBrowser {
     return root;
   }
 
-  readfile({url, callback, callbackarg}) {
+  readfile({url, callback, callbackarg, method = "GET", headers = {}}) {
     var request = new XMLHttpRequest();
-    request.open('GET', url);
-    request.onreadystatechange = function () {
+    var completed = false;
+    const finish = (response, error) => {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      if (callback != null) {
+        callback(response, callbackarg, error);
+      }
+    };
+    request.open(method, url);
+    for (const [name, value] of Object.entries(headers)) {
+      request.setRequestHeader(name, value);
+    }
+    request.timeout = 30000;
+    request.onreadystatechange = () => {
       if (request.readyState === XMLHttpRequest.DONE) {
-        if (request.status === 200) {
-          var type = request.getResponseHeader('Content-Type');
-          if (type.indexOf("text") !== 1) {
-            if (callback != null) {
-              callback(request.responseText, callbackarg);
-            }
-          }
-        } else if (request.status > 400) {
-            if (callback != null) {
-              callback(null, null);
-            }
+        if (request.status >= 200 && request.status < 300) {
+          finish(request.responseText, null);
+        } else {
+          finish(request.responseText || null, {
+            status: request.status,
+            statusText: request.statusText || "Request failed",
+            responseText: request.responseText || ""
+          });
         }
       }
-    }
+    };
+    request.onerror = () => finish(null, {
+      status: request.status,
+      statusText: request.statusText || "Network error"
+    });
+    request.onabort = () => finish(null, {
+      status: request.status,
+      statusText: "Request cancelled"
+    });
+    request.ontimeout = () => finish(null, {
+      status: request.status,
+      statusText: "Request timed out"
+    });
     request.send();
   }
 
@@ -712,6 +887,7 @@ class FileBrowser {
       this.unselectAll();
     }
     ev.target.classList.toggle("fb-selected");
+    ev.target.setAttribute("aria-selected", ev.target.classList.contains("fb-selected") ? "true" : "false");
     this.updateButtonBar();
   }
 
@@ -720,6 +896,9 @@ class FileBrowser {
     div.className = isdir ? "fb-direntry" : "fb-fileentry"
     div.textContent = name;
     div.draggable = true;
+    div.tabIndex = 0;
+    div.setAttribute("role", "option");
+    div.setAttribute("aria-selected", "false");
     if (isdir) {
       div.ondblclick = (e) => { this.dirClicked(null, path); };
       this.addCommonDragHooks(div);
@@ -732,6 +911,16 @@ class FileBrowser {
     }
     div.onclick = (e) => { this.selectFileEntry(e); };
     div.onpointerdown = (e) => { e.stopPropagation(); };
+    div.onkeydown = (e) => {
+      if (e.key === " ") {
+        e.preventDefault();
+        this.selectFileEntry({button:0, ctrlKey:e.ctrlKey, stopPropagation:() => {}, target:div});
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (isdir) this.dirClicked(null, path);
+        else this.fileClicked(null, path.substring(0, path.lastIndexOf(":")));
+      }
+    };
     return div;
   }
 
@@ -753,7 +942,10 @@ class FileBrowser {
 
   setDiskStats(freebytes, totalbytes) {
     var diskinfospan = this.anchor_elem.querySelector('.fb-diskinfo');
-    diskinfospan.innerText = `${this.niceNumber(freebytes)} free of ${this.niceNumber(totalbytes)}`;
+    const diskInfo = `${this.niceNumber(freebytes)} free of ${this.niceNumber(totalbytes)}`;
+    diskinfospan.innerText = diskInfo;
+    diskinfospan.closest(".fb-diskinfo-outer").setAttribute(
+      "aria-label", `Storage capacity: ${diskInfo}`);
   }
 
   /*
@@ -847,7 +1039,18 @@ class FileBrowser {
       var pathdiv = this.anchor_elem.querySelector(".fb-dirpath");
       this.setClickablePath(pathdiv, path);
     }
-    this.readfile({url:`cgi-bin/ls.sh?${encodeURIComponent(this.root_path)}&${encodeURIComponent(path)}`, callback:(paths,switchto) => { this.readPaths(path, paths, switchto); resolve(); }, callbackarg:switchtopath});
+    this.readfile({
+      url: fileBrowserCgiUrl("ls.sh", this.root_path, path),
+      callback: (paths, switchto, error) => {
+        this.readPaths(path, paths, switchto);
+        if (error) {
+          this.showOperationStatus(
+            `Could not load the file list (${error.statusText || "request failed"}).`, true);
+        }
+        resolve();
+      },
+      callbackarg: switchtopath
+    });
     });
   }
 
@@ -877,7 +1080,7 @@ class FileBrowser {
     }
     //this.log(`${pathList.toString()} => ${destPath}`);
     for (var srcPath of pathList) {
-      if (destPath.startsWith(srcPath)) {
+      if (fileBrowserIsSameOrDescendantPath(srcPath, destPath)) {
         /* can't drop parent in child */
         return false;
       }
@@ -931,18 +1134,12 @@ class FileBrowser {
         pathList.push(this.stringDecode(srcItem.dataset.fullpath));
       });
     }
-    var pathString = "";
-    pathList.forEach((path) => {
-      pathString += `&${encodeURIComponent(path)}`;
-    });
-    this.log(`${pathList} => ${this.stringDecode(ev.target.dataset.fullpath)}`);
-    this.readfile(
-      {url:`cgi-bin/mv.sh?${this.root_path}${pathString}&${this.stringDecode(ev.target.dataset.fullpath)}`,
-      callback:(response, data) => {
-        this.log(response);
-        this.refreshLists();
-      }
-      });
+    const destination = this.stringDecode(ev.target.dataset.fullpath);
+    this.log(`${pathList} => ${destination}`);
+    this.runMutation(
+      fileBrowserCgiUrl("mv.sh", this.root_path, ...pathList, destination),
+      pathList.length === 1 ? "move the item" : "move the selected items",
+      () => { this.refreshLists(); });
 
   }
 
@@ -955,6 +1152,7 @@ class FileBrowser {
       }
     }
     this.hideDropInfo();
+    this.showOperationStatus("Upload cancelled.");
   }
 
   showDropInfo() {
@@ -1012,6 +1210,7 @@ class FileBrowser {
       });
     } catch (err) {
       this.log(err);
+      throw err;
     }
   }
 
@@ -1022,6 +1221,7 @@ class FileBrowser {
       });
     } catch (err) {
       this.log(err);
+      throw err;
     }
   }
 
@@ -1054,24 +1254,34 @@ class FileBrowser {
       queue.push(...files);
     }
 
-    while (queue.length > 0) {
-      if (this.cancelUpload) {
-        this.uploading = false;
-        return;
-      }
-      //this.log(`processing... (${fileList.length})`);
-      var entry = queue.shift();
-      if (entry.isDirectory) {
-        queue.push(...await this.readAllDirectoryEntries(entry.createReader()));
-      } else {
-        fileList.push(entry);
-        if (fileList.length == 1) {
-          this.showDropInfo();
+    try {
+      while (queue.length > 0) {
+        if (this.cancelUpload) {
+          this.uploading = false;
+          return;
         }
-        var file = await this.getFilePromise(entry);
-        totalBytes += file.size;
-        this.updateDropInfo(fileList.length, totalBytes);
+        //this.log(`processing... (${fileList.length})`);
+        var entry = queue.shift();
+        if (entry.isDirectory) {
+          queue.push(...await this.readAllDirectoryEntries(entry.createReader()));
+        } else {
+          var file = await this.getFilePromise(entry);
+          fileList.push(entry);
+          if (fileList.length == 1) {
+            this.showDropInfo();
+          }
+          totalBytes += file.size;
+          this.updateDropInfo(fileList.length, totalBytes);
+        }
       }
+    } catch (error) {
+      this.uploading = false;
+      this.showOperationError(
+        "read the dropped item",
+        {statusText: error && error.message ? error.message : "Read error"},
+        null);
+      this.hideDropInfo();
+      return;
     }
     this.log(`total size: ${totalBytes}`);
     var l1 = this.anchor_elem.querySelector(".fb-dropinfo-line1");
@@ -1105,13 +1315,17 @@ class FileBrowser {
       var l2 = this.anchor_elem.querySelector(".fb-dropinfo-line2");
       l2.innerText = f.name;
       this.uploadFile(destpath, f,
-        (status) => {
+        (status, statusText) => {
         // completion function
-        if (status === 200) {
+        if (status >= 200 && status < 300) {
           this.uploadFiles(destpath, fileList);
         } else {
           this.log(`status: ${status}`);
           this.uploading = false;
+          if (!this.cancelUpload) {
+            this.showOperationError("upload the file", {status, statusText}, null);
+            this.hideDropInfo();
+          }
         }
       },
       (e, request) => {
@@ -1130,26 +1344,49 @@ class FileBrowser {
           this.log("cancelling upload");
           request.abort();
         }
+      }).catch((error) => {
+        this.uploading = false;
+        this.showOperationError(
+          "read the file for upload",
+          {statusText: error && error.message ? error.message : "Read error"},
+          null);
+        this.hideDropInfo();
       });
     } else {
+      this.uploading = false;
       this.hideDropInfo();
+      if (!this.cancelUpload) {
+        this.showOperationStatus("Upload completed.");
+      }
     }
   }
 
   async uploadFile(destpath, entry, completionCallback, progressCallback) {
-    var sent = 0;
     var file = await this.getFilePromise(entry);
     var relpath = (entry instanceof File) ? file.name : entry.fullPath.substr(1);
 
     const request = new XMLHttpRequest();
-    request.open("POST", `cgi-bin/upload.sh?${encodeURIComponent(this.root_path + "/" + destpath)}&${encodeURIComponent(relpath)}`);
+    var completed = false;
+    const finish = (status, statusText) => {
+      if (completed) return;
+      completed = true;
+      completionCallback(status, statusText || request.statusText || "Request failed");
+    };
+    request.open(
+      "POST",
+      fileBrowserCgiUrl("upload.sh", `${this.root_path}/${destpath}`, relpath));
     request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.setRequestHeader("X-TeslaUSB-Request", "1");
+    request.timeout = 300000;
     request.onreadystatechange = () => {
       // Call a function when the state changes.
       if (request.readyState === XMLHttpRequest.DONE) {
-          completionCallback(request.status);
+          finish(request.status, request.statusText);
       }
     };
+    request.onerror = () => finish(request.status, "Network error");
+    request.onabort = () => finish(request.status, "Upload cancelled");
+    request.ontimeout = () => finish(request.status, "Upload timed out");
     request.upload.onprogress = (e) => {
       progressCallback(e, request);
     };
@@ -1273,10 +1510,13 @@ class FileBrowser {
     const downloadName = item.innerText + ".zip";
     const fullpath = this.stringDecode(item.dataset.fullpath);
     const idx = fullpath.lastIndexOf("/") + 1;
-    const root = encodeURIComponent(`${this.root_path}${idx?"/":""}${fullpath.substr(0,idx)}`);
-    const relpath = encodeURIComponent(fullpath.substr(idx));
-    this.log(`:${downloadName}:${document.location.href}cgi-bin/downloadzip.sh?${root}&${relpath}`);
-    return `:${downloadName}:${document.location.href}cgi-bin/downloadzip.sh?${root}&${relpath}`;
+    const root = `${this.root_path}${idx ? "/" : ""}${fullpath.substr(0, idx)}`;
+    const relpath = fullpath.substr(idx);
+    const url = new URL(
+      fileBrowserCgiUrl("downloadzip.sh", root, relpath),
+      document.baseURI).href;
+    this.log(`:${downloadName}:${url}`);
+    return `:${downloadName}:${url}`;
   }
 
   downloadURLForSelection() {
@@ -1289,24 +1529,39 @@ class FileBrowser {
       const selected = selection[0];
       downloadName = selected.innerText;
       if (filesOnly) {
-        const fullpath = encodeURIComponent(this.stringDecode(selected.dataset.fullpath));
-        const root = encodeURIComponent(this.root_path);
-        return `:${downloadName}:${document.location.href}cgi-bin/download.sh?${root}&${fullpath}`;
+        const fullpath = this.stringDecode(selected.dataset.fullpath);
+        const url = new URL(
+          fileBrowserCgiUrl("download.sh", this.root_path, fullpath),
+          document.baseURI).href;
+        return `:${downloadName}:${url}`;
       }
     }
 
     // the user is dragging multiple entries, or a single directory-entry.
     downloadName += ".zip";
-    var pathsList = encodeURIComponent(`${this.root_path}`);
+    var root = this.root_path;
     if (this.current_path != ".") {
-      pathsList += encodeURIComponent(`/${this.current_path}`);
+      root += `/${this.current_path}`;
     }
+    const relativePaths = [];
     selection.forEach((e) => {
       const fullpath = this.stringDecode(e.dataset.fullpath)
       const relpath = this.current_path != "." ?  fullpath.substr(this.current_path.length + 1) : fullpath;
-      pathsList += "&";
-      pathsList += encodeURIComponent(relpath);
+      relativePaths.push(relpath);
     });
-    return `:${downloadName}:${document.location.href}cgi-bin/downloadzip.sh?${pathsList}`;
+    const url = new URL(
+      fileBrowserCgiUrl("downloadzip.sh", root, ...relativePaths),
+      document.baseURI).href;
+    return `:${downloadName}:${url}`;
   }
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    FileBrowser,
+    fileBrowserCgiUrl,
+    fileBrowserDeleteConfirmation,
+    fileBrowserEncodePath,
+    fileBrowserIsSameOrDescendantPath
+  };
 }

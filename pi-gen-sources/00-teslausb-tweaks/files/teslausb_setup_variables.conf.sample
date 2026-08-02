@@ -59,9 +59,11 @@ export SHARE_PASSWORD='password'
 # plan on using an sd card at all (i.e. you are both booting from and storing
 # recordings on the USB drive), or are ONLY using an sd card (i.e. boot from
 # and store recordings on sd card), do NOT uncommment this line.
-# This should be set to the device name of the drive, e.g. /dev/sda for a drive
-# connected to a USB port, or /dev/nvme0n1 for an onboard NVME drive.
-# NOTE: the specified drive will be wiped and repartitioned.
+# This must be the whole-disk device name, e.g. /dev/sda for a drive connected
+# to a USB port, or /dev/nvme0n1 for an onboard NVMe drive. Do not use a
+# partition such as /dev/sda1. Verify the path on the target Pi immediately
+# before setup; the setup will reject the current root/boot device.
+# NOTE: the specified drive will be completely wiped and repartitioned.
 # export DATA_DRIVE=/dev/sda
 
 # The car normally keeps an hour worth of RecentClips, however there have been
@@ -119,7 +121,12 @@ export CAM_SIZE=40G
 # This is obsolete/deprecated, as you can now access recordings via TeslaUSB's
 # web interface.
 #export SAMBA_ENABLED=true
-# uncomment to enable guest access to the Samba server
+# Authenticated sharing is the default. It requires a unique, non-default
+# password of at least 12 UTF-8 bytes. The username defaults to the login user.
+#export SAMBA_USER='pi'
+#export SAMBA_PASSWORD='choose-a-unique-samba-password'
+# Alternatively, uncomment to enable unauthenticated guest access. Only use
+# guest access on a private network you fully trust.
 #export SAMBA_GUEST=true
 
 # Uncomment to enable teslausb to act as a wifi access point with the given
@@ -134,11 +141,31 @@ export CAM_SIZE=40G
 # that range.
 #export AP_IP='192.168.66.1'
 
-# Uncomment if you'd like to password protect the teslausb web interface
-# WARNING: Anyone on the $SSID (and $AP_SSID if configured) wifi network can
-# freely interact with the teslausb web interface if it isn't secured!
-# export WEB_USERNAME='pi'
-# export WEB_PASSWORD='raspberry'
+# Web authentication is enabled by default. For a headless first boot, strongly
+# prefer setting both values now so you already know the login. WEB_USERNAME is
+# 1-64 letters, numbers, dots, underscores, at signs, or dashes. WEB_PASSWORD
+# must be a unique, non-default value of 12-72 UTF-8 bytes.
+# export WEB_USERNAME='teslausb'
+# export WEB_PASSWORD='choose-a-unique-web-password'
+# If both values remain unset, setup generates a random login in the root-only
+# file /root/teslausb-web-credentials. Retrieve it from a local console or over
+# SSH after configuring SSH_USER_PASSWORD or SSH_ROOT_PUBLIC_KEY below.
+# Setting WEB_AUTH_DISABLED=true is an explicit insecure opt-out. It lets
+# anyone on the connected Wi-Fi networks view recordings and run web actions.
+# export WEB_AUTH_DISABLED=false
+
+# TeslaUSB accepts the built-in local hostnames and private/link-local IPs by
+# default. If you access it through an additional exact DNS name (for example,
+# Tailscale MagicDNS), list comma- or space-separated DNS names/IPs here. Do
+# not include a URL scheme, path, wildcard, or port.
+# export WEB_ALLOWED_HOSTS='teslausb.example.ts.net'
+
+# The bundled web interface at / is available without downloading anything.
+# To install the optional external interface at /new/, set BOTH an immutable
+# release tag and its trusted 64-hex SHA-256 asset digest. "latest" and
+# unverified downloads are rejected. Leave both unset for an offline-safe setup.
+# export WEBUI_RELEASE='v1.2.1'
+# export WEBUI_SHA256='replace_with_the_trusted_64_hex_sha256_digest'
 
 # Uncomment this if you are using Raspberry Pi OS and want to set the time
 # zone to something other than the default 'BST' timezone.
@@ -152,14 +179,24 @@ export CAM_SIZE=40G
 # the duration of that delay
 # export ARCHIVE_DELAY=20
 
-# Uncomment if you want to override the default hostname of "teslausb"
+# Uncomment if you want to override the default hostname of "teslausb". It
+# must be one DNS label of 1-63 characters, with letters/numbers at both edges
+# and optional internal hyphens (for example, teslausb-Model3).
 # export TESLAUSB_HOSTNAME=teslausb-Model3
 
-# uncomment to define an SSH public key that can be utilized to SSH into
-# teslausb as root
+# On fresh images the default login password is locked. Prefer an SSH public
+# key, or set a new password explicitly before first boot.
+# export SSH_USER_PASSWORD='choose-a-unique-ssh-password'
+# Setting this to true retains the image's known default password and is
+# strongly discouraged. It exists only as an explicit compatibility escape.
+# export SSH_ALLOW_DEFAULT_PASSWORD=false
+
+# Uncomment to define an SSH public key that can be utilized to SSH into
+# teslausb as root.
 # export SSH_ROOT_PUBLIC_KEY='ssh-rsa AAAAB3NzaC1yc2EAAAADA... user@host.domain'
 
-# uncoment to disable password SSH authentication for all users
+# Uncomment to disable password SSH authentication for all users after adding
+# and testing a public key.
 # export SSH_DISABLE_PASSWORD_AUTHENTICATION=true
 
 # Push notifications consist of a title and a message.

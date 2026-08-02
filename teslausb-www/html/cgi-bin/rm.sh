@@ -1,25 +1,26 @@
 #!/bin/bash
 
-declare -a urlargs
-IFS='&' read -r -a urlargs <<<"$QUERY_STRING" 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+# shellcheck source=teslausb-www/html/cgi-bin/cgi-common.sh
+source "$script_dir/cgi-common.sh"
 
-declare -i len=${#urlargs[@]}
-for ((i=0; i<${len}; i++ ))
+cgi_require_mutation
+cgi_parse_query 2 -1
+cgi_resolve_root "${CGI_ARGS[0]}"
+
+declare -a paths=()
+for requested in "${CGI_ARGS[@]:1}"
 do
-  val="${urlargs[i]//+/ }"
-  urlargs[i]="$(echo -e "${val//%/\\x}")"
+  cgi_resolve_path "$requested"
+  cgi_reject_final_symlink "$requested"
+  cgi_require_existing any
+  paths+=("$CGI_PATH")
 done
 
-cd "$DOCUMENT_ROOT/${urlargs[0]}"
-
-cat << EOF
-HTTP/1.0 200 OK
-Content-type: text/plain
-
-EOF
-if rm -r "${urlargs[@]:1}"  &> /dev/null
+if rm -r -- "${paths[@]}" &> /dev/null
 then
-  echo OK
+  cgi_ok 'Delete completed.'
 else
-  echo FAILED
+  cgi_error '409 Conflict' 'Unable to remove one or more requested paths.'
 fi
