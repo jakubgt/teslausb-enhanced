@@ -4,6 +4,30 @@ All notable changes to this private TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
+## [1.2.0-rc.4] - 2026-08-08
+
+Fourth release candidate for the downloadable Raspberry Pi Zero 2 W image. It
+supersedes the unpublished `v1.2.0-rc.3` draft; the rc.3 native image build
+completed, but post-build verification failed before any image assets were
+uploaded or published.
+
+### Fixed
+
+- Offline image verification now runs the trusted checked-in verifier with the
+  privileges required to inspect root-only log, network, and credential paths,
+  then validates and returns only the generated manifest outputs to the Actions
+  runner account.
+- Loop-device attach and detach calls use syntax compatible with the hosted
+  Ubuntu arm64 runner while retaining canonical image paths and strict
+  `/dev/loopN` validation before cleanup.
+- Fresh release tags are validated from GitHub's creation response and given a
+  bounded visibility interval before draft creation, avoiding the tag-to-release
+  propagation race observed during the rc.3 build without blindly retrying a
+  release creation request.
+
+All feature, security, provenance, and physical-hardware testing boundaries
+documented for the preceding candidates remain in effect.
+
 ## [1.2.0-rc.3] - 2026-08-08
 
 Third release candidate for the downloadable Raspberry Pi Zero 2 W image. It
@@ -185,3 +209,4 @@ Initial private enhanced release, based on upstream `main-dev` commit
 [1.2.0-rc.1]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.1
 [1.2.0-rc.2]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.2
 [1.2.0-rc.3]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.3
+[1.2.0-rc.4]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4
