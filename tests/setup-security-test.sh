@@ -11,6 +11,7 @@ configure_samba="$repo_root/setup/pi/configure-samba.sh"
 configure_ssh="$repo_root/setup/pi/configure-ssh.sh"
 pi_gen_run="$repo_root/pi-gen-sources/00-teslausb-tweaks/00-run.sh"
 pi_gen_config="$repo_root/pi-gen-sources/pi-gen-config"
+release_image_verifier="$repo_root/tools/verify-release-image.sh"
 wpa_sample="$repo_root/pi-gen-sources/00-teslausb-tweaks/files/wpa_supplicant.conf.sample"
 
 test_root="$(mktemp -d)"
@@ -40,6 +41,7 @@ eval "$(sed -n '/^function lock_image_account () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_source_bundle () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_tzupdate_checksum () {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^function set_timezone () {$/,/^}$/p' "$setup_script")"
+eval "$(sed -n '/^find_enabled_systemd_unit() {$/,/^}$/p' "$release_image_verifier")"
 setup_config_message() { :; }
 
 REPO=marcone
@@ -151,13 +153,44 @@ assert_contains "$rc_local" 'passwd --unlock "$login_user"'
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
 image_lock_line="$(grep -nF -- 'lock_image_account "${ROOTFS_DIR}" "${FIRST_USER_NAME:-pi}"' "$pi_gen_run" | cut -d: -f1)"
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
-ssh_enable_line="$(grep -nF -- 'touch "${ROOTFS_DIR}/boot/ssh"' "$pi_gen_run" | cut -d: -f1)"
+ssh_enable_line="$(grep -nF -- 'touch "${ROOTFS_DIR}/boot/firmware/ssh"' "$pi_gen_run" | cut -d: -f1)"
 if [ -z "$image_lock_line" ] || [ -z "$ssh_enable_line" ]
 then
   fail 'pi-gen account lock or SSH enable step was not found'
 fi
 [ "$image_lock_line" -lt "$ssh_enable_line" ] ||
   fail 'pi-gen enables SSH before locking the image account'
+# shellcheck disable=SC2016 # The search string is intentionally literal source.
+assert_absent "$pi_gen_run" 'touch "${ROOTFS_DIR}/boot/ssh"'
+assert_contains "$pi_gen_run" 'systemctl disable rpi-resize.service'
+assert_contains "$pi_gen_run" 'rpi-swap systemd-zram-generator'
+assert_contains "$pi_gen_run" 'systemctl disable dpkg-db-backup.timer'
+if grep -Fxq -- 'systemctl disable dpkg-db-backup' "$pi_gen_run"
+then
+  fail 'pi-gen disables the static dpkg backup service instead of its timer'
+fi
+assert_contains "$pi_gen_run" 'rm -f -- /etc/init.d/resize2fs_once'
+assert_contains "$pi_gen_run" \
+  'rm -f -- /usr/share/initramfs-tools/scripts/local-premount/firstboot'
+assert_contains "$release_image_verifier" \
+  'release image contains a legacy root-filesystem SSH marker'
+assert_contains "$release_image_verifier" \
+  'automatic root partition resizing remains enabled'
+assert_contains "$release_image_verifier" \
+  'dpkg database backup timer remains enabled'
+assert_contains "$release_image_verifier" \
+  'release image contains active swap package'
+
+fake_systemd="$test_root/fake-systemd"
+enabled_resize_path="$fake_systemd/sysinit.target.wants/rpi-resize.service"
+mkdir -p "$(dirname -- "$enabled_resize_path")"
+printf 'enabled test unit\n' > "$enabled_resize_path"
+[ "$(find_enabled_systemd_unit "$fake_systemd" rpi-resize.service)" = \
+  "$enabled_resize_path" ] ||
+  fail 'image verifier did not detect an enabled systemd unit'
+rm -- "$enabled_resize_path"
+[ -z "$(find_enabled_systemd_unit "$fake_systemd" rpi-resize.service)" ] ||
+  fail 'image verifier reported a removed systemd unit as enabled'
 
 mapfile -t source_verify_lines < <(
   grep -n '^verify_source_bundle ' "$pi_gen_run" | cut -d: -f1
