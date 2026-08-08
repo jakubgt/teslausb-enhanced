@@ -184,7 +184,7 @@ systemctl disable keyboard-setup
 systemctl disable resize2fs_once
 systemctl disable dpkg-db-backup
 update-rc.d resize2fs_once remove
-rm /etc/init.d/resize2fs_once
+rm -f -- /etc/init.d/resize2fs_once
 rm /usr/share/initramfs-tools/scripts/local-premount/firstboot
 update-initramfs -u
 EOF
