@@ -11,15 +11,74 @@ function log_progress () {
   fi
 }
 
+function validate_ap_ip () {
+  local candidate="$1"
+  local first second third fourth octet
+  [[ "$candidate" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r first second third fourth <<< "$candidate"
+  for octet in "$first" "$second" "$third" "$fourth"
+  do
+    (( 10#$octet <= 255 )) || return 1
+  done
+  (( 10#$fourth >= 1 && 10#$fourth <= 9 ))
+}
+
+function validate_ap_text () {
+  local candidate="$1"
+  case "$candidate" in
+    *$'\n'*|*$'\r'*|*$'\t'*) return 1 ;;
+  esac
+}
+
+function rewrite_hosts_for_ap () {
+  local ap_ip="$1"
+  local hosts_tmp
+  hosts_tmp=$(mktemp /tmp/teslausb-hosts.XXXXXX)
+  if ! awk -v ap_ip="$ap_ip" '
+    $1 == "127.0.0.1" && $2 == "localhost" { print; next }
+    $1 == "127.0.0.1" { $1 = ap_ip }
+    { print }
+  ' /etc/hosts > "$hosts_tmp"
+  then
+    rm -f -- "$hosts_tmp"
+    return 1
+  fi
+  if ! cat "$hosts_tmp" > /etc/hosts
+  then
+    rm -f -- "$hosts_tmp"
+    return 1
+  fi
+  rm -f -- "$hosts_tmp"
+}
+
 if [ -z "${AP_SSID+x}" ]
 then
   log_progress "AP_SSID not set"
   exit 1
 fi
 
-if [ -z "${AP_PASS+x}" ] || [ "$AP_PASS" = "password" ] || (( ${#AP_PASS} < 8))
+if ! validate_ap_text "$AP_SSID" ||
+   (( $(LC_ALL=C printf %s "$AP_SSID" | wc -c) < 1 )) ||
+   (( $(LC_ALL=C printf %s "$AP_SSID" | wc -c) > 32 ))
 then
-  log_progress "AP_PASS not set, not changed from default, or too short"
+  log_progress "AP_SSID must be 1-32 bytes with no control characters"
+  exit 1
+fi
+
+if [ -z "${AP_PASS+x}" ] || [ "$AP_PASS" = "password" ] ||
+   ! validate_ap_text "$AP_PASS" ||
+   (( $(LC_ALL=C printf %s "$AP_PASS" | wc -c) < 8 )) ||
+   (( $(LC_ALL=C printf %s "$AP_PASS" | wc -c) > 63 ))
+then
+  log_progress "AP_PASS must be 8-63 bytes with no control characters and not use the default"
+  exit 1
+fi
+
+IP=${AP_IP:-"192.168.66.1"}
+readonly IP
+if ! validate_ap_ip "$IP"
+then
+  log_progress "AP_IP must be IPv4 and end in .1 through .9"
   exit 1
 fi
 
@@ -65,7 +124,6 @@ function nm_add_ap () {
   #nmcli con modify TESLAUSB_AP 802-11-wireless.channel 6
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$AP_PASS" || return 1
-  IP=${AP_IP:-"192.168.66.1"}
   nmcli con modify TESLAUSB_AP ipv4.addr "$IP/24" || return 1
   nmcli con modify TESLAUSB_AP ipv4.method shared || return 1
   nmcli con modify TESLAUSB_AP ipv6.method disabled || return 1
@@ -116,8 +174,7 @@ fi
 
 if ! grep -q id_str /etc/wpa_supplicant/wpa_supplicant.conf
 then
-  IP=${AP_IP:-"192.168.66.1"}
-  NET=$(echo -n "$IP" | sed -e 's/\.[0-9]\{1,3\}$//')
+  NET=${IP%.*}
 
   # install required packages
   log_progress "installing dnsmasq and hostapd"
@@ -207,7 +264,7 @@ then
   # update the host name to have the AP IP address, otherwise
   # clients connected to the IP will get 127.0.0.1 when looking
   # up the teslausb host name
-  sed -i -e "/^127.0.0.1\s*localhost/b; s/^127.0.0.1\(\s*.*\)/$IP\1/" /etc/hosts
+  rewrite_hosts_for_ap "$IP"
 
   # add ID string to wpa_supplicant
   sed -i -e 's/}/  id_str="AP1"\n}/'  /etc/wpa_supplicant/wpa_supplicant.conf

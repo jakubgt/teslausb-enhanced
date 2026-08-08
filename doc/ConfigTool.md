@@ -1,10 +1,20 @@
 # Local configuration helper
 
-`tools/teslausb-config.js` is an optional, dependency-free Node.js tool for preparing `teslausb_setup_variables.conf` on your own computer. It never sources the configuration file: preflight treats it as text, so unexpected shell expressions are reported instead of executed.
+`tools/teslausb-config.js` is an optional, dependency-free Node.js tool for checking and migrating TeslaUSB configuration on your own computer. New images prefer the strict [declarative JSON format](DeclarativeConfig.md). The helper never sources a legacy configuration file: preflight and migration treat it as text, so unexpected shell expressions are reported instead of executed.
 
-The normal sample-file workflow remains supported. This helper is useful when passwords contain quotes or backslashes, when you want a repeatable minimal configuration, or when you need to share a redacted copy for support.
+The legacy sample-file workflow remains supported during the deprecation period. This helper is useful when passwords contain quotes or backslashes, when migrating an existing installation, or when you need to share a redacted copy for support.
 
-## Generate a minimal configuration
+## Migrate to the preferred JSON format
+
+```console
+node tools/teslausb-config.js migrate teslausb_setup_variables.conf teslausb_setup.json
+```
+
+Migration accepts only safe literal assignments, validates the old configuration first, converts known booleans, integers, and arrays to native JSON types, enforces runtime integer ranges and cross-field requirements, and refuses unknown variable names or an existing output file. Review the generated file against `teslausb_setup.json.sample`. The generated file contains secrets and must remain private.
+
+For an existing Pi, install the release containing JSON support before switching formats: upgrade with the legacy `.conf`, confirm the upgrade, migrate the file locally, and then install the reviewed JSON file as `/root/teslausb_setup.json` with owner `root:root` and mode `0600`.
+
+## Generate a legacy configuration
 
 Create a private file named `teslausb-config-values.json` containing the variables you need. For example, a Pi that initially stores recordings locally could use:
 
@@ -19,7 +29,7 @@ Create a private file named `teslausb-config-values.json` containing the variabl
 }
 ```
 
-Generate the setup file:
+Generate the legacy setup file:
 
 ```console
 node tools/teslausb-config.js generate teslausb-config-values.json teslausb_setup_variables.conf
@@ -35,7 +45,7 @@ For CIFS, NFS, rsync, or rclone, use the variable names and requirements documen
 node tools/teslausb-config.js preflight teslausb_setup_variables.conf
 ```
 
-Preflight checks exact literal export syntax, common sample placeholders, archive-specific required values, size formats, Wi-Fi/access-point and web-auth pairs, safe hostname syntax, pinned external-WebUI metadata, and potentially destructive `DATA_DRIVE` use. Web passwords must be 12–72 UTF-8 bytes for bcrypt and must not be a known default or match the username. Warnings are advisory; errors return a nonzero exit code. A successful preflight cannot verify that Wi-Fi credentials, servers, shares, paths, checksums, or passwords are correct, so retain the original sample comments and check those values carefully.
+Preflight checks exact literal export syntax, common sample placeholders, archive-specific required values, integer ranges, size formats, Wi-Fi/access-point and web-auth pairs, enabled-notification dependencies, safe hostname/path syntax, pinned external-WebUI metadata, and potentially destructive `DATA_DRIVE` use. Web passwords must be 12–72 UTF-8 bytes for bcrypt and must not be a known default or match the username. Warnings are advisory; errors return a nonzero exit code. A successful preflight cannot verify that Wi-Fi credentials, servers, shares, paths, checksums, or passwords are correct, so retain the original sample comments and check those values carefully.
 
 Dynamic shell expressions, token concatenation, and mixed quoted/unquoted values are intentionally rejected. If you rely on advanced shell syntax, keep using the documented manual workflow and review the file yourself.
 

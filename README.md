@@ -18,7 +18,7 @@ If you are interested in having more detailed information about how TeslaUsb wor
 
 ### Dashcam encryption compatibility
 
-Tesla vehicles with software 2026.20 or later can encrypt recordings written to the USB drive. TeslaUSB cannot currently archive or play files in `EncryptedClips`; automatic archiving and the web viewer require standard, unencrypted recordings. If encryption is enabled in your vehicle, turn off **Controls > Safety > Encrypt Dashcam Recordings**. See Tesla's [Dashcam documentation](https://www.tesla.com/ownersmanual/model3/en_us/GUID-3BCC07CE-5EA2-4F40-99D1-27690898FF3C.html) for details.
+Tesla vehicles with software 2026.20 or later can encrypt recordings written to the USB drive. TeslaUSB detects the `EncryptedClips` directory and warns on the Status dashboard and in the archive log, but its built-in automation never opens clip contents, requests keys, decrypts, archives, plays, moves, or deletes those recordings. Every built-in camera snapshot trigger, including Samba access, uses one locked live-camera check; while the directory is present, TeslaUSB pauses camera snapshots and camera-clip archiving so the opaque recordings stay outside its data path. Legacy snapshots that contain the directory—and snapshots whose status cannot be established safely—are excluded from automatic rotation. Independently configured music sync continues, and normal camera processing resumes after a later live-camera check no longer detects it. Automatic camera archiving and the web viewer require standard, unencrypted recordings. See [encrypted-clip detection](doc/EncryptedClips.md) and Tesla's [Dashcam documentation](https://www.tesla.com/ownersmanual/model3/en_us/GUID-3BCC07CE-5EA2-4F40-99D1-27690898FF3C.html) for the available viewing and vehicle-setting options.
 
 ## Prerequisites
 
@@ -42,13 +42,13 @@ Optional:
 
 ## Installing
 
-The current prebuilt Raspberry Pi image is based on Raspberry Pi OS Bookworm Lite. For other SBCs, start with the [installation wiki](https://github.com/marcone/teslausb/wiki/Installation).
+The current image build targets 64-bit Raspberry Pi OS Lite (Debian Trixie). Raspberry Pi Zero 2 W is supported and should use the 64-bit image; its 512 MB memory makes the Lite image the appropriate choice. For other SBCs, start with the [installation wiki](https://github.com/marcone/teslausb/wiki/Installation).
 
 ### Quick start
 
-1. Confirm that your board supports USB OTG and use a microSD card of at least 64 GB.
-2. Download the [latest prebuilt image](https://github.com/marcone/teslausb/releases/latest) and flash it with Raspberry Pi Imager's **Use custom** option.
-3. Copy and edit `teslausb_setup_variables.conf.sample` on the boot partition, then save it as `teslausb_setup_variables.conf`. The optional [local configuration helper](doc/ConfigTool.md) can generate and preflight this file without executing it.
+1. Confirm that your board supports USB OTG and use a microSD card of at least 64 GB. Raspberry Pi Zero 2 W users must connect the car to the USB data/OTG port, not the power-only port.
+2. Build the private release's 64-bit Trixie image with the included [pi-gen instructions](pi-gen-sources/Readme.md), then flash the generated image with Raspberry Pi Imager's **Use custom** option. Source-only GitHub releases do not imply that a prebuilt image asset was attached.
+3. Copy and edit `teslausb_setup.json.sample` on the boot partition, then save it as `teslausb_setup.json`. The [declarative configuration guide](doc/DeclarativeConfig.md) documents native JSON types and migration from the deprecated shell configuration.
 4. Before first boot, confirm the archive destination, use unique Wi-Fi and web passwords, and leave `DATA_DRIVE` unset unless you have verified the exact whole-disk device that may be erased. Keep a private backup of the original configuration.
 5. Safely eject the card, boot the Pi with internet access, and allow the setup flashes, reboot, and final steady pulse to finish. Initial setup can take longer than five minutes on a slow connection.
 6. Open `http://teslausb.local/` and confirm storage, network, and archive health before connecting it to the car.
@@ -67,6 +67,10 @@ If a saved preference keeps redirecting to an interface that does not load, open
 The bundled dashboard uses the [versioned local Web API](doc/WebAPI.md). Read requests use `GET`; actions use `POST` with a same-origin request header. The API is intended for trusted private networks and must not be exposed directly to the Internet.
 
 Archive transfers now produce SHA-256 manifests, verify destination content before removing source links, and retain bounded retry state across service restarts. See [archive reliability](doc/ArchiveReliability.md) for behavior, status paths, and operational limits.
+
+The Status dashboard includes a deliberately manual, two-confirmation [USB gadget repair](doc/USBGadgetRepair.md) action. Use it only after disconnecting the Tesla or computer cleanly; it briefly removes and rebuilds every exported drive.
+
+Application upgrades use verified, content-addressed releases with automatic health-check rollback. See [transactional upgrades](doc/TransactionalUpgrades.md) for the exact rollback boundary and the clean-flash requirement when moving from Bookworm or 32-bit Raspberry Pi OS to 64-bit Trixie.
 
 ## Contributing
 

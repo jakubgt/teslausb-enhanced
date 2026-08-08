@@ -9,6 +9,7 @@ const {
   bashQuote,
   decodeLiteral,
   generateConfig,
+  migrateConfig,
   parseConfig,
   preflightConfig,
   sanitizeConfig
@@ -78,6 +79,76 @@ assert.equal(
   preflightConfig(validHostname).issues.filter((issue) => issue.level === "error").length,
   0
 );
+const conflictingWebAuth = `${generated}export WEB_AUTH_DISABLED=$'true'\n`;
+assert.match(
+  preflightConfig(conflictingWebAuth).issues.map((issue) => issue.message).join("\n"),
+  /cannot be combined/
+);
+const invalidBleVin = `${generated}export TESLA_BLE_VIN=$'not-a-vin'\nexport SENTRY_CASE=$'1'\n`;
+assert.match(
+  preflightConfig(invalidBleVin).issues.map((issue) => issue.message).join("\n"),
+  /17-character VIN/
+);
+
+const unsafeApIp = `${generated}export AP_IP=$'192.168.66.1/e touch /tmp/owned'\n`;
+assert.match(
+  preflightConfig(unsafeApIp).issues.map((issue) => issue.message).join("\n"),
+  /AP_IP must be an IPv4 address/
+);
+const unsafeTrigger = `${generated}export TRIGGER_FILE_SAVED=$'..\/..\/outside'\n`;
+assert.match(
+  preflightConfig(unsafeTrigger).issues.map((issue) => issue.message).join("\n"),
+  /must be one filename/
+);
+const unsafeTimeZone = `${generated}export TIME_ZONE=$'..\/..\/etc\/passwd'\n`;
+assert.match(
+  preflightConfig(unsafeTimeZone).issues.map((issue) => issue.message).join("\n"),
+  /without traversal/
+);
+for (const dataDrive of [
+  "/dev/sda",
+  "/dev/mmcblk0",
+  "/dev/nvme0n1",
+  "/dev/disk/by-id/usb-SanDisk_Ultra_Fit-0:0"
+]) {
+  const config = `${generated}export DATA_DRIVE=${bashQuote(dataDrive)}\n`;
+  assert.equal(
+    preflightConfig(config).issues.filter((issue) => issue.level === "error").length,
+    0,
+    `valid DATA_DRIVE was rejected: ${dataDrive}`
+  );
+}
+for (const dataDrive of [
+  "/dev/../sda",
+  "/dev/sda/../sdb",
+  "/dev/disk/./by-id/device",
+  "/dev//sda",
+  "/dev/sda/",
+  "/dev/.hidden",
+  "/tmp/sda"
+]) {
+  const config = `${generated}export DATA_DRIVE=${bashQuote(dataDrive)}\n`;
+  assert.match(
+    preflightConfig(config).issues.map((issue) => issue.message).join("\n"),
+    /without traversal/,
+    `unsafe DATA_DRIVE was accepted: ${dataDrive}`
+  );
+}
+const missingPushoverValues = `${generated}export PUSHOVER_ENABLED=$'true'\n`;
+assert.match(
+  preflightConfig(missingPushoverValues).issues.map((issue) => issue.message).join("\n"),
+  /PUSHOVER_USER_KEY is required/
+);
+const missingNotificationCommand = `${generated}export NOTIFICATION_COMMAND_ENABLED=$'true'\n`;
+assert.match(
+  preflightConfig(missingNotificationCommand).issues.map((issue) => issue.message).join("\n"),
+  /NOTIFICATION_COMMAND_START or NOTIFICATION_COMMAND_FINISH/
+);
+const placeholderSlack = `${generated}export SLACK_ENABLED=$'true'\nexport SLACK_WEBHOOK_URL=$'http:\/\/domain\/path\/'\n`;
+assert.match(
+  preflightConfig(placeholderSlack).issues.map((issue) => issue.message).join("\n"),
+  /sample placeholder/
+);
 
 const validAllowedHosts = `${generated}export WEB_ALLOWED_HOSTS=$'garage.example.ts.net, 192.168.7.2 [fd00::12]'\n`;
 assert.equal(
@@ -130,6 +201,41 @@ assert.equal(
   preflightConfig(literalArray).issues.filter((issue) => issue.level === "error").length,
   0
 );
+const migrated = JSON.parse(migrateConfig(
+  `${literalArray}export SAMBA_ENABLED=$'false'\n` +
+  "export GOTIFY_ENABLED=$'false'\n" +
+  "export NTFY_ENABLED=$'true'\n" +
+  "export NTFY_URL=$'https://ntfy.example.test/teslausb'\n" +
+  "export ARCHIVE_DELAY=$'45'\n" +
+  "export INSTALL_USER_REQUESTED_PACKAGES=$'jq curl'\n"
+));
+assert.equal(migrated.schema_version, 1);
+assert.equal(migrated.variables.SAMBA_ENABLED, false);
+assert.equal(migrated.variables.GOTIFY_ENABLED, false);
+assert.equal(migrated.variables.NTFY_ENABLED, true);
+assert.equal(migrated.variables.ARCHIVE_DELAY, 45);
+assert.deepEqual(migrated.variables.RCLONE_FLAGS, ["--header", "value with spaces"]);
+assert.deepEqual(migrated.variables.INSTALL_USER_REQUESTED_PACKAGES, ["jq", "curl"]);
+assert.throws(
+  () => migrateConfig(`${generated}export ARCHIVE_DELAY=$'-1'\n`),
+  /between 0 and 86400/
+);
+assert.throws(
+  () => migrateConfig(`${generated}export RCLONE_FLAGS=($'--header' $'bad\\nvalue')\n`),
+  /control character/
+);
+assert.throws(
+  () => migrateConfig(`${generated}export INSTALL_USER_REQUESTED_PACKAGES=$'jq --option'\n`),
+  /unsupported package name/
+);
+assert.throws(
+  () => migrateConfig(`${generated}export BASH_ENV=$'/tmp/owned'\n`),
+  /Unsupported variable/
+);
+assert.throws(
+  () => migrateConfig(`${generated}export BRANCH=$(touch should-never-exist)\n`),
+  /failed preflight/
+);
 const quotedArray = generateConfig({
   SSID: "Garage WiFi",
   WIFIPASS: "wifi secret",
@@ -158,6 +264,7 @@ try {
   const tool = path.join(__dirname, "..", "tools", "teslausb-config.js");
   const valuesPath = path.join(testDirectory, "values.json");
   const configPath = path.join(testDirectory, "teslausb_setup_variables.conf");
+  const declarativePath = path.join(testDirectory, "teslausb_setup.json");
   const backupPath = path.join(testDirectory, "teslausb_setup_variables.sanitized.conf");
   fs.writeFileSync(valuesPath, JSON.stringify({
     SSID: "Garage WiFi",
@@ -174,6 +281,16 @@ try {
 
   result = spawnSync(process.execPath, [tool, "preflight", configPath], {encoding: "utf8"});
   assert.equal(result.status, 0, result.stdout + result.stderr);
+
+  result = spawnSync(process.execPath, [tool, "migrate", configPath, declarativePath], {encoding: "utf8"});
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(declarativePath, "utf8")).schema_version, 1);
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(declarativePath).mode & 0o777, 0o600);
+  }
+
+  result = spawnSync(process.execPath, [tool, "migrate", configPath, declarativePath], {encoding: "utf8"});
+  assert.notEqual(result.status, 0, "migrate unexpectedly overwrote an existing JSON configuration");
 
   result = spawnSync(process.execPath, [tool, "sanitize", configPath, backupPath], {encoding: "utf8"});
   assert.equal(result.status, 0, result.stderr);

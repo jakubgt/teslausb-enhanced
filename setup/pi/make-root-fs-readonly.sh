@@ -53,8 +53,9 @@ log_progress "Removing unwanted packages..."
 DEBIAN_FRONTEND=noninteractive apt-get remove -y --purge triggerhappy logrotate dphys-swapfile
 DEBIAN_FRONTEND=noninteractive apt-get -y autoremove --purge
 # Replace log management with busybox (use logread if needed)
-log_progress "Installing ntp and busybox-syslogd..."
-DEBIAN_FRONTEND=noninteractive apt-get -y install ntp busybox-syslogd
+log_progress "Installing ntpsec and busybox-syslogd..."
+DEBIAN_FRONTEND=noninteractive apt-get -y install \
+  ntpsec ntpsec-ntpdig busybox-syslogd
 dpkg --purge rsyslog
 
 log_progress "Configuring system..."
@@ -180,14 +181,30 @@ then
   echo "tmpfs /var/spool tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
 
-if ! grep -w -q "/var/lib/ntp" /etc/fstab
+NTP_STATE_DIR=/var/lib/ntpsec
+NTP_STATE_USER=ntpsec
+if ! id "$NTP_STATE_USER" > /dev/null 2>&1
 then
-  if [ ! -d /var/lib/ntp ]
+  # Keep the state setup usable with older ntpsec package naming if a vendor
+  # image provides the traditional account instead.
+  NTP_STATE_USER=ntp
+fi
+if ! grep -w -q "$NTP_STATE_DIR" /etc/fstab
+then
+  if [ ! -d "$NTP_STATE_DIR" ]
   then
-    rm -rf /var/lib/ntp
-    mkdir -p /var/lib/ntp
+    install -d -m 0755 "$NTP_STATE_DIR"
   fi
-  echo "tmpfs /var/lib/ntp tmpfs nodev,nosuid 0 0" >> /etc/fstab
+  if id "$NTP_STATE_USER" > /dev/null 2>&1
+  then
+    NTP_STATE_UID=$(id -u "$NTP_STATE_USER")
+    NTP_STATE_GID=$(id -g "$NTP_STATE_USER")
+    chown "$NTP_STATE_UID:$NTP_STATE_GID" "$NTP_STATE_DIR"
+    echo "tmpfs $NTP_STATE_DIR tmpfs nodev,nosuid,mode=0755,uid=$NTP_STATE_UID,gid=$NTP_STATE_GID 0 0" >> /etc/fstab
+  else
+    log_progress "WARNING: ntpsec state account was not found; using root-owned temporary state"
+    echo "tmpfs $NTP_STATE_DIR tmpfs nodev,nosuid,mode=0755 0 0" >> /etc/fstab
+  fi
 fi
 
 # work around 'mount' warning that's printed when /etc/fstab is

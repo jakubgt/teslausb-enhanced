@@ -8,7 +8,12 @@ TIMEZONE_DEFAULT="America/Los_Angeles"
 FIRST_USER_NAME=pi
 FIRST_USER_PASS=raspberry
 DISABLE_FIRST_BOOT_USER_RENAME=1
+# TeslaUSB provisions SSH explicitly from its root-owned config. Do not grant
+# the image user blanket passwordless sudo, and avoid cloud-init competing with
+# the lightweight first-boot flow on a 512 MB Zero 2 W.
+PASSWORDLESS_SUDO=0
+ENABLE_CLOUD_INIT=0
 WPA_COUNTRY=US
 ENABLE_SSH=1
 STAGE_LIST="stage0 stage1 stage2 stage_teslausb"
-RELEASE=bookworm
+RELEASE=trixie

@@ -911,6 +911,20 @@ video {
   width: 100%;
 }
 
+.status_encrypted {
+  background: #fff4e5;
+  border: 1px solid #b85c00;
+  border-left-width: 4px;
+  color: #6b3100;
+  margin-top: 7px;
+  padding: 7px 8px;
+}
+
+.status_encrypted_message {
+  display: block;
+  margin-top: 2px;
+}
+
 @media screen and (max-width: 824px) {
   .content4 > div {
     box-sizing: border-box;
@@ -1081,9 +1095,16 @@ video {
           <progress class="status_archive_progress" max="1" value="0" hidden aria-label="Archive transfer progress"></progress>
           <div class="status_archive_message"></div>
         </div>
+        <div class="status_encrypted" hidden role="alert">
+          <strong>Encrypted Dashcam clips detected</strong>
+          <span class="status_encrypted_message"></span>
+        </div>
       </div>
       <button class="group2" id="toggledrives" onclick="toggledrivesfunc(this);">...</button>
       <span id="drivestext" role="status" aria-live="polite" style="padding-left:20px;"></span>
+      <p>
+      <button class="group2" id="repairgadgetbutton" aria-describedby="repairgadgettext" onclick="repairgadgetfunc(this);">Repair USB gadget</button>
+      <span id="repairgadgettext" role="status" aria-live="polite" style="padding-left:20px;"></span>
       <p>
       <button class="group2" id="syncbutton" onclick="syncfunc(this);">Trigger archive/sync</button>
       <span id="synctext" role="status" aria-live="polite" style="padding-left:20px;"></span>
@@ -2159,6 +2180,60 @@ async function toggledrivesfunc(button) {
   }
 }
 
+var gadgetrepairbuttonresetter;
+
+function restorerepairgadgetbutton(button, clearPrompt) {
+  clearTimeout(gadgetrepairbuttonresetter);
+  button.disabled=false;
+  button.removeAttribute("aria-busy");
+  button.removeAttribute("aria-label");
+  button.textContent="Repair USB gadget";
+  button.onclick=function() { repairgadgetfunc(button); };
+  var msg=document.getElementById('repairgadgettext');
+  if (clearPrompt && msg.textContent.startsWith("Warning:")) {
+    msg.textContent="";
+  }
+}
+
+async function realrepairgadgetfunc(button) {
+  clearTimeout(gadgetrepairbuttonresetter);
+  var buttonstates=Array.from(document.querySelectorAll('.group1,.group2')).map(function(item) {
+    return {button:item, disabled:item.disabled};
+  });
+  var msg=document.getElementById('repairgadgettext');
+  setbuttonsdisabled('group1', true);
+  setbuttonsdisabled('group2', true);
+  button.textContent="Repairing USB gadget...";
+  button.setAttribute("aria-busy", "true");
+  button.removeAttribute("aria-label");
+  msg.textContent="Disconnecting, rebuilding, and verifying the virtual drives...";
+  try {
+    await callcgi('/api/v1/actions/drives/repair', {timeout:60000});
+    var success="USB gadget rebuilt and verified";
+    msg.textContent=success;
+    clearMessageAfter(msg, success, 10000);
+    statusvals=undefined;
+    showstatus();
+  } catch (error) {
+    msg.textContent="USB gadget repair failed: " + error.message;
+  } finally {
+    buttonstates.forEach(function(state) { state.button.disabled=state.disabled; });
+    restorerepairgadgetbutton(button, false);
+  }
+}
+
+function repairgadgetfunc(button) {
+  var msg=document.getElementById('repairgadgettext');
+  button.textContent="Confirm USB gadget repair";
+  button.setAttribute("aria-label", "Confirm USB gadget repair; this briefly disconnects all virtual drives");
+  button.onclick=function() { realrepairgadgetfunc(button); };
+  msg.textContent="Warning: this briefly disconnects every virtual drive. Press Confirm within 10 seconds to continue.";
+  clearTimeout(gadgetrepairbuttonresetter);
+  gadgetrepairbuttonresetter=setTimeout(function() {
+    restorerepairgadgetbutton(button, true);
+  }, 10000);
+}
+
 function archiveStatusFromSystemStatus(systemStatus) {
   if (!systemStatus || typeof systemStatus != "object") return null;
   if (systemStatus.archive_status && typeof systemStatus.archive_status == "object") {
@@ -2224,6 +2299,21 @@ function archiveStatusView(systemStatus) {
   };
 }
 
+function encryptedClipStatusView(systemStatus) {
+  if (!systemStatus || typeof systemStatus != "object") return {visible:false};
+  var status = systemStatus.encrypted_clips;
+  if (!status || typeof status != "object" || status.available === false) {
+    return {visible:false};
+  }
+  if (status.detected !== true) {
+    return {visible:false};
+  }
+  return {
+    visible:true,
+    message:"TeslaUSB leaves these recordings untouched and cannot archive or play them. View them in the recording vehicle or through its linked Tesla account."
+  };
+}
+
 function renderArchiveStatus(systemStatus) {
   var view = archiveStatusView(systemStatus);
   var container = document.querySelector(".status_archive");
@@ -2237,6 +2327,15 @@ function renderArchiveStatus(systemStatus) {
   progress.hidden = !view.showProgress;
   progress.max = view.progressMax || 1;
   progress.value = view.progressValue || 0;
+}
+
+function renderEncryptedClipStatus(systemStatus) {
+  var view = encryptedClipStatusView(systemStatus);
+  var container = document.querySelector(".status_encrypted");
+  if (!container) return;
+  container.hidden = !view.visible;
+  var message = container.querySelector(".status_encrypted_message");
+  if (message) message.textContent = view.visible ? view.message : "";
 }
 
 var statusvals;
@@ -2423,6 +2522,7 @@ function showstatus() {
       }
       wifiinfospan.innerText = wifiinfo;
       renderArchiveStatus(statusvals);
+      renderEncryptedClipStatus(statusvals);
     }});
   }
   setTimeout(updateuptimeonly, 1000);

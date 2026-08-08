@@ -1,11 +1,92 @@
-### Building a teslausb image
+### Building a TeslaUSB image
 
-To build a ready to flash one-step setup image for CIFS, do the following:
+This release is source-only. These instructions prepare a reproducible 64-bit
+Raspberry Pi OS Trixie image build for Raspberry Pi Zero 2 W; they do not imply
+that a prebuilt `.img` asset exists on the GitHub release. CI exercises the
+source-staging process with a fake pi-gen checkout, but this release does not
+claim a completed full image build or validation on Raspberry Pi hardware.
 
-1. Clone pi-gen from https://github.com/RPi-Distro/pi-gen
-2. Follow the instructions in the pi-gen readme to install the required dependencies
-3. From the RPi-Distro/pi-gen folder, run the `prepare.sh` script from TeslaUSB's pi-gen-sources folder
-4. If needed, adjust ROOT_MARGIN or ROOT_PART_SIZE in pi-gen/export-image/prerun.sh to ensure sufficient free space left on the root partition of the generated image
-5. Run `build.sh` or `build-docker.sh`, depending on how you want to build the image. The Docker build is recommended
-6. Sit back and relax, this could take a while (for reference, on a dual-core 2.6 Ghz Intel Core i3 and 50 Mbps internet connection, it took under an hour)
-   If all went well, the image will be in the `deploy` folder. Use Raspberry Pi Imager or a similar tool to flash it.
+1. Start from a clean Git clone of the TeslaUSB release tag. GitHub-generated
+   source archives do not contain the Git metadata needed to prove the exact
+   source commit and are intentionally rejected by `prepare.sh`:
+
+   ```bash
+   git clone --branch <release-tag> --single-branch <your-private-repository-url> teslausb
+   ```
+
+2. Clone pi-gen's 64-bit `arm64` branch and detach at the commit pinned by this
+   release:
+
+   ```bash
+   git clone --branch arm64 https://github.com/RPi-Distro/pi-gen.git
+   cd pi-gen
+   git checkout --detach ca8aeed0ae300c2a89f55ce9617d5f96a27e99e5
+   git rev-parse HEAD
+   ```
+
+   The final command must print
+   `ca8aeed0ae300c2a89f55ce9617d5f96a27e99e5`.
+
+3. Follow pi-gen's documentation to install its build dependencies.
+
+4. From the root of the pi-gen checkout, run the TeslaUSB preparation script:
+
+   ```bash
+   /path/to/teslausb/pi-gen-sources/prepare.sh
+   ```
+
+   Preparation refuses modified, staged, or deleted tracked TeslaUSB files. It
+   exports only committed files from a fixed allowlist, rebuilds
+   `stage_teslausb` from scratch, and therefore cannot retain stale files or
+   copy ignored/untracked credentials from the working tree. Any local edits
+   inside pi-gen's generated `stage_teslausb` directory are discarded on the
+   next preparation.
+
+5. If necessary, adjust `ROOT_MARGIN` or `ROOT_PART_SIZE` in
+   `export-image/prerun.sh`, then run `./build.sh` or `./build-docker.sh` as
+   documented by pi-gen. The Docker build is recommended. The finished image
+   will be placed in pi-gen's `deploy` directory.
+
+The image embeds the committed TeslaUSB runtime source under
+`/usr/local/share/teslausb-source`. It includes the MIT `LICENSE`,
+`SOURCE-METADATA`, and `SOURCE-MANIFEST.sha256`. The metadata records the exact
+TeslaUSB commit, version, reproducible source timestamp, pi-gen commit, and
+manifest digest. You can verify the installed source later with:
+
+```bash
+cd /usr/local/share/teslausb-source
+sha256sum -c SOURCE-MANIFEST.sha256
+```
+
+#### Deliberately using another pi-gen commit
+
+The supported release pin is safest. For controlled testing of a reviewed
+pi-gen fork or newer commit, the preparation script accepts only an explicit
+full commit pin; it never accepts a floating branch:
+
+```bash
+TESLAUSB_PI_GEN_COMMIT_OVERRIDE=<lowercase-40-character-commit-sha> \
+  /path/to/teslausb/pi-gen-sources/prepare.sh
+```
+
+The checkout's `HEAD` must exactly equal that SHA, and both the selected commit
+and the official release pin are recorded in `SOURCE-METADATA`. An override is
+not the supported v1.1.0 image recipe and should be tested independently.
+
+The resulting arm64 image supports Raspberry Pi Zero 2 W. Do not attempt to
+turn an existing 32-bit or Bookworm installation into this image with an APT
+distribution upgrade; flash the new image and restore the TeslaUSB
+configuration instead. Keep real credentials in the boot configuration and
+never in the checkout used to build the image.
+
+pi-gen requires a configured first-user password when its first-boot rename is
+disabled. The TeslaUSB customization stage locks that account directly in the
+offline image before the image can boot or SSH can start. The first-boot script
+changes or unlocks it only when `SSH_USER_PASSWORD` or the explicitly insecure
+`SSH_ALLOW_DEFAULT_PASSWORD=true` option requests that.
+
+`TIME_ZONE="auto"` uses the exact
+[tzupdate revision `2d41763825fcfae3f2266bf1628ce245ab285f5a`](https://github.com/marcone/tzupdate/commit/2d41763825fcfae3f2266bf1628ce245ab285f5a).
+Setup downloads it into a root-private temporary directory and requires SHA-256
+`7e6769fcf6c2a19a3492a9d62bd529714081132b12244796a4800269804857cb` before
+execution. An integrity mismatch stops setup.

@@ -1,6 +1,8 @@
 #####################################################################
-# SAMPLE CONFIGURATION FILE FOR TESLAUSB Pi Setup
+# LEGACY CONFIGURATION FILE FOR TESLAUSB Pi Setup
 #
+# New installations should use teslausb_setup.json. This executable Bash format
+# remains available for migration compatibility and emits a deprecation warning.
 # Example config file for teslausb_setup. Lines with "#" are comments/ignored.
 # Remove the "#" before "export" to activate a line. Be sure to rename this file
 # to "teslausb_setup_variables.conf" and place it in the "boot" folder of your

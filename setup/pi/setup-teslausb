@@ -35,6 +35,13 @@ TESLAUSB_SCRIPT_TMPDIR="$TESLAUSB_SETUP_TMPDIR/scripts"
 readonly TESLAUSB_SCRIPT_TMPDIR
 mkdir -m 0700 "$TESLAUSB_SCRIPT_TMPDIR"
 
+# Keep automatic timezone discovery reproducible. This is the current head of
+# marcone/tzupdate's Python implementation as of 2026-08-02.
+readonly TZUPDATE_REVISION=2d41763825fcfae3f2266bf1628ce245ab285f5a
+readonly TZUPDATE_SHA256=7e6769fcf6c2a19a3492a9d62bd529714081132b12244796a4800269804857cb
+readonly TZUPDATE_MAX_BYTES=131072
+readonly TZUPDATE_URL="https://raw.githubusercontent.com/marcone/tzupdate/${TZUPDATE_REVISION}/tzupdate.py"
+
 function cleanup_setup_tmpdir () {
   local status=$?
   local cleanup_safe=true
@@ -75,6 +82,16 @@ function setup_progress () {
   echo "$@"
 }
 
+function stop_if_transaction_requires_reboot () {
+  local reason="$1"
+  if [ "${TESLAUSB_TRANSACTIONAL_UPGRADE:-0}" = 1 ]
+  then
+    setup_progress "STOP: $reason requires a reboot before transactional activation. The candidate will be discarded; reboot the Pi and run the upgrade again."
+    return 0
+  fi
+  return 1
+}
+
 function curlwrapper () {
   setup_progress "curl $*" > /dev/null
   local attempts=0
@@ -100,10 +117,33 @@ function curlwrapper () {
   done
 }
 
+function verify_tzupdate_checksum () {
+  local candidate="$1"
+  local expected_sha256="$2"
+  local actual_sha256
+
+  if [ ! -f "$candidate" ] || [ -L "$candidate" ] ||
+     ! [[ "$expected_sha256" =~ ^[[:xdigit:]]{64}$ ]]
+  then
+    return 1
+  fi
+
+  actual_sha256="$(sha256sum -- "$candidate")" || return 1
+  actual_sha256="${actual_sha256%% *}"
+  [ "$actual_sha256" = "$expected_sha256" ]
+}
+
 function copy_script () {
   local remote_path="$1"
-  local name="${1/*\/}"
+  local name="${3:-${1/*\/}}"
   local local_path="$2"
+  local managed_target
+
+  if ! [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$ ]]
+  then
+    setup_progress "STOP: unsafe script install name: $name"
+    return 1
+  fi
 
   if [ -z ${SOURCE_DIR:+x} ]
   then
@@ -119,6 +159,33 @@ function copy_script () {
         curlwrapper -L "https://github.com/${REPO}/teslausb/archive/${BRANCH}.tar.gz" | tar zxf - --strip-components=1
       )
     fi
+  fi
+
+  # A transactional upgrade builds the complete /root/bin candidate without
+  # touching the currently active scripts. The release manager performs both
+  # the copy and an immediate source/destination checksum comparison.
+  if [ -n "${TESLAUSB_UPGRADE_STAGING_DIR:-}" ] && \
+     [ "${local_path%/}" = /root/bin ]
+  then
+    if [ -z "${TESLAUSB_TRANSACTION_MANAGER:-}" ] || \
+       [ ! -x "$TESLAUSB_TRANSACTION_MANAGER" ]
+    then
+      setup_progress 'STOP: transactional upgrade manager is unavailable'
+      return 1
+    fi
+    "$TESLAUSB_TRANSACTION_MANAGER" stage-file \
+      "$TESLAUSB_UPGRADE_STAGING_DIR" "${SOURCE_DIR}/$remote_path" "$name"
+    setup_progress "Staged $name for transactional activation ..."
+    return
+  fi
+
+  managed_target="$local_path/$name"
+  if [ -L "$managed_target" ] && \
+     [[ "$(readlink -- "$managed_target")" == \
+        */application-releases/current/root-bin/* ]]
+  then
+    setup_progress "STOP: $managed_target belongs to an immutable release. Run '$0 upgrade' instead of overwriting it."
+    return 1
   fi
 
   cp "${SOURCE_DIR}/$remote_path" "$local_path/$name"
@@ -188,6 +255,22 @@ function safesource {
   source "$setup_config"
 }
 
+TESLAUSB_CONFIG_LOADER_LOADED=false
+for teslausb_loader_candidate in \
+  "$(dirname "$(readlink -f "$0")")/teslausb-config-loader.sh" \
+  /root/bin/teslausb-config-loader.sh \
+  /usr/local/lib/teslausb/teslausb-config-loader.sh
+do
+  if [ -r "$teslausb_loader_candidate" ]
+  then
+    # shellcheck source=/dev/null
+    source "$teslausb_loader_candidate"
+    TESLAUSB_CONFIG_LOADER_LOADED=true
+    break
+  fi
+done
+unset teslausb_loader_candidate
+
 function validate_source_coordinates {
   local ref_component
   local -a ref_components=()
@@ -220,9 +303,18 @@ function validate_source_coordinates {
 THISDIR=$(dirname "$(readlink -f "$0")")
 if [ ! -e "$THISDIR/envsetup.sh" ]
 then
-  # source the conf file directly to get REPO, BRANCH or download_sources
-  # in case they're set
-  safesource /root/teslausb_setup_variables.conf
+  # Load only enough setup data to locate the requested repository/branch.
+  if [ "$TESLAUSB_CONFIG_LOADER_LOADED" = true ]
+  then
+    teslausb_load_config
+  elif [ -e /root/teslausb_setup_variables.conf ]
+  then
+    setup_config_message "WARNING: using deprecated legacy shell configuration to bootstrap the loader."
+    safesource /root/teslausb_setup_variables.conf
+  else
+    setup_config_message "STOP: a JSON config requires the declarative config loader supplied by the enhanced image."
+    exit 1
+  fi
   for setup_secret_name in WEB_PASSWORD SAMBA_PASSWORD SSH_USER_PASSWORD \
     SSH_ROOT_PUBLIC_KEY WIFIPASS
   do
@@ -236,6 +328,8 @@ then
   REPO=${REPO:-marcone}
   BRANCH=${BRANCH:-main-dev}
   validate_source_coordinates || exit 1
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb-config-loader.sh "$THISDIR"
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py "$THISDIR"
   copy_script setup/pi/envsetup.sh "$THISDIR"
 fi
 # SC can't follow non-constant source
@@ -288,6 +382,10 @@ fi
 
 if [ "$REBOOT" = "true" ]
 then
+  if stop_if_transaction_requires_reboot 'an early setup change'
+  then
+    exit 75
+  fi
   if [ -t 0 ] && [ "${NO_REBOOT_PROMPT:-}" != "1" ]
   then
     setup_progress "please reboot for changes to take effect"
@@ -340,16 +438,91 @@ function verify_configuration () {
 
 function get_common_scripts () {
   setup_progress "Downloading common runtime scripts."
+  copy_script setup/pi/transactional-upgrade.sh /root/bin teslausb-upgrade
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb-config-loader.sh /root/bin
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py /root/bin
   copy_script run/remountfs_rw /root/bin
   copy_script run/make_snapshot.sh /root/bin
+  copy_script run/guarded_snapshot.sh /root/bin
+  copy_script run/snapshot_contains_encrypted_clips.sh /root/bin
   copy_script run/release_snapshot.sh /root/bin
   copy_script run/manage_free_space.sh /root/bin
   copy_script run/force_sync.sh /root/bin
+  copy_script run/detect_encrypted_clips.sh /root/bin
   copy_script run/mountoptsforimage /root/bin
   copy_script run/mountimage /root/bin
   copy_script run/enable_gadget.sh /root/bin
   copy_script run/disable_gadget.sh /root/bin
+  copy_script run/repair_gadget.sh /root/bin
   ln -sf /root/bin/mountimage /sbin/mount.teslausb
+}
+
+function install_transaction_recovery_service () {
+  local recovery_helper=/usr/local/libexec/teslausb-upgrade-recovery
+  local source_helper="$TESLAUSB_SCRIPT_TMPDIR/teslausb-upgrade-recovery.new"
+  local source_sum
+  local installed_sum
+  local temporary_helper
+
+  # The boot guard intentionally lives outside the release pointer. If power
+  # fails while /root/bin/current is changing, systemd still has a fixed,
+  # verified manager with which to restore the journaled known-good release.
+  install -d -m 0755 /usr/local/libexec
+  copy_script setup/pi/transactional-upgrade.sh "$TESLAUSB_SCRIPT_TMPDIR" \
+    teslausb-upgrade-recovery.new
+  bash -n "$source_helper"
+  source_sum=$(sha256sum "$source_helper" | awk '{print $1}')
+  temporary_helper=$(mktemp /usr/local/libexec/.teslausb-upgrade-recovery.XXXXXXXX)
+  install -m 0755 -- "$source_helper" "$temporary_helper"
+  installed_sum=$(sha256sum "$temporary_helper" | awk '{print $1}')
+  if [ "$source_sum" != "$installed_sum" ]
+  then
+    unlink -- "$temporary_helper"
+    setup_progress 'STOP: recovery helper checksum verification failed'
+    return 1
+  fi
+  if ! sync -f -- "$temporary_helper" 2> /dev/null
+  then
+    sync
+  fi
+  mv -Tf -- "$temporary_helper" "$recovery_helper"
+  if ! sync -f -- /usr/local/libexec 2> /dev/null
+  then
+    sync
+  fi
+
+  install -d -m 0755 /etc/systemd/system/teslausb.service.d
+  cat > /etc/systemd/system/teslausb-upgrade-recovery.service <<'EOF'
+[Unit]
+Description=Recover an interrupted TeslaUSB application activation
+DefaultDependencies=no
+Requires=mutable.mount
+After=mutable.mount
+Before=teslausb.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/teslausb-upgrade-recovery recover
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 /etc/systemd/system/teslausb-upgrade-recovery.service
+
+  cat > /etc/systemd/system/teslausb.service.d/transaction-recovery.conf <<'EOF'
+[Unit]
+Requires=teslausb-upgrade-recovery.service
+After=teslausb-upgrade-recovery.service
+EOF
+  chmod 0644 /etc/systemd/system/teslausb.service.d/transaction-recovery.conf
+
+  systemctl daemon-reload
+  systemctl enable teslausb-upgrade-recovery.service
+  # Keep the oneshot active for the remainder of this boot. A later health
+  # restart of teslausb.service must not mistake the in-progress journal for a
+  # boot-time interruption and roll it back before it can be tested.
+  systemctl start teslausb-upgrade-recovery.service
 }
 
 # If only the dwc2 module is loaded at boot then the Pi will present
@@ -476,8 +649,10 @@ function create_usb_drive_backing_files () {
       # server.
       if [ ! -e "$sentrylist_previously_archived" ] && [ -d "$MUTABLE_MOUNTPOINT/TeslaCam" ]
       then
-        find "$MUTABLE_MOUNTPOINT/TeslaCam" -type l -printf '%P\n' | sort > "$TESLAUSB_SETUP_TMPDIR/allfiles.txt"
-        find /mnt/cam/TeslaCam /mnt/cam/ -type f -printf '%P\n' | sort > "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt"
+        find "$MUTABLE_MOUNTPOINT/TeslaCam" -name EncryptedClips -prune -o \
+          -type l -printf '%P\n' | sort > "$TESLAUSB_SETUP_TMPDIR/allfiles.txt"
+        find /mnt/cam/TeslaCam /mnt/cam/ -name EncryptedClips -prune -o \
+          -type f -printf '%P\n' | sort > "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt"
         comm -2 -3 "$TESLAUSB_SETUP_TMPDIR/allfiles.txt" "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt" > "$sentrylist_previously_archived"
         rm -f -- "$TESLAUSB_SETUP_TMPDIR/allfiles.txt" "$TESLAUSB_SETUP_TMPDIR/stilloncard.txt"
       fi
@@ -609,25 +784,51 @@ function upgrade_packages () {
 }
 
 function set_timezone () {
+  local timezone_path
+  local timezone_real
+  local timezone_zoneinfo_root
+  local tzout
+  local tzupdate_candidate
+
   if [ -n "${TIME_ZONE:+x}" ]
   then
-    if [ -f "/usr/share/zoneinfo/$TIME_ZONE" ]
+    if [ "$TIME_ZONE" = "auto" ]
     then
-      ln -sf "/usr/share/zoneinfo/$TIME_ZONE" /etc/localtime
-    elif [ "$TIME_ZONE" = "auto" ]
-    then
-      if curlwrapper -o /root/bin/tzupdate.py https://raw.githubusercontent.com/marcone/tzupdate/develop/tzupdate.py
+      tzupdate_candidate="$(mktemp "$TESLAUSB_SCRIPT_TMPDIR/tzupdate.XXXXXXXX.py")"
+      chmod 0600 "$tzupdate_candidate"
+      curlwrapper --location --proto '=https' --proto-redir '=https' \
+        --max-filesize "$TZUPDATE_MAX_BYTES" --output "$tzupdate_candidate" \
+        "$TZUPDATE_URL"
+      if ! verify_tzupdate_checksum "$tzupdate_candidate" "$TZUPDATE_SHA256"
       then
-        chmod +x /root/bin/tzupdate.py
-        if ! tzout=$(/root/bin/tzupdate.py 2>&1)
-        then
-          setup_progress "auto timezone failed: $tzout"
-        else
-          setup_progress "$tzout"
-        fi
+        rm -f -- "$tzupdate_candidate"
+        setup_progress "STOP: automatic timezone helper failed SHA-256 verification."
+        return 1
       fi
+      if ! tzout="$(python3 "$tzupdate_candidate" 2>&1)"
+      then
+        setup_progress "auto timezone failed: $tzout"
+      else
+        setup_progress "$tzout"
+      fi
+      rm -f -- "$tzupdate_candidate"
     else
-      setup_progress "invalid timezone: $TIME_ZONE"
+      timezone_zoneinfo_root=/usr/share/zoneinfo
+      timezone_path="$timezone_zoneinfo_root/$TIME_ZONE"
+      timezone_real=$(readlink -f -- "$timezone_path") || timezone_real=
+      case "$timezone_real" in
+        "$timezone_zoneinfo_root"/*)
+          if [ -f "$timezone_real" ]
+          then
+            ln -sf -- "$timezone_real" /etc/localtime
+          else
+            setup_progress "invalid timezone: $TIME_ZONE"
+          fi
+          ;;
+        *)
+          setup_progress "invalid or unsafe timezone: $TIME_ZONE"
+          ;;
+      esac
     fi
   fi
 }
@@ -694,23 +895,191 @@ function cmd_upgrade {
   mkdir -m 0700 "$TESLAUSB_UPGRADE_DIR"
   copy_script setup/pi/setup-teslausb "$TESLAUSB_UPGRADE_DIR" &> /dev/null
   copy_script setup/pi/envsetup.sh "$TESLAUSB_UPGRADE_DIR" &> /dev/null
-  exec bash -c '"$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_prepare && NO_REBOOT_PROMPT=1 "$TESLAUSB_UPGRADE_DIR/setup-teslausb" && "$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_finish'
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb-config-loader.sh \
+    "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py \
+    "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script setup/pi/transactional-upgrade.sh "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+
+  export TESLAUSB_TRANSACTION_MANAGER="$TESLAUSB_UPGRADE_DIR/transactional-upgrade.sh"
+  export TESLAUSB_CONFIG_HELPER="$TESLAUSB_UPGRADE_DIR/teslausb_config.py"
+  TESLAUSB_UPGRADE_STAGING_DIR=$(
+    "$TESLAUSB_TRANSACTION_MANAGER" prepare "$SOURCE_DIR"
+  )
+  export TESLAUSB_UPGRADE_STAGING_DIR
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/setup-teslausb" setup-teslausb
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/envsetup.sh" envsetup.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb-config-loader.sh" teslausb-config-loader.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb_config.py" teslausb_config.py
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_TRANSACTION_MANAGER" teslausb-upgrade
+
+  exec bash -c '
+    if TESLAUSB_TRANSACTIONAL_UPGRADE=1 \
+         "$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_prepare &&
+       TESLAUSB_TRANSACTIONAL_UPGRADE=1 NO_REBOOT_PROMPT=1 \
+         "$TESLAUSB_UPGRADE_DIR/setup-teslausb" &&
+       TESLAUSB_TRANSACTIONAL_UPGRADE=1 \
+         "$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_finish
+    then
+      exit 0
+    else
+      upgrade_status=$?
+      "$TESLAUSB_TRANSACTION_MANAGER" abort "$TESLAUSB_UPGRADE_STAGING_DIR" || true
+      exit "$upgrade_status"
+    fi
+  '
+}
+
+function systemd_unit_load_state {
+  local load_state
+  local service_name="$1"
+  if ! load_state=$(
+    systemctl show "$service_name" --property=LoadState --value 2> /dev/null
+  )
+  then
+    setup_progress "STOP: unable to inspect systemd service $service_name"
+    return 1
+  fi
+  if [ -z "$load_state" ]
+  then
+    setup_progress "STOP: systemd returned no load state for $service_name"
+    return 1
+  fi
+  printf '%s\n' "$load_state"
+}
+
+function stop_required_service_for_upgrade {
+  local load_state
+  local service_name="$1"
+  load_state=$(systemd_unit_load_state "$service_name") || return 1
+  if [ "$load_state" = not-found ]
+  then
+    setup_progress "STOP: required service is absent: $service_name"
+    return 1
+  fi
+  systemctl stop "$service_name" || {
+    setup_progress "STOP: could not stop required service $service_name"
+    return 1
+  }
+  if systemctl is-active --quiet "$service_name"
+  then
+    setup_progress "STOP: required service remained active: $service_name"
+    return 1
+  fi
+}
+
+function stop_optional_service_for_upgrade {
+  local load_state
+  local service_name="$1"
+  load_state=$(systemd_unit_load_state "$service_name") || return 1
+  if [ "$load_state" = not-found ]
+  then
+    setup_progress "optional service is absent: $service_name"
+    return 0
+  fi
+  systemctl stop "$service_name" || {
+    setup_progress "STOP: could not stop installed optional service $service_name"
+    return 1
+  }
+  if systemctl is-active --quiet "$service_name"
+  then
+    setup_progress "STOP: optional service remained active: $service_name"
+    return 1
+  fi
+}
+
+function gadget_is_prepared {
+  local configfs_root
+  if [ -d /sys/module/g_mass_storage ]
+  then
+    return 0
+  fi
+  configfs_root=$(findmnt -o TARGET -n configfs 2> /dev/null) || return 1
+  [ -d "$configfs_root/usb_gadget/teslausb" ]
+}
+
+function disable_gadget_for_upgrade {
+  local disable_output
+  local disable_status=0
+  if [ ! -x /root/bin/disable_gadget.sh ]
+  then
+    setup_progress 'STOP: /root/bin/disable_gadget.sh is unavailable'
+    return 1
+  fi
+  if disable_output=$(/root/bin/disable_gadget.sh 2>&1)
+  then
+    disable_status=0
+  else
+    disable_status=$?
+  fi
+  if gadget_is_prepared
+  then
+    setup_progress "STOP: USB gadget remained prepared after disable attempt (status $disable_status): $disable_output"
+    return 1
+  fi
+  # Exit 2 means the configfs gadget was already absent. Other non-zero exits
+  # are safe only because the state check above proved no module/configfs
+  # gadget still references a backing file.
+  if [ "$disable_status" -ne 0 ] && [ "$disable_status" -ne 2 ]
+  then
+    setup_progress "USB gadget disable returned $disable_status after reaching a safe detached state: $disable_output"
+  fi
+}
+
+function unmount_if_mounted_for_upgrade {
+  local mount_path="$1"
+  if [ ! -e "$mount_path" ] || ! mountpoint -q -- "$mount_path"
+  then
+    return 0
+  fi
+  umount -- "$mount_path" || {
+    setup_progress "STOP: could not unmount $mount_path"
+    return 1
+  }
+  if mountpoint -q -- "$mount_path"
+  then
+    setup_progress "STOP: mount remained active after unmount: $mount_path"
+    return 1
+  fi
 }
 
 function cmd_upgrade_prepare {
+  local mount_path
+  local -a snapshot_mounts=()
   setup_progress "preparing for full upgrade"
   (
-    systemctl stop teslausb.service || true
-    service smbd stop || true
-    service autofs stop || true
-    umount /backingfiles/snapshots/snap*/mnt || true
-    umount /mnt/cam /mnt/music || true
-    umount /mnt/lightshow || true
-    umount /mnt/boombox || true
-    umount /mnt/archive /mnt/musicarchive || true
-    /root/bin/disable_gadget.sh || true
+    stop_required_service_for_upgrade teslausb.service
+    stop_optional_service_for_upgrade smbd.service
+    stop_optional_service_for_upgrade autofs.service
+    disable_gadget_for_upgrade
+    shopt -s nullglob
+    snapshot_mounts=(/backingfiles/snapshots/snap*/mnt)
+    shopt -u nullglob
+    for mount_path in "${snapshot_mounts[@]}" /mnt/cam /mnt/music \
+      /mnt/lightshow /mnt/boombox /mnt/archive /mnt/musicarchive
+    do
+      unmount_if_mounted_for_upgrade "$mount_path"
+    done
     /root/bin/remountfs_rw
-    secure_setup_config_file /root/teslausb_setup_variables.conf
+    if declare -F teslausb_secure_config > /dev/null
+    then
+      if [ -n "${TESLAUSB_CONFIG_PATH:-}" ]
+      then
+        teslausb_secure_config "$TESLAUSB_CONFIG_PATH"
+      elif [ -e /root/teslausb_setup.json ]
+      then
+        teslausb_secure_config /root/teslausb_setup.json
+      else
+        teslausb_secure_config /root/teslausb_setup_variables.conf
+      fi
+    else
+      secure_setup_config_file /root/teslausb_setup_variables.conf
+    fi
     # a previous bookworm install may have the makers in /boot, so move
     # them to /teslausb (/boot/firmware)
     if [ ! /boot -ef /teslausb ]
@@ -723,20 +1092,38 @@ function cmd_upgrade_prepare {
         fi
       done
     fi
-  ) &> /dev/null
+  )
 }
 
 function cmd_upgrade_finish {
   if [ -z "${TESLAUSB_UPGRADE_DIR:-}" ] || [ -L "$TESLAUSB_UPGRADE_DIR" ] || \
      [ ! -f "$TESLAUSB_UPGRADE_DIR/setup-teslausb" ] || \
-     [ ! -f "$TESLAUSB_UPGRADE_DIR/envsetup.sh" ]
+     [ ! -f "$TESLAUSB_UPGRADE_DIR/envsetup.sh" ] || \
+     [ -z "${TESLAUSB_UPGRADE_STAGING_DIR:-}" ] || \
+     [ -z "${TESLAUSB_TRANSACTION_MANAGER:-}" ] || \
+     [ ! -x "$TESLAUSB_TRANSACTION_MANAGER" ]
   then
     setup_progress "STOP: the private upgrade staging directory is unavailable"
     exit 1
   fi
-  install -o root -g root -m 0755 -- "$TESLAUSB_UPGRADE_DIR/setup-teslausb" /root/bin/setup-teslausb
-  install -o root -g root -m 0755 -- "$TESLAUSB_UPGRADE_DIR/envsetup.sh" /root/bin/envsetup.sh
-  setup_progress "upgrade finished"
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/setup-teslausb" setup-teslausb
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/envsetup.sh" envsetup.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb-config-loader.sh" teslausb-config-loader.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb_config.py" teslausb_config.py
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_TRANSACTION_MANAGER" teslausb-upgrade
+  # Full setup may have rewritten unit files after the recovery guard was
+  # installed. Health checks must exercise the definitions that the next boot
+  # will actually load.
+  systemctl daemon-reload
+  activated_release=$(
+    "$TESLAUSB_TRANSACTION_MANAGER" finalize "$TESLAUSB_UPGRADE_STAGING_DIR"
+  )
+  setup_progress "upgrade finished; activated verified release $activated_release"
   for i in {5..1}
   do
     echo -e -n "rebooting in $i seconds to apply changes, press ctrl-c to abort\r"
@@ -1058,11 +1445,15 @@ do
 done
 
 # Update config.txt if needed
-if [ -f "$PICONFIG_PATH" ]
+  if [ -f "$PICONFIG_PATH" ]
 then
   if ! grep -q 'dtoverlay=dwc2$' "$PICONFIG_PATH"
   then
     echo -e "dtoverlay=dwc2\n" >> "$PICONFIG_PATH"
+    if stop_if_transaction_requires_reboot 'the dwc2 boot overlay change'
+    then
+      exit 75
+    fi
     setup_progress "rebooting to apply dwc2 overlay change"
     reboot
     exit 0
@@ -1093,6 +1484,10 @@ else
   caller=$(ps -o comm= "$((grandparent))")
   if [ "$caller" = "rc.local" ] && [ ! -t 0 ]
   then
+    if stop_if_transaction_requires_reboot 'the rc.local replacement'
+    then
+      exit 75
+    fi
     setup_progress "rebooting to run updated rc.local"
     exec reboot
   fi
@@ -1116,6 +1511,7 @@ headless_setup_progress_flash 3
 mkdir -p /root/bin
 
 get_common_scripts
+install_transaction_recovery_service
 
 pushd ~
 
