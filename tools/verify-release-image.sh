@@ -55,6 +55,18 @@ prepare_output_path() {
   printf '%s/%s\n' "$output_parent" "$output_name"
 }
 
+find_enabled_systemd_unit() {
+  local systemd_directory="$1"
+  local unit_name="$2"
+
+  find "$systemd_directory" -xdev \
+    \( -type f -o -type l \) \
+    \( -path "*/*.wants/$unit_name" \
+       -o -path "*/*.requires/$unit_name" \
+       -o -path "*/*.upholds/$unit_name" \) \
+    -print -quit
+}
+
 [ "$#" -eq 6 ] || usage
 
 readonly IMAGE_INPUT=$1
@@ -194,8 +206,27 @@ sudo -n mount -o ro,noload -- "$ROOT_PARTITION" "$ROOT_MOUNT"
 [ -f "$BOOT_MOUNT/config.txt" ] || fail "boot config.txt is missing"
 grep -Eq '^[[:space:]]*dtoverlay=dwc2([[:space:]]|$)' "$BOOT_MOUNT/config.txt" ||
   fail "dwc2 USB OTG overlay is missing from boot config"
-[ -f "$BOOT_MOUNT/ssh" ] || [ -f "$ROOT_MOUNT/boot/ssh" ] ||
-  fail "first-boot SSH marker is missing"
+if [ ! -f "$BOOT_MOUNT/ssh" ] || [ -L "$BOOT_MOUNT/ssh" ]
+then
+  fail "first-boot SSH marker is missing or symbolic on the boot partition"
+fi
+if [ -e "$ROOT_MOUNT/boot/ssh" ] || [ -L "$ROOT_MOUNT/boot/ssh" ]
+then
+  fail "release image contains a legacy root-filesystem SSH marker"
+fi
+systemd_config="$ROOT_MOUNT/etc/systemd/system"
+if [ ! -d "$systemd_config" ] || [ -L "$systemd_config" ]
+then
+  fail "systemd configuration directory is missing or symbolic"
+fi
+enabled_rpi_resize=$(find_enabled_systemd_unit \
+  "$systemd_config" rpi-resize.service)
+[ -z "$enabled_rpi_resize" ] ||
+  fail "automatic root partition resizing remains enabled: $enabled_rpi_resize"
+enabled_dpkg_backup=$(find_enabled_systemd_unit \
+  "$systemd_config" dpkg-db-backup.timer)
+[ -z "$enabled_dpkg_backup" ] ||
+  fail "dpkg database backup timer remains enabled: $enabled_dpkg_backup"
 [ -f "$BOOT_MOUNT/run_once" ] || fail "TeslaUSB first-boot marker is missing"
 [ -f "$BOOT_MOUNT/teslausb_setup.json.sample" ] ||
   fail "JSON setup sample is missing from the boot partition"
@@ -244,6 +275,18 @@ sudo -n awk -F: '
 ' "$ROOT_MOUNT/etc/shadow" || fail "first user pi is missing or not locked"
 awk -F: '$1 == "pi" { count++; uid = $3 } END { exit !(count == 1 && uid == 1000) }' \
   "$ROOT_MOUNT/etc/passwd" || fail "first user pi is not the unique UID 1000 account"
+
+for prohibited_swap_package in dphys-swapfile rpi-swap systemd-zram-generator
+do
+  package_state=
+  if package_state=$(dpkg-query --admindir="$ROOT_MOUNT/var/lib/dpkg" \
+       --show --showformat='${db:Status-Status}' \
+       "$prohibited_swap_package" 2> /dev/null) &&
+     [ "$package_state" = installed ]
+  then
+    fail "release image contains active swap package: $prohibited_swap_package"
+  fi
+done
 
 machine_id_file="$ROOT_MOUNT/etc/machine-id"
 if [ ! -f "$machine_id_file" ] || [ -L "$machine_id_file" ]

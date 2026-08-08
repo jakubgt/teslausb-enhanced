@@ -4,6 +4,29 @@ All notable changes to this private TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
+## [1.2.0-rc.3] - 2026-08-08
+
+Third release candidate for the downloadable Raspberry Pi Zero 2 W image. It
+supersedes the unpublished `v1.2.0-rc.2` draft; no rc.2 image assets were
+published.
+
+### Fixed
+
+- Legacy `resize2fs_once` and initramfs `firstboot` cleanup is idempotent when
+  current Trixie images omit those paths.
+- The current Trixie `rpi-resize.service` is disabled so first boot preserves
+  the unpartitioned card space required for TeslaUSB's backing-file and mutable
+  partitions. Offline image verification rejects any enabled resize unit.
+- The first-boot SSH marker is installed on the FAT boot partition at
+  `/boot/firmware/ssh`; verification rejects the obsolete root-filesystem
+  `/boot/ssh` location.
+- Trixie's `rpi-swap` and `systemd-zram-generator` packages are purged alongside
+  the legacy swap package, and `dpkg-db-backup.timer` is disabled. Image
+  verification enforces the no-swap and disabled-backup-timer state.
+
+All feature, security, provenance, and physical-hardware testing boundaries
+documented for the preceding candidates remain in effect.
+
 ## [1.2.0-rc.2] - 2026-08-08
 
 Second release candidate for the downloadable Raspberry Pi Zero 2 W image. It
@@ -161,3 +184,4 @@ Initial private enhanced release, based on upstream `main-dev` commit
 [1.1.0]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0
 [1.2.0-rc.1]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.1
 [1.2.0-rc.2]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.2
+[1.2.0-rc.3]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.3

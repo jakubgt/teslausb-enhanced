@@ -145,7 +145,7 @@ function verify_source_bundle () {
 # shellcheck disable=SC2153 # ROOTFS_DIR is provided by pi-gen's stage runner.
 lock_image_account "${ROOTFS_DIR}" "${FIRST_USER_NAME:-pi}"
 
-touch "${ROOTFS_DIR}/boot/ssh"
+touch "${ROOTFS_DIR}/boot/firmware/ssh"
 install -m 755 files/rc.local                             "${ROOTFS_DIR}/etc/"
 install -m 644 files/teslausb_config_wizard.html          "${ROOTFS_DIR}/boot/firmware/teslausb_config_wizard.html"
 install -m 666 files/teslausb_setup.json.sample           "${ROOTFS_DIR}/boot/firmware/teslausb_setup.json.sample"
@@ -178,13 +178,14 @@ echo "dtoverlay=dwc2" >> "${ROOTFS_DIR}/boot/firmware/config.txt"
 
 # remove unwanted packages, disable unwanted services, and disable swap
 on_chroot << EOF
-apt-get remove -y --purge triggerhappy userconf-pi dphys-swapfile firmware-libertas firmware-realtek firmware-atheros mkvtoolnix
+apt-get remove -y --purge triggerhappy userconf-pi dphys-swapfile rpi-swap systemd-zram-generator firmware-libertas firmware-realtek firmware-atheros mkvtoolnix
 apt-get -y autoremove
 systemctl disable keyboard-setup
+systemctl disable rpi-resize.service
 systemctl disable resize2fs_once
-systemctl disable dpkg-db-backup
+systemctl disable dpkg-db-backup.timer
 update-rc.d resize2fs_once remove
 rm -f -- /etc/init.d/resize2fs_once
-rm /usr/share/initramfs-tools/scripts/local-premount/firstboot
+rm -f -- /usr/share/initramfs-tools/scripts/local-premount/firstboot
 update-initramfs -u
 EOF
