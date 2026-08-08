@@ -346,7 +346,7 @@ MUTABLE_TESLACAM="$mutable_root" SNAPSHOT_POLICY_HELPER="$SNAPSHOT_POLICY" \
 mkdir -p "$snapshot_root/snap-000003/mnt/TeslaCam"
 touch "$snapshot_root/snap-000003/snap.bin"
 printf '%s\n' '#!/bin/bash' 'set -eu' \
-  'if [ "${1:-}" = --file-system ]; then printf "echo \\$((0*1))\\n"; else exec /usr/bin/stat "$@"; fi' \
+  'if [ "${1:-}" = --file-system ]; then printf "%s\n" "echo 0"; else exec /usr/bin/stat "$@"; fi' \
   > "$policy_bin/stat"
 chmod +x "$policy_bin/stat"
 manage_script="$REPO_ROOT/run/manage_free_space.sh"

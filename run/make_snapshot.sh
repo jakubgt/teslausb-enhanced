@@ -135,7 +135,8 @@ function snapshot {
     local incomplete_name
     local incomplete_policy_status=0
     incomplete_name=$(basename -- "$(dirname -- "$oldname")")
-    SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
+    env SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
+      SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
       SNAPSHOT_FINDMNT_COMMAND="$SNAPSHOT_FINDMNT_COMMAND" \
       "$SNAPSHOT_POLICY_HELPER" "$incomplete_name" || incomplete_policy_status=$?
     if [ "$incomplete_policy_status" -eq 1 ]

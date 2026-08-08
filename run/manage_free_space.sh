@@ -67,9 +67,9 @@ function manage_free_space {
     do
       snapshot_name=$(basename -- "$snapshot_dir")
       policy_status=0
-      SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
-      SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
-      SNAPSHOT_FINDMNT_COMMAND="$SNAPSHOT_FINDMNT_COMMAND" \
+      env SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
+        SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
+        SNAPSHOT_FINDMNT_COMMAND="$SNAPSHOT_FINDMNT_COMMAND" \
         "$SNAPSHOT_POLICY_HELPER" "$snapshot_name" || policy_status=$?
       case "$policy_status" in
         0)
