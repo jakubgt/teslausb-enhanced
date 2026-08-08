@@ -35,13 +35,16 @@ The repository and release are private. Download the image while signed in to
 an authorized GitHub account; Raspberry Pi Imager cannot authenticate to a
 private release URL itself.
 
+GitHub currently labels `v1.1.0` as **Latest**, but that release is source-only.
+Use the `v1.2.0-rc.4` prerelease above for the flashable image.
+
 ## What this fork adds
 
 | Area | Upgrade | Practical benefit |
 | --- | --- | --- |
 | Flashing | Native arm64/Trixie image builds with `.img.xz`, checksum, provenance metadata, and package manifest | Download one verified image and flash it directly with Raspberry Pi Imager |
 | First boot | Self-contained `teslausb_config_wizard.html` on the boot partition | Create a conservative configuration offline without hand-editing shell code |
-| Configuration | Strict `teslausb_setup.json` schema, type and range checks, fixed allowlist, safe migration, and secret sanitization | Configuration text is not evaluated as shell code; unsafe or incomplete values fail before setup |
+| Configuration | Strict `teslausb_setup.json` schema, type and range checks, fixed allowlist, safe migration, and secret sanitization | Declarative JSON values are not evaluated as shell code; unsafe or incomplete values fail before setup |
 | Archive reliability | SHA-256 manifests, destination verification, stable mount identity, bounded retries, and race-safe cleanup | Transfer failures are detected before source links are released |
 | Dashboard and API | Responsive status UI, diagnostics, archive progress, safer file actions, and a versioned local API | Better visibility and fewer risky manual recovery steps |
 | USB recovery | Manual, two-confirmation gadget repair with shared locking, cooldowns, image preflight, and post-rebuild verification | Repairs USB gadget state without silently racing archive or snapshot operations |
@@ -105,8 +108,8 @@ LED stages, troubleshooting, and what happens during first boot.
 
 ## Offline configuration wizard
 
-The recommended helper is `teslausb_config_wizard.html`, included on every
-release image's boot partition. It:
+The recommended helper is `teslausb_config_wizard.html`, included on the
+current `v1.2.0-rc.4` image's boot partition. It:
 
 - runs entirely in the browser with no network requests, analytics, remote
   scripts, form submission, or browser storage;
@@ -129,7 +132,7 @@ private, retain only an encrypted backup, and remove it from shared computers.
 | Wi-Fi country | Explicit physical-location ISO country code; no default is guessed (`GB`, not `UK`) |
 | Time zone | A reviewed named zone such as `America/Chicago` |
 | Web access | Username `teslausb` and a unique locally generated password |
-| Temperature reporting | 55 °C caution, 68 °C warning, 60-second interval, and post-archive reporting |
+| Temperature reporting | 55 °C caution, 68 °C warning, hourly logging, and post-archive reporting |
 | Destructive or external options | Leave `DATA_DRIVE`, access-point mode, guest Samba, notifications, and third-party WebUI downloads unset initially |
 
 `DATA_DRIVE` is destructive: setup may wipe and repartition the selected
@@ -224,7 +227,7 @@ and an
 
 These checks are extensive, but they do not replace a complete physical test
 of first boot, 2.4 GHz Wi-Fi, web authentication, USB enumeration, reboot,
-power loss, archive transfer, and vehicle operation. Debian and Raspberry Pi
+power-cycle, archive transfer, and vehicle operation. Debian and Raspberry Pi
 package repositories are not snapshot-pinned, so the recorded build is
 provenance-traceable but is not guaranteed to be bit-for-bit reproducible.
 
