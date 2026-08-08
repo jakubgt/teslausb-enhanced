@@ -12,6 +12,7 @@ configure_ssh="$repo_root/setup/pi/configure-ssh.sh"
 pi_gen_run="$repo_root/pi-gen-sources/00-teslausb-tweaks/00-run.sh"
 pi_gen_config="$repo_root/pi-gen-sources/pi-gen-config"
 release_image_verifier="$repo_root/tools/verify-release-image.sh"
+image_workflow="$repo_root/.github/workflows/build-image.yml"
 wpa_sample="$repo_root/pi-gen-sources/00-teslausb-tweaks/files/wpa_supplicant.conf.sample"
 
 test_root="$(mktemp -d)"
@@ -180,6 +181,76 @@ assert_contains "$release_image_verifier" \
   'dpkg database backup timer remains enabled'
 assert_contains "$release_image_verifier" \
   'release image contains active swap package'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
+assert_contains "$release_image_verifier" \
+  'nonempty_build_log=$(sudo -n find "$ROOT_MOUNT/var/log" -xdev'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
+assert_contains "$release_image_verifier" \
+  'sudo -n losetup --detach "$LOOP_DEVICE"'
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
+assert_contains "$release_image_verifier" \
+  'sudo -n losetup --find --show --partscan --read-only "$IMAGE_PATH"'
+assert_absent "$release_image_verifier" 'losetup --detach --'
+assert_absent "$release_image_verifier" \
+  'losetup --find --show --partscan --read-only --'
+assert_absent "$release_image_verifier" \
+  'system-connections" \
+  -mindepth 1 \( -type f -o -type l \) -print -quit 2> /dev/null || true'
+# shellcheck disable=SC2016 # Assertions intentionally search literal workflow source.
+assert_contains "$image_workflow" \
+  'sudo -n bash -- "${GITHUB_WORKSPACE}/tools/verify-release-image.sh"'
+# shellcheck disable=SC2016 # Assertions intentionally search literal workflow source.
+assert_contains "$image_workflow" \
+  'sudo -n chown -- "${runner_uid}:${runner_gid}" "${packages}" "${metadata}"'
+
+# shellcheck disable=SC2016 # The search string is intentionally literal workflow source.
+verifier_call_line="$(grep -nF -- \
+  'sudo -n bash -- "${GITHUB_WORKSPACE}/tools/verify-release-image.sh"' \
+  "$image_workflow" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal workflow source.
+verifier_output_check_line="$(grep -nF -- \
+  'for verifier_output in "${packages}" "${metadata}"' \
+  "$image_workflow" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal workflow source.
+verifier_chown_line="$(grep -nF -- \
+  'sudo -n chown -- "${runner_uid}:${runner_gid}" "${packages}" "${metadata}"' \
+  "$image_workflow" | cut -d: -f1)"
+if [ -z "$verifier_call_line" ] || [ -z "$verifier_output_check_line" ] ||
+   [ -z "$verifier_chown_line" ]
+then
+  fail 'release workflow verifier privilege or output safeguards are incomplete'
+fi
+if [ "$verifier_call_line" -ge "$verifier_output_check_line" ] ||
+   [ "$verifier_output_check_line" -ge "$verifier_chown_line" ]
+then
+  fail 'release workflow returns verifier outputs to runner ownership unsafely'
+fi
+
+# shellcheck disable=SC2016 # The search string is intentionally literal shell source.
+image_path_line="$(grep -nF -- \
+  'IMAGE_PATH=$(readlink -f -- "$IMAGE_INPUT")' \
+  "$release_image_verifier" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal shell source.
+loop_attach_line="$(grep -nF -- \
+  'LOOP_DEVICE=$(sudo -n losetup --find --show --partscan --read-only "$IMAGE_PATH")' \
+  "$release_image_verifier" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal shell source.
+loop_cleanup_guard_line="$(grep -nF -- \
+  'if [ -n "$LOOP_DEVICE" ] && [[ "$LOOP_DEVICE" =~ ^/dev/loop[0-9]+$ ]]' \
+  "$release_image_verifier" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal shell source.
+loop_detach_line="$(grep -nF -- \
+  'sudo -n losetup --detach "$LOOP_DEVICE"' \
+  "$release_image_verifier" | cut -d: -f1)"
+if [ -z "$image_path_line" ] || [ -z "$loop_attach_line" ] ||
+   [ -z "$loop_cleanup_guard_line" ] || [ -z "$loop_detach_line" ]
+then
+  fail 'release image verifier loop-device safeguards are incomplete'
+fi
+[ "$image_path_line" -lt "$loop_attach_line" ] ||
+  fail 'release image path is not resolved before loop attachment'
+[ "$loop_cleanup_guard_line" -lt "$loop_detach_line" ] ||
+  fail 'loop device is not validated before cleanup can detach it'
 
 fake_systemd="$test_root/fake-systemd"
 enabled_resize_path="$fake_systemd/sysinit.target.wants/rpi-resize.service"

@@ -131,7 +131,7 @@ cleanup() {
   fi
   if [ -n "$LOOP_DEVICE" ] && [[ "$LOOP_DEVICE" =~ ^/dev/loop[0-9]+$ ]]
   then
-    sudo -n losetup --detach -- "$LOOP_DEVICE" || cleanup_status=1
+    sudo -n losetup --detach "$LOOP_DEVICE" || cleanup_status=1
   fi
   [ -z "$PACKAGES_TMP" ] || rm -f -- "$PACKAGES_TMP"
   [ -z "$METADATA_TMP" ] || rm -f -- "$METADATA_TMP"
@@ -160,7 +160,7 @@ mkdir -m 0700 -- "$BOOT_MOUNT" "$ROOT_MOUNT"
 PACKAGES_TMP=$(mktemp "$(dirname -- "$PACKAGES_OUTPUT")/.teslausb-packages.XXXXXXXX")
 METADATA_TMP=$(mktemp "$(dirname -- "$METADATA_OUTPUT")/.teslausb-metadata.XXXXXXXX")
 
-LOOP_DEVICE=$(sudo -n losetup --find --show --partscan --read-only -- "$IMAGE_PATH")
+LOOP_DEVICE=$(sudo -n losetup --find --show --partscan --read-only "$IMAGE_PATH")
 [[ "$LOOP_DEVICE" =~ ^/dev/loop[0-9]+$ ]] || fail "losetup returned an unsafe device name"
 sudo -n udevadm settle
 
@@ -321,7 +321,8 @@ do
   fi
 done
 
-nonempty_build_log=$(find "$ROOT_MOUNT/var/log" -xdev -type f -size +0c -print -quit)
+nonempty_build_log=$(sudo -n find "$ROOT_MOUNT/var/log" -xdev \
+  -type f -size +0c -print -quit)
 [ -z "$nonempty_build_log" ] ||
   fail "release image contains a nonempty build-time log: $nonempty_build_log"
 for build_log in \
@@ -380,8 +381,16 @@ do
     fail "release image contains a credential or history file: $credential_path"
   fi
 done
-network_profile=$(find "$ROOT_MOUNT/etc/NetworkManager/system-connections" \
-  -mindepth 1 \( -type f -o -type l \) -print -quit 2> /dev/null || true)
+network_profile=
+network_profile_directory="$ROOT_MOUNT/etc/NetworkManager/system-connections"
+if [ -d "$network_profile_directory" ]
+then
+  network_profile=$(find "$network_profile_directory" \
+    -mindepth 1 \( -type f -o -type l \) -print -quit)
+elif [ -e "$network_profile_directory" ] || [ -L "$network_profile_directory" ]
+then
+  fail "NetworkManager system-connections path is not a directory"
+fi
 [ -z "$network_profile" ] ||
   fail "release image contains an active NetworkManager profile: $network_profile"
 wpa_config="$ROOT_MOUNT/etc/wpa_supplicant/wpa_supplicant.conf"

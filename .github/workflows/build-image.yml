@@ -254,6 +254,7 @@ jobs:
             printf '%s\n' "${object_sha}"
           }
 
+          tag_created=false
           tag_response=
           if tag_response=$(gh api \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
@@ -275,14 +276,64 @@ jobs:
               --arg ref "refs/tags/${RELEASE_TAG}" \
               --arg sha "${SOURCE_COMMIT}" \
               '{ref: $ref, sha: $sha}')
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              --input - <<< "${tag_payload}" > /dev/null
-            tag_response=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
+            tag_response=$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" --input - \
+              <<< "${tag_payload}")
             [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
-              echo "Created tag does not resolve to the release source commit" >&2
+              echo "Created tag response does not resolve to the release source commit" >&2
               exit 1
             }
+            tag_created=true
+          fi
+
+          if [ "${tag_created}" = true ]
+          then
+            tag_visibility_delays=(2 4 8 16)
+            tag_visible=false
+            tag_visibility_error=
+            for ((tag_visibility_attempt = 1;
+                  tag_visibility_attempt <= ${#tag_visibility_delays[@]};
+                  tag_visibility_attempt++))
+            do
+              tag_response=
+              if tag_response=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+              then
+                [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+                  echo "Visible release tag does not target the source commit" >&2
+                  exit 1
+                }
+                tag_visible=true
+                break
+              fi
+              tag_visibility_error=${tag_response}
+              case "${tag_visibility_error}" in
+                *'(HTTP 404)'*) ;;
+                *)
+                  printf '%s\n' "${tag_visibility_error}" >&2
+                  exit 1
+                  ;;
+              esac
+              visibility_delay=${tag_visibility_delays[$((tag_visibility_attempt - 1))]}
+              echo "Created tag is not visible on attempt ${tag_visibility_attempt}; rechecking in ${visibility_delay}s"
+              sleep "${visibility_delay}"
+            done
+            if [ "${tag_visible}" != true ]
+            then
+              tag_response=
+              if tag_response=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+              then
+                [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+                  echo "Visible release tag does not target the source commit" >&2
+                  exit 1
+                }
+              else
+                printf '%s\n' "${tag_response:-${tag_visibility_error}}" >&2
+                echo "Created tag did not become visible after ${#tag_visibility_delays[@]} bounded checks" >&2
+                exit 1
+              fi
+            fi
           fi
 
           prerelease=false
@@ -292,27 +343,57 @@ jobs:
           fi
           expected_title="TeslaUSB Enhanced ${RELEASE_TAG}"
           expected_body=$(< "${RELEASE_NOTES_PATH}")
+          expected_assets=(
+            "${ASSET_STEM}.img.xz"
+            "${ASSET_STEM}.img.xz.sha256"
+            "${ASSET_STEM}.image-metadata.json"
+            "${ASSET_STEM}.packages.tsv"
+          )
+          release_payload=$(jq -n \
+            --arg tag_name "${RELEASE_TAG}" \
+            --arg target_commitish "${SOURCE_COMMIT}" \
+            --arg name "${expected_title}" \
+            --rawfile body "${RELEASE_NOTES_PATH}" \
+            --argjson prerelease "${prerelease}" \
+            '{
+              tag_name: $tag_name,
+              target_commitish: $target_commitish,
+              name: $name,
+              body: $body,
+              draft: true,
+              prerelease: $prerelease,
+              make_latest: "false"
+            }')
 
-          release_response=
-          if release_response=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
-          then
-            jq -e --arg tag "${RELEASE_TAG}" \
-              --arg title "${expected_title}" \
-              --arg source_commit "${SOURCE_COMMIT}" \
-              --argjson prerelease "${prerelease}" \
-              '.tag_name == $tag and .name == $title and .draft == true and
-               .target_commitish == $source_commit and
-               .prerelease == $prerelease' <<< "${release_response}" > /dev/null || {
-              echo "Existing release is not the expected matching draft" >&2
+          # GitHub's release service can briefly lag a newly created Git tag.
+          # A failed create is never retried until both the tag and release are
+          # fetched again, so an eventually visible draft cannot be duplicated.
+          release_create_delays=(2 4 8 16)
+          release_found=false
+          release_create_error=
+          for ((release_create_attempt = 1;
+                release_create_attempt <= ${#release_create_delays[@]};
+                release_create_attempt++))
+          do
+            tag_response=
+            if ! tag_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+            then
+              printf '%s\n' "${tag_response}" >&2
+              exit 1
+            fi
+            [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+              echo "Release tag changed while creating its draft" >&2
               exit 1
             }
-            existing_body=$(jq -r '.body // ""' <<< "${release_response}")
-            [ "${existing_body}" = "${expected_body}" ] || {
-              echo "Existing draft release notes do not match checked-in notes" >&2
-              exit 1
-            }
-          else
+
+            release_response=
+            if release_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
+            then
+              release_found=true
+              break
+            fi
             case "${release_response}" in
               *'(HTTP 404)'*) ;;
               *)
@@ -320,32 +401,75 @@ jobs:
                 exit 1
                 ;;
             esac
-            release_payload=$(jq -n \
-              --arg tag_name "${RELEASE_TAG}" \
-              --arg target_commitish "${SOURCE_COMMIT}" \
-              --arg name "${expected_title}" \
-              --rawfile body "${RELEASE_NOTES_PATH}" \
-              --argjson prerelease "${prerelease}" \
-              '{
-                tag_name: $tag_name,
-                target_commitish: $target_commitish,
-                name: $name,
-                body: $body,
-                draft: true,
-                prerelease: $prerelease,
-                make_latest: "false"
-              }')
-            release_response=$(gh api --method POST \
+
+            if release_response=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/releases" --input - \
-              <<< "${release_payload}")
+              <<< "${release_payload}" 2>&1)
+            then
+              release_found=true
+              break
+            fi
+            release_create_error=${release_response}
+            case "${release_create_error}" in
+              *'(HTTP 404)'*) ;;
+              *)
+                printf '%s\n' "${release_create_error}" >&2
+                exit 1
+                ;;
+            esac
+
+            retry_delay=${release_create_delays[$((release_create_attempt - 1))]}
+            echo "Release creation returned HTTP 404 on attempt ${release_create_attempt}; rechecking the exact tag and draft before any retry in ${retry_delay}s"
+            sleep "${retry_delay}"
+          done
+
+          if [ "${release_found}" != true ]
+          then
+            tag_response=
+            if ! tag_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+            then
+              printf '%s\n' "${tag_response}" >&2
+              exit 1
+            fi
+            [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+              echo "Release tag changed after the final draft-create attempt" >&2
+              exit 1
+            }
+            if release_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
+            then
+              release_found=true
+            else
+              case "${release_response}" in
+                *'(HTTP 404)'*) ;;
+                *)
+                  printf '%s\n' "${release_response}" >&2
+                  exit 1
+                  ;;
+              esac
+              printf '%s\n' "${release_create_error}" >&2
+              echo "Release draft did not become visible after ${#release_create_delays[@]} bounded create attempts" >&2
+              exit 1
+            fi
           fi
 
-          expected_assets=(
-            "${ASSET_STEM}.img.xz"
-            "${ASSET_STEM}.img.xz.sha256"
-            "${ASSET_STEM}.image-metadata.json"
-            "${ASSET_STEM}.packages.tsv"
-          )
+          jq -e --arg tag "${RELEASE_TAG}" \
+            --arg title "${expected_title}" \
+            --arg source_commit "${SOURCE_COMMIT}" \
+            --argjson prerelease "${prerelease}" \
+            '.tag_name == $tag and .name == $title and .draft == true and
+             .target_commitish == $source_commit and
+             .prerelease == $prerelease' <<< "${release_response}" > /dev/null || {
+            echo "Existing release is not the expected matching draft" >&2
+            exit 1
+          }
+          existing_body=$(jq -r '.body // ""' <<< "${release_response}")
+          [ "${existing_body}" = "${expected_body}" ] || {
+            echo "Existing draft release notes do not match checked-in notes" >&2
+            exit 1
+          }
+
           existing_assets=$(jq -r '.assets[].name' <<< "${release_response}")
           for expected_asset in "${expected_assets[@]}"
           do
@@ -549,9 +673,23 @@ jobs:
 
           packages="${dist_dir}/${ASSET_STEM}.packages.tsv"
           metadata="${dist_dir}/${ASSET_STEM}.image-metadata.json"
-          bash "${GITHUB_WORKSPACE}/tools/verify-release-image.sh" \
+          sudo -n bash -- "${GITHUB_WORKSPACE}/tools/verify-release-image.sh" \
             "${raw_image}" "${VERSION}" "${SOURCE_COMMIT}" "${PI_GEN_COMMIT}" \
             "${packages}" "${metadata}"
+          for verifier_output in "${packages}" "${metadata}"
+          do
+            [ -f "${verifier_output}" ] && [ ! -L "${verifier_output}" ] || {
+              echo "Verifier output is missing or symbolic: ${verifier_output}" >&2
+              exit 1
+            }
+          done
+          runner_uid=$(id -u)
+          runner_gid=$(id -g)
+          [[ "${runner_uid}" =~ ^[0-9]+$ ]] && [[ "${runner_gid}" =~ ^[0-9]+$ ]] || {
+            echo "Runner returned a nonnumeric user or group ID" >&2
+            exit 1
+          }
+          sudo -n chown -- "${runner_uid}:${runner_gid}" "${packages}" "${metadata}"
 
           raw_sha256=$(sha256sum -- "${raw_image}")
           raw_sha256=${raw_sha256%% *}
