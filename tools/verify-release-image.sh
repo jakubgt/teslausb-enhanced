@@ -206,8 +206,10 @@ sudo -n mount -o ro,noload -- "$ROOT_PARTITION" "$ROOT_MOUNT"
 [ -f "$BOOT_MOUNT/config.txt" ] || fail "boot config.txt is missing"
 grep -Eq '^[[:space:]]*dtoverlay=dwc2([[:space:]]|$)' "$BOOT_MOUNT/config.txt" ||
   fail "dwc2 USB OTG overlay is missing from boot config"
-[ -f "$BOOT_MOUNT/ssh" ] && [ ! -L "$BOOT_MOUNT/ssh" ] ||
+if [ ! -f "$BOOT_MOUNT/ssh" ] || [ -L "$BOOT_MOUNT/ssh" ]
+then
   fail "first-boot SSH marker is missing or symbolic on the boot partition"
+fi
 if [ -e "$ROOT_MOUNT/boot/ssh" ] || [ -L "$ROOT_MOUNT/boot/ssh" ]
 then
   fail "release image contains a legacy root-filesystem SSH marker"
