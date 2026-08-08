@@ -1,0 +1,92 @@
+PDIR"
+"$TESLAUSB_SCRIPT_TMPDIR/configure-ssh.sh"
+export -n SSH_USER_PASSWORD SSH_ROOT_PUBLIC_KEY
+
+# source setup-teslausb from .bashrc to set up completion
+if ! grep -q envsetup.sh /root/.bashrc
+then
+  echo "source /root/bin/envsetup.sh" >> /root/.bashrc
+fi
+sed -i '/source \/root\/bin\/setup-teslausb/d' /root/.bashrc
+
+# UX courtesy reminders
+if ! grep -q TESLAUSB_TIP1 /root/.bashrc
+then
+  cat >> /root/.bashrc <<- EOC
+	if [ -n "\$PS1" ]; then
+		cat << TESLAUSB_TIP1
+		Run 'bin/setup-teslausb upgrade' to update to the latest version of teslausb,
+		or run 'bin/remountfs_rw' to allow writing to the root partition.
+
+		TESLAUSB_TIP1
+	fi
+	EOC
+fi
+
+DEFUSER=$(grep ":1000:1000:" /etc/passwd | awk -F : '{print $1}')
+if [ -n "$DEFUSER" ]
+then
+  if ! grep -q TESLAUSB_TIP1 "/home/$DEFUSER/.bashrc"
+  then
+    cat >> "/home/$DEFUSER/.bashrc" <<- EOC
+	if [ -n "\$PS1" ]; then
+		cat << TESLAUSB_TIP1
+		Run 'sudo -i' if you need to make changes.
+
+		The TeslaUSB web interface is at http://$(hostname -s) or http://$(hostname -I | awk '{print $1}')
+
+		TESLAUSB_TIP1
+	fi
+	EOC
+  fi
+  if grep -q "/boot/TESLAUSB_SETUP_FINISHED" "/home/$DEFUSER/.bashrc"
+  then
+    sed -i "s@/boot/TESLAUSB_SETUP_FINISHED@/teslausb/TESLAUSB_SETUP_FINISHED@" "/home/$DEFUSER/.bashrc"
+  fi
+  if grep -q "/boot/TESLAUSB_SETUP_FINISHED" "/root/.bashrc"
+  then
+    sed -i "s@/boot/TESLAUSB_SETUP_FINISHED@/teslausb/TESLAUSB_SETUP_FINISHED@" "/root/.bashrc"
+  fi
+fi
+
+make_root_fs_readonly
+
+upgrade_packages
+
+if [ -n "${INSTALL_USER_REQUESTED_PACKAGES:-}" ]
+then
+  setup_progress "Installing user requested packages: ${INSTALL_USER_REQUESTED_PACKAGES}"
+  read -r -a EXTRA_PACKAGES <<< "${INSTALL_USER_REQUESTED_PACKAGES[@]}"
+  DEBIAN_FRONTEND=noninteractive apt-get -y install "${EXTRA_PACKAGES[@]}"
+fi
+
+setup_progress "Running post-setup tasks"
+(
+  cd "$SOURCE_DIR"
+  mkdir -p /mutable/once
+  for i in setup/pi/once/*
+  do
+    sum="$(sha256sum < "$i" | awk '{print $1}')"
+    if [ ! -e "/mutable/once/$sum" ]
+    then
+      setup_progress "$i"
+      copy_script "$i" "$TESLAUSB_SCRIPT_TMPDIR"
+      "$TESLAUSB_SCRIPT_TMPDIR/$(basename "$i")"
+      touch "/mutable/once/$sum"
+    else
+      setup_progress "skipping $i ($sum)"
+    fi
+  done
+)
+
+headless_setup_mark_setup_success
+
+# Flash for stage 5 headless (Mark success, FS readonly)
+headless_setup_progress_flash 5
+
+setup_progress "All done."
+
+if [ -t 0 ] && [ "${NO_REBOOT_PROMPT:-}" != "1" ]
+then
+  setup_progress '(reboot now for changes to take effect)'
+fi

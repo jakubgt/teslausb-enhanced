@@ -1,0 +1,256 @@
+_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/make-root-fs-readonly.sh"
+}
+
+function update_package_index () {
+  setup_progress "Updating package index files..."
+  # the package index might be in a bad state if setup was previously
+  # interrupted, so fix it up first
+  dpkg --configure -a || true
+  if [ "$(. /etc/os-release && echo "${VERSION_ID:-}")" = "10" ] && grep -q 'raspbian\.raspberrypi\.org' /etc/apt/sources.list
+  then
+    echo "Updating apt sources for legacy Buster (consider using a more recent image)"
+    sed -i 's|raspbian.raspberrypi.org|legacy.raspbian.org|g' /etc/apt/sources.list
+  fi
+
+  while ! (apt-get update || apt-get update --allow-releaseinfo-change)
+  do
+    setup_progress "Failed, retrying"
+    sleep 2
+  done
+}
+
+function upgrade_packages () {
+  if [ "$UPGRADE_PACKAGES" = true ]
+  then
+    setup_progress "Upgrading installed packages..."
+    # clean the cache to free up space, since especially
+    # a kernel update requires quite a bit of temporary
+    # extra space
+    apt-get clean
+    apt-get --assume-yes upgrade
+  else
+    setup_progress "Skipping package upgrade."
+  fi
+  # no real need to keep the cache around after setup
+  apt-get clean
+  fstrim / || true
+}
+
+function set_timezone () {
+  local timezone_path
+  local timezone_real
+  local timezone_zoneinfo_root
+  local tzout
+  local tzupdate_candidate
+
+  if [ -n "${TIME_ZONE:+x}" ]
+  then
+    if [ "$TIME_ZONE" = "auto" ]
+    then
+      tzupdate_candidate="$(mktemp "$TESLAUSB_SCRIPT_TMPDIR/tzupdate.XXXXXXXX.py")"
+      chmod 0600 "$tzupdate_candidate"
+      curlwrapper --location --proto '=https' --proto-redir '=https' \
+        --max-filesize "$TZUPDATE_MAX_BYTES" --output "$tzupdate_candidate" \
+        "$TZUPDATE_URL"
+      if ! verify_tzupdate_checksum "$tzupdate_candidate" "$TZUPDATE_SHA256"
+      then
+        rm -f -- "$tzupdate_candidate"
+        setup_progress "STOP: automatic timezone helper failed SHA-256 verification."
+        return 1
+      fi
+      if ! tzout="$(python3 "$tzupdate_candidate" 2>&1)"
+      then
+        setup_progress "auto timezone failed: $tzout"
+      else
+        setup_progress "$tzout"
+      fi
+      rm -f -- "$tzupdate_candidate"
+    else
+      timezone_zoneinfo_root=/usr/share/zoneinfo
+      timezone_path="$timezone_zoneinfo_root/$TIME_ZONE"
+      timezone_real=$(readlink -f -- "$timezone_path") || timezone_real=
+      case "$timezone_real" in
+        "$timezone_zoneinfo_root"/*)
+          if [ -f "$timezone_real" ]
+          then
+            ln -sf -- "$timezone_real" /etc/localtime
+          else
+            setup_progress "invalid timezone: $TIME_ZONE"
+          fi
+          ;;
+        *)
+          setup_progress "invalid or unsafe timezone: $TIME_ZONE"
+          ;;
+      esac
+    fi
+  fi
+}
+
+# There's probably a better way of doing this.
+# If not, there should be.
+function get_usb_state {
+  local current
+  local last;
+  current=$(cat /sys/class/udc/*/state)
+  echo -n "Gadget state: $current"
+  if [ "$current" = "configured" ]
+  then
+    echo
+    return
+  fi
+  last=$(dmesg | grep 'g_mass_storage\|dwc2' | tail -1)
+  if [ -z "$last" ]
+  then
+    echo ". No UMS/dwc2 messages in dmesg"
+    return
+  fi
+  local usbstatetime
+  usbstatetime=$(echo "$last" | tr -d '[]' | awk '{print $1}')
+  now=$(awk '{print $1}' /proc/uptime)
+  awk "BEGIN {printf \". %.1f seconds ago: \", $now-$usbstatetime}"
+  case $last in
+    # this message is now a debug log and doesn't show in normal builds
+    *"Linux File-Backed Storage")
+      echo "connected to host and host mounted drive(s)"
+      ;;
+    *"new device"*)
+      ;&
+    *"new address"*)
+      echo "connected to host"
+      ;;
+    *"bound driver"*)
+      echo "mass storage ready, but not connected to host (check cable)"
+      ;;
+    *)
+      echo "unknown":
+  esac
+}
+
+function cmd_install {
+  /root/bin/remountfs_rw
+  copy_script "$1" /root/bin
+  setup_progress "$1 installed in /root/bin/"
+  exit
+}
+
+function cmd_selfupdate {
+  echo "The 'selfupdate' command is no longer supported. Run '$0 upgrade' instead."
+  exit 0
+}
+
+function cmd_upgrade {
+  if [ ! -e /teslausb/TESLAUSB_SETUP_FINISHED ]
+  then
+    echo "STOP: previous setup didn't finish, can't upgrade unfinished install"
+    exit 1
+  fi
+  export TESLAUSB_UPGRADE_DIR="$TESLAUSB_SETUP_TMPDIR/upgrade"
+  mkdir -m 0700 "$TESLAUSB_UPGRADE_DIR"
+  copy_script setup/pi/setup-teslausb "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script setup/pi/envsetup.sh "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb-config-loader.sh \
+    "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py \
+    "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+  copy_script setup/pi/transactional-upgrade.sh "$TESLAUSB_UPGRADE_DIR" &> /dev/null
+
+  export TESLAUSB_TRANSACTION_MANAGER="$TESLAUSB_UPGRADE_DIR/transactional-upgrade.sh"
+  export TESLAUSB_CONFIG_HELPER="$TESLAUSB_UPGRADE_DIR/teslausb_config.py"
+  TESLAUSB_UPGRADE_STAGING_DIR=$(
+    "$TESLAUSB_TRANSACTION_MANAGER" prepare "$SOURCE_DIR"
+  )
+  export TESLAUSB_UPGRADE_STAGING_DIR
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/setup-teslausb" setup-teslausb
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/envsetup.sh" envsetup.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb-config-loader.sh" teslausb-config-loader.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb_config.py" teslausb_config.py
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_TRANSACTION_MANAGER" teslausb-upgrade
+
+  exec bash -c '
+    if TESLAUSB_TRANSACTIONAL_UPGRADE=1 \
+         "$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_prepare &&
+       TESLAUSB_TRANSACTIONAL_UPGRADE=1 NO_REBOOT_PROMPT=1 \
+         "$TESLAUSB_UPGRADE_DIR/setup-teslausb" &&
+       TESLAUSB_TRANSACTIONAL_UPGRADE=1 \
+         "$TESLAUSB_UPGRADE_DIR/setup-teslausb" upgrade_finish
+    then
+      exit 0
+    else
+      upgrade_status=$?
+      "$TESLAUSB_TRANSACTION_MANAGER" abort "$TESLAUSB_UPGRADE_STAGING_DIR" || true
+      exit "$upgrade_status"
+    fi
+  '
+}
+
+function systemd_unit_load_state {
+  local load_state
+  local service_name="$1"
+  if ! load_state=$(
+    systemctl show "$service_name" --property=LoadState --value 2> /dev/null
+  )
+  then
+    setup_progress "STOP: unable to inspect systemd service $service_name"
+    return 1
+  fi
+  if [ -z "$load_state" ]
+  then
+    setup_progress "STOP: systemd returned no load state for $service_name"
+    return 1
+  fi
+  printf '%s\n' "$load_state"
+}
+
+function stop_required_service_for_upgrade {
+  local load_state
+  local service_name="$1"
+  load_state=$(systemd_unit_load_state "$service_name") || return 1
+  if [ "$load_state" = not-found ]
+  then
+    setup_progress "STOP: required service is absent: $service_name"
+    return 1
+  fi
+  systemctl stop "$service_name" || {
+    setup_progress "STOP: could not stop required service $service_name"
+    return 1
+  }
+  if systemctl is-active --quiet "$service_name"
+  then
+    setup_progress "STOP: required service remained active: $service_name"
+    return 1
+  fi
+}
+
+function stop_optional_service_for_upgrade {
+  local load_state
+  local service_name="$1"
+  load_state=$(systemd_unit_load_state "$service_name") || return 1
+  if [ "$load_state" = not-found ]
+  then
+    setup_progress "optional service is absent: $service_name"
+    return 0
+  fi
+  systemctl stop "$service_name" || {
+    setup_progress "STOP: could not stop installed optional service $service_name"
+    return 1
+  }
+  if systemctl is-active --quiet "$service_name"
+  then
+    setup_progress "STOP: optional service remained active: $service_name"
+    return 1
+  fi
+}
+
+function gadget_is_prepared {
+  local configfs_root
+  if [ -d /sys/module/g_mass_storage ]
+  then
+    return 0
+  fi
+ 

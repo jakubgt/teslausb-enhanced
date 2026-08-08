@@ -1,0 +1,155 @@
+rror", `CIFS_SEC must be one of: ${[...CIFS_SECURITY_MODES].sort().join(", ")}`, "CIFS_SEC");
+  }
+  if (present("REPO") && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value("REPO"))) {
+    add("error", "REPO is not a valid GitHub owner name", "REPO");
+  }
+  if (present("BRANCH") && !isSafeGitRef(value("BRANCH"))) {
+    add("error", "BRANCH is not a safe Git reference", "BRANCH");
+  }
+  if (present("TIME_ZONE") && !isSafeTimeZone(value("TIME_ZONE"))) {
+    add("error", "TIME_ZONE must be auto or a relative zoneinfo name without traversal", "TIME_ZONE");
+  }
+  for (const name of ["TRIGGER_FILE_ANY", "TRIGGER_FILE_RECENT", "TRIGGER_FILE_SAVED", "TRIGGER_FILE_SENTRY"]) {
+    if (value(name) !== undefined && !isSafeTriggerName(value(name))) {
+      add("error", `${name} must be one filename, not a path`, name);
+    }
+  }
+  if (present("WEB_ALLOWED_HOSTS")) {
+    const allowedHosts = String(value("WEB_ALLOWED_HOSTS")).split(/[\s,]+/).filter(Boolean);
+    if (allowedHosts.length === 0 || allowedHosts.some((host) => !isAllowedWebHost(host))) {
+      add("error", "WEB_ALLOWED_HOSTS must contain comma/space-separated exact DNS names or IP addresses without ports", "WEB_ALLOWED_HOSTS");
+    }
+  }
+  requirePair("WEBUI_RELEASE", "WEBUI_SHA256");
+  if (present("WEBUI_RELEASE") &&
+      (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(value("WEBUI_RELEASE")) ||
+       value("WEBUI_RELEASE").includes(".."))) {
+    add("error", "WEBUI_RELEASE must start/end with a letter or number, contain only tag-safe characters, and contain no dot-dot sequence", "WEBUI_RELEASE");
+  } else if (present("WEBUI_RELEASE") && value("WEBUI_RELEASE").toLowerCase() === "latest") {
+    add("error", "WEBUI_RELEASE must name an immutable release and must not be latest", "WEBUI_RELEASE");
+  }
+  if (present("WEBUI_SHA256") && !/^[0-9a-f]{64}$/i.test(value("WEBUI_SHA256"))) {
+    add("error", "WEBUI_SHA256 must be exactly 64 hexadecimal characters", "WEBUI_SHA256");
+  }
+  if (present("DATA_DRIVE")) {
+    if (!isSafeDevicePath(value("DATA_DRIVE"))) {
+      add("error", "DATA_DRIVE must be an absolute whole-disk path under /dev without traversal", "DATA_DRIVE");
+    }
+    add("warning", `DATA_DRIVE=${value("DATA_DRIVE")} will be wiped and repartitioned during setup`, "DATA_DRIVE");
+  }
+  if (present("TESLAUSB_HOSTNAME") &&
+      !/^(?=.{1,63}$)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(value("TESLAUSB_HOSTNAME"))) {
+    add("error", "TESLAUSB_HOSTNAME must be one DNS label (1-63 characters, letters/numbers at both edges, with optional internal hyphens)", "TESLAUSB_HOSTNAME");
+  }
+  if (value("SAMBA_ENABLED") === "true" && value("SAMBA_GUEST") !== "true") {
+    requireValue("SAMBA_PASSWORD", "when authenticated Samba sharing is enabled");
+    if (present("SAMBA_PASSWORD")) {
+      const sambaPasswordBytes = Buffer.byteLength(value("SAMBA_PASSWORD"), "utf8");
+      if (sambaPasswordBytes < 12 || /^(?:raspberry|password)$/i.test(value("SAMBA_PASSWORD"))) {
+        add("error", "SAMBA_PASSWORD must be a non-default password of at least 12 UTF-8 bytes", "SAMBA_PASSWORD");
+      }
+    }
+  }
+  if (value("WEB_AUTH_DISABLED") === "true" && (present("WEB_USERNAME") || present("WEB_PASSWORD"))) {
+    add("error", "WEB_AUTH_DISABLED cannot be combined with WEB_USERNAME or WEB_PASSWORD", "WEB_AUTH_DISABLED");
+  }
+  if (value("SSH_ALLOW_DEFAULT_PASSWORD") === "true") {
+    add("warning", "SSH_ALLOW_DEFAULT_PASSWORD=true explicitly retains the image's default SSH password", "SSH_ALLOW_DEFAULT_PASSWORD");
+  }
+  if (present("SSH_USER_PASSWORD") && Buffer.byteLength(value("SSH_USER_PASSWORD"), "utf8") < 12) {
+    add("error", "SSH_USER_PASSWORD must be at least 12 UTF-8 bytes with no newline", "SSH_USER_PASSWORD");
+  }
+  if (present("TESLA_BLE_ARTIFACT_SHA256") && !/^[0-9a-f]{64}$/i.test(value("TESLA_BLE_ARTIFACT_SHA256"))) {
+    add("error", "TESLA_BLE_ARTIFACT_SHA256 must be exactly 64 hexadecimal characters", "TESLA_BLE_ARTIFACT_SHA256");
+  }
+  for (const name of ["TESLA_BLE_VIN", "TESSIE_VIN"]) {
+    if (present(name) && !/^[A-HJ-NPR-Za-hj-npr-z0-9]{17}$/.test(value(name))) {
+      add("error", `${name} must be a 17-character VIN`, name);
+    }
+  }
+  const keepAwakeNames = ["TESLAFI_API_TOKEN", "TESSIE_API_TOKEN", "TESLA_BLE_VIN", "KEEP_AWAKE_WEBHOOK_URL"];
+  const keepAwakeConfigured = keepAwakeNames.filter((name) => present(name));
+  if (keepAwakeConfigured.length > 1) {
+    add("error", `Only one keep-awake method may be configured: ${keepAwakeConfigured.join(", ")}`);
+  }
+  if (keepAwakeConfigured.length > 0) {
+    requireValue("SENTRY_CASE", "when a keep-awake method is configured");
+  }
+  if (present("TESLAFI_API_TOKEN") && !/^[12]$/.test(value("SENTRY_CASE") || "")) {
+    add("error", "SENTRY_CASE must be 1 or 2 for TeslaFi", "SENTRY_CASE");
+  }
+  if (present("TESSIE_API_TOKEN")) {
+    requireValue("TESSIE_VIN", "when Tessie is configured");
+  }
+  if (present("ARCHIVE_RETRY_BASE_SECONDS") && present("ARCHIVE_RETRY_MAX_SECONDS") &&
+      Number(value("ARCHIVE_RETRY_BASE_SECONDS")) > Number(value("ARCHIVE_RETRY_MAX_SECONDS"))) {
+    add("error", "ARCHIVE_RETRY_BASE_SECONDS must not exceed ARCHIVE_RETRY_MAX_SECONDS", "ARCHIVE_RETRY_BASE_SECONDS");
+  }
+
+  for (const [enabledName, requiredNames] of NOTIFICATION_REQUIREMENTS) {
+    if (value(enabledName) === "true") {
+      for (const requiredName of requiredNames) requireValue(requiredName, `when ${enabledName}=true`);
+    }
+  }
+  if (value("NOTIFICATION_COMMAND_ENABLED") === "true" &&
+      !present("NOTIFICATION_COMMAND_START") && !present("NOTIFICATION_COMMAND_FINISH")) {
+    add("error", "NOTIFICATION_COMMAND_START or NOTIFICATION_COMMAND_FINISH is required when NOTIFICATION_COMMAND_ENABLED=true", "NOTIFICATION_COMMAND_ENABLED");
+  }
+
+  for (const [name, assignment] of parsed.assignments) {
+    if (looksLikePlaceholder(assignment.value)) {
+      add("error", `${name} still contains a sample placeholder`, name);
+    }
+    if (String(assignment.value).includes("<redacted>")) {
+      add("error", `${name} is redacted; use the original configuration for installation`, name);
+    }
+  }
+
+  return {assignments: parsed.assignments, issues};
+}
+
+function generateConfig(input) {
+  const variables = input && input.variables ? input.variables : input;
+  if (!variables || Array.isArray(variables) || typeof variables !== "object") {
+    throw new Error("Generator input must be a JSON object or an object with a variables property");
+  }
+  const names = Object.keys(variables).filter((name) => variables[name] !== null && variables[name] !== undefined);
+  for (const name of names) {
+    if (!VARIABLE_NAME.test(name)) throw new Error(`Invalid variable name: ${name}`);
+    const candidate = variables[name];
+    if (typeof candidate === "object" && !Array.isArray(candidate)) {
+      throw new Error(`${name} must be a string, number, boolean, or array`);
+    }
+    if (Array.isArray(candidate) && candidate.some((item) =>
+      item === null || item === undefined || !["string", "number", "boolean"].includes(typeof item))) {
+      throw new Error(`${name} array values must be strings, numbers, or booleans`);
+    }
+  }
+  names.sort((left, right) => {
+    const leftIndex = CANONICAL_ORDER.indexOf(left);
+    const rightIndex = CANONICAL_ORDER.indexOf(right);
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      if (leftIndex === -1) return 1;
+      if (rightIndex === -1) return -1;
+      return leftIndex - rightIndex;
+    }
+    return left.localeCompare(right);
+  });
+  const output = [
+    "# Generated locally by tools/teslausb-config.js.",
+    "# This file contains secrets. Keep it private and do not commit it.",
+    ""
+  ];
+  for (const name of names) {
+    const candidate = variables[name];
+    if (Array.isArray(candidate)) {
+      output.push(`export ${name}=(${candidate.map(bashQuote).join(" ")})`);
+    } else {
+      output.push(`export ${name}=${bashQuote(candidate)}`);
+    }
+  }
+  return `${output.join("\n")}\n`;
+}
+
+function migrateConfig(text) {
+  co

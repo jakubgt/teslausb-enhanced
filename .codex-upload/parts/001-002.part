@@ -1,0 +1,206 @@
+   exit 1
+          }
+
+      - name: Create or validate VERSION-push draft release
+        if: github.event_name == 'push'
+        env:
+          ASSET_STEM: ${{ steps.release.outputs.asset_stem }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES_PATH: ${{ steps.release.outputs.release_notes_path }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          resolve_tag_commit() {
+            local object_json="$1"
+            local object_sha
+            local object_type
+            local depth=0
+
+            object_type=$(jq -er '.object.type' <<< "${object_json}")
+            object_sha=$(jq -er '.object.sha' <<< "${object_json}")
+            while [ "${object_type}" = tag ]
+            do
+              depth=$((depth + 1))
+              [ "${depth}" -le 8 ] || {
+                echo "Release tag indirection is unexpectedly deep" >&2
+                return 1
+              }
+              object_json=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")
+              object_type=$(jq -er '.object.type' <<< "${object_json}")
+              object_sha=$(jq -er '.object.sha' <<< "${object_json}")
+            done
+            [ "${object_type}" = commit ] || {
+              echo "Release tag does not ultimately target a commit" >&2
+              return 1
+            }
+            printf '%s\n' "${object_sha}"
+          }
+
+          tag_response=
+          if tag_response=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+          then
+            tag_commit=$(resolve_tag_commit "${tag_response}")
+            [ "${tag_commit}" = "${SOURCE_COMMIT}" ] || {
+              echo "Existing ${RELEASE_TAG} tag does not target ${SOURCE_COMMIT}" >&2
+              exit 1
+            }
+          else
+            case "${tag_response}" in
+              *'(HTTP 404)'*) ;;
+              *)
+                printf '%s\n' "${tag_response}" >&2
+                exit 1
+                ;;
+            esac
+            tag_payload=$(jq -n \
+              --arg ref "refs/tags/${RELEASE_TAG}" \
+              --arg sha "${SOURCE_COMMIT}" \
+              '{ref: $ref, sha: $sha}')
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --input - <<< "${tag_payload}" > /dev/null
+            tag_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
+            [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+              echo "Created tag does not resolve to the release source commit" >&2
+              exit 1
+            }
+          fi
+
+          prerelease=false
+          if [[ "${VERSION}" == *-rc.* ]]
+          then
+            prerelease=true
+          fi
+          expected_title="TeslaUSB Enhanced ${RELEASE_TAG}"
+          expected_body=$(< "${RELEASE_NOTES_PATH}")
+
+          release_response=
+          if release_response=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
+          then
+            jq -e --arg tag "${RELEASE_TAG}" \
+              --arg title "${expected_title}" \
+              --arg source_commit "${SOURCE_COMMIT}" \
+              --argjson prerelease "${prerelease}" \
+              '.tag_name == $tag and .name == $title and .draft == true and
+               .target_commitish == $source_commit and
+               .prerelease == $prerelease' <<< "${release_response}" > /dev/null || {
+              echo "Existing release is not the expected matching draft" >&2
+              exit 1
+            }
+            existing_body=$(jq -r '.body // ""' <<< "${release_response}")
+            [ "${existing_body}" = "${expected_body}" ] || {
+              echo "Existing draft release notes do not match checked-in notes" >&2
+              exit 1
+            }
+          else
+            case "${release_response}" in
+              *'(HTTP 404)'*) ;;
+              *)
+                printf '%s\n' "${release_response}" >&2
+                exit 1
+                ;;
+            esac
+            release_payload=$(jq -n \
+              --arg tag_name "${RELEASE_TAG}" \
+              --arg target_commitish "${SOURCE_COMMIT}" \
+              --arg name "${expected_title}" \
+              --rawfile body "${RELEASE_NOTES_PATH}" \
+              --argjson prerelease "${prerelease}" \
+              '{
+                tag_name: $tag_name,
+                target_commitish: $target_commitish,
+                name: $name,
+                body: $body,
+                draft: true,
+                prerelease: $prerelease,
+                make_latest: "false"
+              }')
+            release_response=$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/releases" --input - \
+              <<< "${release_payload}")
+          fi
+
+          expected_assets=(
+            "${ASSET_STEM}.img.xz"
+            "${ASSET_STEM}.img.xz.sha256"
+            "${ASSET_STEM}.image-metadata.json"
+            "${ASSET_STEM}.packages.tsv"
+          )
+          existing_assets=$(jq -r '.assets[].name' <<< "${release_response}")
+          for expected_asset in "${expected_assets[@]}"
+          do
+            if grep -Fx -- "${expected_asset}" <<< "${existing_assets}" > /dev/null
+            then
+              echo "Draft retry contains an expected asset and cannot be reused: ${expected_asset}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Confirm matching GitHub release exists
+        env:
+          ASSET_STEM: ${{ steps.release.outputs.asset_stem }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          actual_tag=$(gh release view "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)
+          [ "${actual_tag}" = "${RELEASE_TAG}" ] || {
+            echo "GitHub release does not match ${RELEASE_TAG}" >&2
+            exit 1
+          }
+          existing_assets=$(gh release view "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
+          expected_assets=(
+            "${ASSET_STEM}.img.xz"
+            "${ASSET_STEM}.img.xz.sha256"
+            "${ASSET_STEM}.image-metadata.json"
+            "${ASSET_STEM}.packages.tsv"
+          )
+          for expected_asset in "${expected_assets[@]}"
+          do
+            if grep -Fx -- "${expected_asset}" <<< "${existing_assets}" > /dev/null
+            then
+              echo "Refusing to replace existing release asset: ${expected_asset}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Reclaim safe ephemeral runner space
+        run: |
+          set -euo pipefail
+          [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] || {
+            echo "Refusing automatic disk cleanup outside a GitHub-hosted ephemeral runner" >&2
+            exit 1
+          }
+
+          cleanup_paths=(
+            /opt/ghc
+            /opt/hostedtoolcache
+            /usr/local/.ghcup
+            /usr/local/lib/android
+            /usr/share/dotnet
+          )
+          for cleanup_path in "${cleanup_paths[@]}"
+          do
+            [ -e "${cleanup_path}" ] || continue
+            [ -d "${cleanup_path}" ] && [ ! -L "${cleanup_path}" ] || {
+              echo "Refusing to remove an unexpected cleanup path: ${cleanup_path}" >&2
+              exit 1
+            }
+            [ "$(readlink -f -- "${cleanup_path}")" = "${cleanup_path}" ] || {
+              echo "Refusing to remove a redirected cleanup path: ${cleanup_path}" >&2
+              exit 1
+            }
+            case "${cleanup_path}" in
+              /opt/ghc|/opt/hostedtoolcache|/usr/local/.ghcup|/usr/local/lib/android|/usr/share/dotnet)
+                sudo rm -rf --one-file-system -- "${cleanup_path}"
+                ;;
+              *)
+                echo "Cleanup path is outside the fixed allowlist: ${cleanup_path}" >&2
+                exit 1
+ 

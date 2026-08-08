@@ -1,0 +1,296 @@
+ is not running"
+      journalctl -u teslausb | tail -30
+    fi
+
+    local -r inodes=$(df --output=ipcent /mutable/ | sed 1d | sed 's/[^0-9]//g')
+    if [[ "$inodes" -gt 80 ]]
+    then
+      echo "WARNING: /mutable is low on inodes: ${inodes}% used"
+    fi
+
+    if [[ "$BRANCH" != "main-dev" || "$REPO" != "marcone" ]]
+    then
+      echo "WARNING: using $REPO/$BRANCH"
+    fi
+
+    if [ -x /root/bin/archive-filter ]
+    then
+      echo "Custom archive filter is in use"
+    fi
+
+    read -r offset <<<"$(sfdisk -l -q -o START /backingfiles/cam_disk.bin | tail -1)"
+    fstype=$(blkid --probe -o value -s TYPE --offset $((offset*512)) /backingfiles/cam_disk.bin)
+    if [ "$fstype" = "exfat" ]
+    then
+      echo "CAM drive is formatted as ExFAT. Recommend using FAT32 instead."
+    fi
+    checkfsrw / ro
+    if boot_is_not_on_root
+    then
+      checkfsrw /teslausb ro
+    fi
+    checkfsrw /backingfiles rw
+    checkfsrw /mutable rw
+    checkmounted /var/www/html/TeslaCam
+    checkmounted /var/www/html/fs
+
+    echo -e "====== disk / images ======"
+    parted -s "${BOOT_DISK}" print || true
+    if [ -n "${DATA_DRIVE:+x}" ]
+    then
+      parted -s "$DATA_DRIVE" print || true
+    fi
+    if [ -f /backingfiles/cam_disk.bin ]
+    then
+      echo "cam disk image has $(filefrag /backingfiles/cam_disk.bin | awk '{print $2}') extents"
+      parted -s /backingfiles/cam_disk.bin print || true
+    else
+      echo "no cam disk image found"
+    fi
+    if [ -f /backingfiles/music_disk.bin ]
+    then
+      echo "music disk image has $(filefrag /backingfiles/music_disk.bin | awk '{print $2}') extents"
+      parted -s /backingfiles/music_disk.bin print || true
+    else
+      echo "no music disk image found"
+    fi
+    if [ -f /backingfiles/lightshow_disk.bin ]
+    then
+      echo "lightshow disk image has $(filefrag /backingfiles/lightshow_disk.bin | awk '{print $2}') extents"
+      parted -s /backingfiles/lightshow_disk.bin print || true
+    else
+      echo "no lightshow disk image found"
+    fi
+    if [ -f /backingfiles/boombox_disk.bin ]
+    then
+      echo "boombox disk image has $(filefrag /backingfiles/boombox_disk.bin | awk '{print $2}') extents"
+      parted -s /backingfiles/boombox_disk.bin print || true
+    else
+      echo "no boombox disk image found"
+    fi
+    df -h /teslausb/ / /backingfiles/ /mutable/
+    echo -e "====== network ======"
+    ifconfig
+    iwconfig wlan0 | grep Link
+
+    echo -e "====== fstab ======"
+    if [ -e /etc/fstab ]
+    then
+      cat /etc/fstab
+    else
+      echo "no fstab found"
+    fi
+
+    echo -e "====== mounts ======"
+    mount
+
+    echo -e "====== initial setup boot log ======"
+    mkdir -m 0700 "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    mount --bind / "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    if [ -e "$TESLAUSB_SETUP_TMPDIR/diagnostic-root/var/log/boot.log" ]
+    then
+      cat "$TESLAUSB_SETUP_TMPDIR/diagnostic-root/var/log/boot.log"
+    else
+      echo "no boot log found"
+    fi
+    umount "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+    rmdir "$TESLAUSB_SETUP_TMPDIR/diagnostic-root"
+
+    echo -e "====== rc.local log ======"
+    journalctl -u rc-local
+
+    echo -e "====== setup log ======"
+    if [ -e /teslausb/teslausb-headless-setup.log ]
+    then
+      cat /teslausb/teslausb-headless-setup.log
+    else
+      echo "no setup log found"
+    fi
+
+    echo -e "====== archiveloop log ======"
+    if [ -e /mutable/archiveloop.log ]
+    then
+      cat /mutable/archiveloop.log
+    else
+      echo "no archiveloop log found"
+    fi
+
+    echo -e "====== system log ======"
+    if [ -x /bin/logread ]
+    then
+      /bin/logread
+    else
+      echo "logread not installed"
+    fi
+
+    echo -e "====== dmesg ======"
+    dmesg -T
+    echo -e "====== process list and uptime ======"
+    ps -eaf
+    echo "$(hostname) has been $(uptime -p). System time is $(date)"
+    echo -e "====== end of diagnostics ======"
+  }
+}
+
+function cmd_diagnose {
+  { diagnose || true; } |&
+    # clean up the output a bit
+    tr '\r' '\n' |
+    sed '/^ *$/d' |
+    grep -a -v '^Reading package lists' |
+    grep -a -v '^(Reading database' |
+    grep -a -v "^Adding 'diversion of" |
+    grep -a -v "^Removing 'diversion of" |
+    sed -E 's/\o033\[0;32m//' |
+    sed -E 's/\o033\[0m//'
+}
+
+export -f setup_progress
+
+INSTALL_DIR=${INSTALL_DIR:-/root/bin}
+if [ "$INSTALL_DIR" != "/root/bin" ]
+then
+  setup_progress "WARNING: 'INSTALL_DIR' setup variable no longer supported"
+fi
+
+BRANCHNAME="$BRANCH"
+
+if [ -n "${1:+x}" ]
+then
+  command=cmd_$1
+  if typeset -f "$command" > /dev/null
+  then
+    shift
+    $command "$@"
+    exit 0
+  else
+    setup_progress "unknown command: $1"
+    exit 1
+  fi
+fi
+
+# Turn on all leds in case they're still flashing
+# from pre-setup.
+for led in /sys/class/leds/*
+do
+  if [ -e "$led/trigger" ]
+  then
+    echo none > "$led/trigger" || true
+    echo 1 > "$led/brightness" || true
+  fi
+done
+
+# Update config.txt if needed
+  if [ -f "$PICONFIG_PATH" ]
+then
+  if ! grep -q 'dtoverlay=dwc2$' "$PICONFIG_PATH"
+  then
+    echo -e "dtoverlay=dwc2\n" >> "$PICONFIG_PATH"
+    if stop_if_transaction_requires_reboot 'the dwc2 boot overlay change'
+    then
+      exit 75
+    fi
+    setup_progress "rebooting to apply dwc2 overlay change"
+    reboot
+    exit 0
+  fi
+fi
+
+configure_hostname
+
+tmpdir="$TESLAUSB_SETUP_TMPDIR/update-check"
+mkdir -m 0700 "$tmpdir"
+copy_script setup/pi/setup-teslausb "$tmpdir"  &> /dev/null
+if cmp -s "$tmpdir/setup-teslausb" "$0"
+then
+  setup_progress "$0 is up to date"
+else
+  setup_progress "WARNING: $BRANCHNAME contains a different version of $0. It is recommended to run '$0 upgrade' to get the latest version."
+fi
+
+copy_script pi-gen-sources/00-teslausb-tweaks/files/rc.local "$tmpdir" &> /dev/null
+if cmp -s "$tmpdir/rc.local" /etc/rc.local
+then
+  setup_progress "rc.local is up to date"
+else
+  setup_progress "updating rc.local"
+  mv "$tmpdir/rc.local" /etc/rc.local
+  parent=$(ps -o ppid= $PPID)
+  grandparent=$(ps -o ppid= "$((parent))" )
+  caller=$(ps -o comm= "$((grandparent))")
+  if [ "$caller" = "rc.local" ] && [ ! -t 0 ]
+  then
+    if stop_if_transaction_requires_reboot 'the rc.local replacement'
+    then
+      exit 75
+    fi
+    setup_progress "rebooting to run updated rc.local"
+    exec reboot
+  fi
+fi
+
+update_package_index
+
+# set time zone so we get decent timestamps in the rest of the setup log
+set_timezone
+
+# Flash for stage 2 headless (verify requested configuration)
+headless_setup_progress_flash 2
+
+setup_progress "Verifying that the requested configuration is valid..."
+
+verify_configuration
+
+# Flash for Stage 3 headless (grab scripts)
+headless_setup_progress_flash 3
+
+mkdir -p /root/bin
+
+get_common_scripts
+install_transaction_recovery_service
+
+pushd ~
+
+fix_cmdline_txt_modules_load
+
+# Flash for stage 4 headless (Create backing files)
+headless_setup_progress_flash 4
+
+create_usb_drive_backing_files
+
+if [ "$CONFIGURE_ARCHIVING" = true ]
+then
+  setup_progress "calling configure.sh"
+  export -f curlwrapper
+  export -f copy_script
+  copy_script setup/pi/configure.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/configure.sh"
+else
+  setup_progress "skipping configure.sh"
+fi
+
+if [ "$SAMBA_ENABLED" = "true" ]
+then
+  export SAMBA_GUEST
+  export SAMBA_USER SAMBA_PASSWORD
+  copy_script setup/pi/configure-samba.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/configure-samba.sh"
+  export -n SAMBA_PASSWORD
+fi
+
+if [ -n "${AP_SSID:+x}" ]
+then
+  copy_script setup/pi/configure-ap.sh "$TESLAUSB_SCRIPT_TMPDIR"
+  "$TESLAUSB_SCRIPT_TMPDIR/configure-ap.sh"
+fi
+
+copy_script setup/pi/configure-automount.sh "$TESLAUSB_SCRIPT_TMPDIR"
+"$TESLAUSB_SCRIPT_TMPDIR/configure-automount.sh"
+
+copy_script setup/pi/configure-web.sh "$TESLAUSB_SCRIPT_TMPDIR"
+export WEB_AUTH_DISABLED WEB_USERNAME WEB_PASSWORD WEB_ALLOWED_HOSTS WEBUI_RELEASE WEBUI_SHA256
+"$TESLAUSB_SCRIPT_TMPDIR/configure-web.sh"
+export -n WEB_PASSWORD
+
+export SSH_ALLOW_DEFAULT_PASSWORD SSH_USER_PASSWORD SSH_DISABLE_PASSWORD_AUTHENTICATION SSH_ROOT_PUBLIC_KEY
+copy_script setup/pi/configure-ssh.sh "$TESLAUSB_SCRIPT_TM

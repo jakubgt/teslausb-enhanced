@@ -1,0 +1,264 @@
+ configfs_root=$(findmnt -o TARGET -n configfs 2> /dev/null) || return 1
+  [ -d "$configfs_root/usb_gadget/teslausb" ]
+}
+
+function disable_gadget_for_upgrade {
+  local disable_output
+  local disable_status=0
+  if [ ! -x /root/bin/disable_gadget.sh ]
+  then
+    setup_progress 'STOP: /root/bin/disable_gadget.sh is unavailable'
+    return 1
+  fi
+  if disable_output=$(/root/bin/disable_gadget.sh 2>&1)
+  then
+    disable_status=0
+  else
+    disable_status=$?
+  fi
+  if gadget_is_prepared
+  then
+    setup_progress "STOP: USB gadget remained prepared after disable attempt (status $disable_status): $disable_output"
+    return 1
+  fi
+  # Exit 2 means the configfs gadget was already absent. Other non-zero exits
+  # are safe only because the state check above proved no module/configfs
+  # gadget still references a backing file.
+  if [ "$disable_status" -ne 0 ] && [ "$disable_status" -ne 2 ]
+  then
+    setup_progress "USB gadget disable returned $disable_status after reaching a safe detached state: $disable_output"
+  fi
+}
+
+function unmount_if_mounted_for_upgrade {
+  local mount_path="$1"
+  if [ ! -e "$mount_path" ] || ! mountpoint -q -- "$mount_path"
+  then
+    return 0
+  fi
+  umount -- "$mount_path" || {
+    setup_progress "STOP: could not unmount $mount_path"
+    return 1
+  }
+  if mountpoint -q -- "$mount_path"
+  then
+    setup_progress "STOP: mount remained active after unmount: $mount_path"
+    return 1
+  fi
+}
+
+function cmd_upgrade_prepare {
+  local mount_path
+  local -a snapshot_mounts=()
+  setup_progress "preparing for full upgrade"
+  (
+    stop_required_service_for_upgrade teslausb.service
+    stop_optional_service_for_upgrade smbd.service
+    stop_optional_service_for_upgrade autofs.service
+    disable_gadget_for_upgrade
+    shopt -s nullglob
+    snapshot_mounts=(/backingfiles/snapshots/snap*/mnt)
+    shopt -u nullglob
+    for mount_path in "${snapshot_mounts[@]}" /mnt/cam /mnt/music \
+      /mnt/lightshow /mnt/boombox /mnt/archive /mnt/musicarchive
+    do
+      unmount_if_mounted_for_upgrade "$mount_path"
+    done
+    /root/bin/remountfs_rw
+    if declare -F teslausb_secure_config > /dev/null
+    then
+      if [ -n "${TESLAUSB_CONFIG_PATH:-}" ]
+      then
+        teslausb_secure_config "$TESLAUSB_CONFIG_PATH"
+      elif [ -e /root/teslausb_setup.json ]
+      then
+        teslausb_secure_config /root/teslausb_setup.json
+      else
+        teslausb_secure_config /root/teslausb_setup_variables.conf
+      fi
+    else
+      secure_setup_config_file /root/teslausb_setup_variables.conf
+    fi
+    # a previous bookworm install may have the makers in /boot, so move
+    # them to /teslausb (/boot/firmware)
+    if [ ! /boot -ef /teslausb ]
+    then
+      for i in WIFI_ENABLED TESLAUSB_SETUP_STARTED TESLAUSB_SETUP_FINISHED
+      do
+        if [ -e "/boot/$i" ]
+        then
+          mv "/boot/$i" /teslausb
+        fi
+      done
+    fi
+  )
+}
+
+function cmd_upgrade_finish {
+  if [ -z "${TESLAUSB_UPGRADE_DIR:-}" ] || [ -L "$TESLAUSB_UPGRADE_DIR" ] || \
+     [ ! -f "$TESLAUSB_UPGRADE_DIR/setup-teslausb" ] || \
+     [ ! -f "$TESLAUSB_UPGRADE_DIR/envsetup.sh" ] || \
+     [ -z "${TESLAUSB_UPGRADE_STAGING_DIR:-}" ] || \
+     [ -z "${TESLAUSB_TRANSACTION_MANAGER:-}" ] || \
+     [ ! -x "$TESLAUSB_TRANSACTION_MANAGER" ]
+  then
+    setup_progress "STOP: the private upgrade staging directory is unavailable"
+    exit 1
+  fi
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/setup-teslausb" setup-teslausb
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/envsetup.sh" envsetup.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb-config-loader.sh" teslausb-config-loader.sh
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_UPGRADE_DIR/teslausb_config.py" teslausb_config.py
+  "$TESLAUSB_TRANSACTION_MANAGER" stage-file "$TESLAUSB_UPGRADE_STAGING_DIR" \
+    "$TESLAUSB_TRANSACTION_MANAGER" teslausb-upgrade
+  # Full setup may have rewritten unit files after the recovery guard was
+  # installed. Health checks must exercise the definitions that the next boot
+  # will actually load.
+  systemctl daemon-reload
+  activated_release=$(
+    "$TESLAUSB_TRANSACTION_MANAGER" finalize "$TESLAUSB_UPGRADE_STAGING_DIR"
+  )
+  setup_progress "upgrade finished; activated verified release $activated_release"
+  for i in {5..1}
+  do
+    echo -e -n "rebooting in $i seconds to apply changes, press ctrl-c to abort\r"
+    sleep 1
+  done
+  echo -e '\nRebooting'
+  reboot
+}
+
+function checkmounted() {
+  if ! findmnt "$1" &> /dev/null
+  then
+    echo "ERROR: $1 is not mounted"
+  fi
+}
+
+function checkfsrw() {
+  local -r opts=$(findmnt -n -o options "$1")
+  local -r rw=${opts:0:2}
+  if [[ "$rw" != "$2" ]]
+  then
+    echo "$1 is $rw, should be $2"
+  fi
+}
+
+function boot_is_not_on_root {
+  [ "$(stat -c "%d" /)" -ne "$(stat -L -c "%d" /teslausb)" ]
+}
+
+function diagnose {
+  local hardware
+  local os
+
+  hardware=$( tr -d '\000' < /sys/firmware/devicetree/base/model )
+  os=$(. /etc/os-release && echo "$PRETTY_NAME")
+  {
+    echo -e "====== summary ======"
+    echo -e "hardware: ${hardware}"
+    echo -e "OS: ${os}"
+    if [ "${ARCHIVE_SYSTEM:-unset}" = "unset" ]
+    then
+      echo "ERROR: no archive method specified!"
+    elif [ "${ARCHIVE_SYSTEM:-none}" = "cifs" ]
+    then
+      if grep -q '/mnt/archive' /etc/fstab
+      then
+        echo "CIFS archiving selected"
+      else
+        echo "ERROR: CIFS archiving selected, but archive not defined in fstab"
+      fi
+    elif [ "${ARCHIVE_SYSTEM:-none}" = "nfs" ]
+    then
+      if grep -q '/mnt/archive' /etc/fstab
+      then
+        echo "NFS archiving selected"
+      else
+        echo "ERROR: NFS archiving selected, but archive not defined in fstab"
+      fi
+    elif [ "${ARCHIVE_SYSTEM:-none}" = "rclone" ]
+    then
+      if [ ! -e "/root/.config/rclone/rclone.conf" ]
+      then
+        echo "ERROR: rclone archiving selected, but rclone config does not exist"
+      elif [ ! -L "/root/.config/rclone" ]
+      then
+        echo "ERROR: rclone archiving selected, but rclone config is in /root"
+      else
+        echo "rclone archiving selected"
+      fi
+    else
+      echo "archive method: ${ARCHIVE_SYSTEM:-unset}"
+    fi
+
+    if [[ "$DATA_DRIVE" != "" ]] && (isPi4 || isPi5)
+    then
+      echo "DATA_DRIVE=$DATA_DRIVE: consider booting from USB instead."
+    fi
+
+    if ! blkid -L backingfiles > /dev/null
+    then
+      echo "ERROR: backingfiles partition does not exist"
+    fi
+    if [ ! -d /backingfiles ]
+    then
+      echo "backingfiles directory does not exist"
+    fi
+    if ! grep -q '/backingfiles' /etc/fstab
+    then
+      echo "ERROR: backingfiles not in fstab"
+    fi
+
+    if [ ! -f /backingfiles/cam_disk.bin ]
+    then
+      echo "ERROR: cam disk image does not exist"
+    fi
+    if ! grep -q '/backingfiles/cam_disk.bin' /etc/fstab
+    then
+      echo "ERROR: cam disk image not in fstab"
+    fi
+    for i in 0 1 2 3 4 5 6
+    do
+      LUN="/sys/kernel/config/usb_gadget/teslausb/functions/mass_storage.0/lun.${i}/file"
+      if [ -e "$LUN" ]
+      then
+        echo "lun${i} connected, from file $(cat "$LUN")"
+      fi
+    done
+    if ! blkid -L mutable > /dev/null
+    then
+      echo "ERROR: mutable partition does not exist"
+    fi
+    if [ ! -d /mutable ]
+    then
+      echo "ERROR: mutable directory does not exist"
+    fi
+    if ! grep -q '/mutable' /etc/fstab
+    then
+      echo "ERROR: mutable not in fstab"
+    fi
+
+    if [ -n "${SNAPSHOT_INTERVAL:+x}" ]
+    then
+      echo "Snapshot interval: $SNAPSHOT_INTERVAL"
+    fi
+
+    numsnapshots=$( mount | grep -c snapshot )
+    echo "$numsnapshots snapshots mounted"
+
+    if [ ! -e /teslausb/TESLAUSB_SETUP_FINISHED ]
+    then
+      echo 'ERROR: setup did not finish'
+    fi
+
+    get_usb_state
+
+    local -r archiveloopcount=$(pgrep -f archiveloop | wc -l)
+    if ((archiveloopcount <= 2))
+    then
+      echo "archiveloop
