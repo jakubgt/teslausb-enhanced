@@ -4,6 +4,49 @@ All notable changes to this private TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
+## [1.2.0-rc.1] - 2026-08-08
+
+Release candidate for a download-and-flash Raspberry Pi Zero 2 W experience.
+
+### Added
+
+- A release-triggered native arm64 pi-gen workflow that builds a compressed
+  Raspberry Pi OS Lite Trixie image, verifies its filesystems read-only, tests
+  the XZ stream, and attaches the image, SHA-256, provenance metadata, and
+  installed-package manifest to the matching GitHub release.
+- A self-contained offline configuration wizard on the image's boot partition.
+  It recommends conservative Zero 2 W settings, generates the web password with
+  Web Crypto, redacts secrets in its review, and downloads only
+  `teslausb_setup.json` without network, analytics, or browser storage access.
+- Static release-image verification for the MBR/FAT/ext4 layout, arm64/Trixie
+  userspace, Zero 2 W boot artifacts, USB OTG configuration, locked first user,
+  absent active credentials/device identity, and exact embedded-source manifest.
+
+### Changed
+
+- Fresh image configuration now requires an explicit uppercase two-letter
+  `WIFI_COUNTRY` before enabling Wi-Fi. The build no longer hard-codes the US
+  regulatory domain. Existing configs without the field remain readable and
+  receive a compatibility warning.
+- The recommended first-boot profile uses a 40 GB camera image, no archive
+  until deliberately configured, a named timezone, web authentication, no
+  destructive `DATA_DRIVE`, and temperature reporting after archive activity.
+- Low-space snapshot rotation stops the current pass and reports an error if a
+  snapshot release fails, preventing a tight retry loop until the next
+  scheduled space check.
+
+### Release-candidate boundary
+
+- The image build is provenance-traceable but not claimed to be bit-for-bit
+  reproducible because Debian and Raspberry Pi package repositories are not
+  snapshot-pinned.
+- Automated image inspection does not replace a physical-device test. This tag
+  remains a prerelease until the exact published bytes complete first boot,
+  2.4 GHz Wi-Fi, web authentication, USB gadget enumeration, reboot, power-cycle,
+  and vehicle data-port checks on a Raspberry Pi Zero 2 W.
+- `EncryptedClips` behavior remains detection/warning only. The image contains
+  no user Wi-Fi, archive, Tesla, web, or SSH credentials.
+
 ## [1.1.0] - 2026-08-08
 
 Follow-up quality-of-life release for Raspberry Pi Zero 2 W and current
@@ -98,3 +141,4 @@ Initial private enhanced release, based on upstream `main-dev` commit
 
 [1.0.0]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.0.0
 [1.1.0]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0
+[1.2.0-rc.1]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.1

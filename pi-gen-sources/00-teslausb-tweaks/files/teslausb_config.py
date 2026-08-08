@@ -165,6 +165,7 @@ STRING_NAMES = {
     "WEBUI_RELEASE",
     "WEBUI_SHA256",
     "WIFIPASS",
+    "WIFI_COUNTRY",
 }
 
 ALLOWED_NAMES = BOOLEAN_NAMES | set(INTEGER_RANGES) | ARRAY_NAMES | STRING_NAMES
@@ -178,6 +179,36 @@ WEB_USER_PATTERN = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+.-]*$")
 VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Za-hj-npr-z0-9]{17}$")
+# Generated from iso3166-country-codes.json. The test suite requires exact
+# parity with that canonical list while this validator remains self-contained
+# when it is installed in /root/bin during an upgrade.
+ISO3166_ALPHA2_CODES = frozenset("""
+AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ
+BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
+CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ
+DE DJ DK DM DO DZ
+EC EE EG EH ER ES ET
+FI FJ FK FM FO FR
+GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY
+HK HM HN HR HT HU
+ID IE IL IM IN IO IQ IR IS IT
+JE JM JO JP
+KE KG KH KI KM KN KP KR KW KY KZ
+LA LB LC LI LK LR LS LT LU LV LY
+MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ
+NA NC NE NF NG NI NL NO NP NR NU NZ
+OM
+PA PE PF PG PH PK PL PM PN PR PS PT PW PY
+QA
+RE RO RS RU RW
+SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ
+TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ
+UA UG UM US UY UZ
+VA VC VE VG VI VN VU
+WF WS
+YE YT
+ZA ZM ZW
+""".split())
 CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 TIME_ZONE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 DEVICE_PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:-]*$")
@@ -438,6 +469,10 @@ def validate_document(document: Any) -> tuple[dict[str, Any], list[str]]:
         raise ConfigError(f"CIFS_SEC must be one of: {', '.join(sorted(CIFS_SECURITY_MODES))}")
     if "TIME_ZONE" in variables and variables["TIME_ZONE"] and not _is_safe_time_zone(variables["TIME_ZONE"]):
         raise ConfigError("TIME_ZONE must be auto or a relative zoneinfo name without traversal")
+    if "WIFI_COUNTRY" in variables and variables["WIFI_COUNTRY"] not in ISO3166_ALPHA2_CODES:
+        raise ConfigError(
+            "WIFI_COUNTRY must be a valid uppercase two-letter ISO 3166-1 alpha-2 regulatory country code"
+        )
     for trigger_name in ("TRIGGER_FILE_ANY", "TRIGGER_FILE_RECENT", "TRIGGER_FILE_SAVED", "TRIGGER_FILE_SENTRY"):
         if trigger_name in variables and not _is_safe_trigger_name(variables[trigger_name]):
             raise ConfigError(f"{trigger_name} must be one filename, not a path")
@@ -506,6 +541,11 @@ def validate_document(document: Any) -> tuple[dict[str, Any], list[str]]:
                 raise ConfigError(f"{name} still contains a sample placeholder")
 
     warnings: list[str] = []
+    if variables.get("SSID") and "WIFI_COUNTRY" not in variables:
+        warnings.append(
+            "WIFI_COUNTRY is absent; a new image will refuse to enable Wi-Fi until an "
+            "uppercase two-letter regulatory country is configured"
+        )
     if variables.get("DATA_DRIVE"):
         warnings.append(f"DATA_DRIVE={variables['DATA_DRIVE']} will be wiped and repartitioned during setup")
     if variables.get("SSH_ALLOW_DEFAULT_PASSWORD") is True:

@@ -1,10 +1,30 @@
-### Building a TeslaUSB image
+### Downloading a verified TeslaUSB image
 
-This release is source-only. These instructions prepare a reproducible 64-bit
-Raspberry Pi OS Trixie image build for Raspberry Pi Zero 2 W; they do not imply
-that a prebuilt `.img` asset exists on the GitHub release. CI exercises the
-source-staging process with a fake pi-gen checkout, but this release does not
-claim a completed full image build or validation on Raspberry Pi hardware.
+Image releases include an arm64 Raspberry Pi OS Lite (Debian Trixie) `.img.xz`
+for Raspberry Pi Zero 2 W, its SHA-256 file, a machine-readable provenance
+record, and the installed package list. Download both the compressed image and
+checksum from the same GitHub release, run the appropriate local SHA-256
+verification command, then select the `.img.xz` directly with Raspberry Pi
+Imager's **Use custom** option. Do not apply Imager OS customization; use the
+offline wizard placed on the flashed boot partition instead.
+
+The release workflow builds on a native arm64 runner, verifies the image through
+read-only FAT/ext4 mounts, confirms Trixie/arm64/Zero 2 W boot artifacts, checks
+the locked image account and absence of active configuration or generated
+device identity, validates the embedded source manifest, tests the compressed
+stream, and uploads only the checked assets to the matching tag. A release
+candidate has passed those automated checks but is not a stable hardware claim
+until the exact asset has completed the documented Pi Zero 2 W smoke test.
+
+Source export and manifest generation are deterministic. The full filesystem
+image is not claimed to be bit-for-bit reproducible because Debian and Raspberry
+Pi package repositories are not snapshot-pinned; the provenance and package
+assets record what was actually built.
+
+### Building a TeslaUSB image manually
+
+These instructions reproduce the supported source recipe when a release does
+not contain an image or when an operator wants an independent build.
 
 1. Start from a clean Git clone of the TeslaUSB release tag. GitHub-generated
    source archives do not contain the Git metadata needed to prove the exact
@@ -71,7 +91,7 @@ TESLAUSB_PI_GEN_COMMIT_OVERRIDE=<lowercase-40-character-commit-sha> \
 
 The checkout's `HEAD` must exactly equal that SHA, and both the selected commit
 and the official release pin are recorded in `SOURCE-METADATA`. An override is
-not the supported v1.1.0 image recipe and should be tested independently.
+not the supported release image recipe and should be tested independently.
 
 The resulting arm64 image supports Raspberry Pi Zero 2 W. Do not attempt to
 turn an existing 32-bit or Bookworm installation into this image with an APT

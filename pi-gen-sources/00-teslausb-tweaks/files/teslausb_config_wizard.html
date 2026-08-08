@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-N+2x5r7ae0du4vpe7qx8qv7pDT1xBsi0+l37L0nXkZI='; style-src 'sha256-wp0XfHkCqE6bOTYWzfRnEmAkcOZoR+Mv60r9jm//8D4='; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; img-src 'none'; font-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>TeslaUSB configuration wizard</title>
+  <style>
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --background: #f3f6f9;
+  --panel: #ffffff;
+  --text: #15202b;
+  --muted: #526170;
+  --border: #cbd5df;
+  --accent: #175cd3;
+  --accent-hover: #0f4cad;
+  --danger: #b42318;
+  --warning-bg: #fff8e5;
+  --warning-border: #f4c95d;
+  --code-bg: #101828;
+  --code-text: #e6edf3;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--background);
+  color: var(--text);
+  line-height: 1.5;
+  margin: 0;
+}
+
+main {
+  margin: 0 auto;
+  max-width: 1040px;
+  padding: 32px 20px 56px;
+}
+
+h1, h2, h3 { line-height: 1.2; }
+h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0 0 8px; }
+h2 { font-size: 1.25rem; margin: 0 0 18px; }
+h3 { font-size: 1rem; margin: 4px 0 14px; }
+p { margin: 8px 0; }
+
+.lead { color: var(--muted); font-size: 1.05rem; margin-bottom: 24px; }
+.grid { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.wide { grid-column: 1 / -1; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 2px 10px rgb(16 24 40 / 7%);
+  margin: 0 0 20px;
+  padding: 22px;
+}
+
+label { display: block; font-weight: 650; margin: 0 0 6px; }
+.hint { color: var(--muted); display: block; font-size: .88rem; margin-top: 5px; }
+
+input, select, textarea, button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+input, select, textarea {
+  background: var(--panel);
+  color: var(--text);
+  padding: 10px 11px;
+  width: 100%;
+}
+
+textarea { min-height: 88px; resize: vertical; }
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: 3px solid rgb(23 92 211 / 25%);
+  outline-offset: 1px;
+}
+
+.checkbox {
+  align-items: flex-start;
+  display: flex;
+  font-weight: 500;
+  gap: 9px;
+}
+
+.checkbox input { margin-top: 4px; width: auto; }
+.archive-fields[hidden] { display: none; }
+
+.actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+button {
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 650;
+  padding: 10px 15px;
+}
+
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { background: var(--accent-hover); }
+
+.notice {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: 9px;
+  color: #5f4500;
+  margin: 14px 0 0;
+  padding: 11px 13px;
+}
+
+.error { color: var(--danger); font-weight: 650; min-height: 1.5em; }
+
+pre {
+  background: var(--code-bg);
+  border-radius: 10px;
+  color: var(--code-text);
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  max-height: 430px;
+  overflow: auto;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.privacy {
+  border-left: 4px solid var(--accent);
+  color: var(--muted);
+  padding-left: 14px;
+}
+
+@media (max-width: 720px) {
+  main { padding: 22px 12px 40px; }
+  .grid { grid-template-columns: 1fr; }
+  .panel { padding: 17px; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0f1720;
+    --panel: #17212b;
+    --text: #edf2f7;
+    --muted: #b7c2ce;
+    --border: #3a4857;
+    --accent: #6ea8fe;
+    --accent-hover: #3d8bfd;
+    --danger: #ff8b82;
+    --warning-bg: #302811;
+    --warning-border: #806b24;
+  }
+  .notice { color: #ffe9a8; }
+  button.primary { color: #07111f; }
+}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>TeslaUSB configuration wizard</h1>
+    <p class="lead">Create the private <code>teslausb_setup.json</code> file for a Raspberry Pi Zero 2 W. This page works entirely on this computer.</p>
+
+    <section class="panel" aria-labelledby="network-heading">
+      <h2 id="network-heading">1. Network and storage</h2>
+      <div class="grid">
+        <div>
+          <label for="wifiCountry">Wi-Fi country</label>
+          <select id="wifiCountry" autocomplete="country" required>
+            <option value="" selected>Choose the Pi's physical countryâ€¦</option>
+          </select>
+          <span class="hint">Required ISO 3166-1 regulatory code. Use GB for the United Kingdom; no country is preselected.</span>
+        </div>
+        <div>
+          <label for="ssid">2.4 GHz Wi-Fi name</label>
+          <input id="ssid" maxlength="32" autocomplete="off" required>
+          <span class="hint">Pi Zero 2 W cannot join a 5-GHz-only network.</span>
+        </div>
+        <div>
+          <label for="wifiPassword">Wi-Fi password</label>
+          <input id="wifiPassword" type="password" maxlength="63" autocomplete="new-password" required>
+          <span class="hint">Use the existing network password; it must be 8–63 UTF-8 bytes.</span>
+        </div>
+        <div>
+          <label for="camSize">Dashcam drive size</label>
+          <input id="camSize" value="40G" maxlength="12" required>
+          <span class="hint">40G is recommended. Use a high-endurance microSD card of at least 64 GB; 128 GB or larger is preferred.</span>
+        </div>
+        <div class="wide">
+          <label for="timeZone">Named time zone</label>
+          <input id="timeZone" placeholder="America/Chicago" maxlength="255" autocomplete="off" required>
+          <span class="hint">Use an IANA zone name. The network-dependent <code>auto</code> setting is intentionally not offered.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="archive-heading">
+      <h2 id="archive-heading">2. Recording archive</h2>
+      <label for="archiveSystem">Archive method</label>
+      <select id="archiveSystem">
+        <option value="none" selected>None — start locally</option>
+        <option value="cifs">CIFS / SMB network share</option>
+        <option value="nfs">NFS export</option>
+        <option value="rsync">rsync over SSH</option>
+        <option value="rclone">rclone remote</option>
+      </select>
+      <p id="archiveNotice" class="notice">No off-device backup will be configured. You can configure an archive later.</p>
+
+      <div id="archive-cifs" class="archive-fields grid" hidden>
+        <div>
+          <label for="cifsServer">Server name or IP</label>
+          <input id="cifsServer" autocomplete="off">
+        </div>
+        <div>
+          <label for="cifsShare">Share and optional path</label>
+          <input id="cifsShare" placeholder="TeslaCam/Model3" autocomplete="off">
+        </div>
+        <div>
+          <label for="cifsUser">Share username</label>
+          <input id="cifsUser" autocomplete="username">
+        </div>
+        <div>
+          <label for="cifsPassword">Share password</label>
+          <input id="cifsPassword" type="password" autocomplete="new-password">
+        </div>
+      </div>
+
+      <div id="archive-nfs" class="archive-fields grid" hidden>
+        <div>
+          <label for="nfsServer">Server name or IP</label>
+          <input id="nfsServer" autocomplete="off">
+        </div>
+        <div>
+          <label for="nfsShare">Absolute export path</label>
+          <input id="nfsShare" placeholder="/volume1/TeslaCam" autocomplete="off">
+        </div>
+      </div>
+
+      <div id="archive-rsync" class="archive-fields grid" hidden>
+        <div>
+          <label for="rsyncUser">SSH username</label>
+          <input id="rsyncUser" autocomplete="username">
+        </div>
+        <div>
+          <label for="rsyncServer">Server name or IP</label>
+          <input id="rsyncServer" autocomplete="off">
+        </div>
+        <div class="wide">
+          <label for="rsyncPath">Destination path</label>
+          <input id="rsyncPath" placeholder="/srv/teslacam" autocomplete="off">
+        </div>
+      </div>
+
+      <div id="archive-rclone" class="archive-fields grid" hidden>
+        <div>
+          <label for="rcloneDrive">Configured remote name</label>
+          <input id="rcloneDrive" placeholder="remote" autocomplete="off">
+        </div>
+        <div>
+          <label for="rclonePath">Destination path</label>
+          <input id="rclonePath" placeholder="TeslaCam" autocomplete="off">
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="access-heading">
+      <h2 id="access-heading">3. Secure access</h2>
+      <div class="grid">
+        <div>
+          <label for="webUsername">Web username</label>
+          <input id="webUsername" value="teslausb" maxlength="64" autocomplete="username" required>
+        </div>
+        <div>
+          <label for="webPassword">Web password</label>
+          <input id="webPassword" type="password" maxlength="72" autocomplete="new-password" required>
+          <div class="actions">
+            <button id="generatePassword" type="button">Generate another password</button>
+          </div>
+        </div>
+        <div class="wide">
+          <label for="sshPublicKey">SSH public key (optional)</label>
+          <textarea id="sshPublicKey" autocomplete="off" placeholder="ssh-ed25519 AAAA… you@example"></textarea>
+          <span class="hint">When supplied, password authentication is disabled. Private keys never belong here.</span>
+        </div>
+        <div class="wide">
+          <label class="checkbox" for="temperaturePreset">
+            <input id="temperaturePreset" type="checkbox" checked>
+            <span>Use the recommended Pi Zero 2 W temperature-monitoring preset (55°C caution, 68°C warning, hourly logging, and a post-archive reading).</span>
+          </label>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="toggleSecrets" type="button">Show passwords</button>
+        <button id="clearSecrets" type="button">Clear passwords and key</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="review-heading">
+      <h2 id="review-heading">4. Review and download</h2>
+      <p class="privacy">The preview hides credentials. The downloaded file contains the real values. Keep it private, do not commit it, and remove unneeded copies from Downloads after placing it on the freshly flashed boot partition.</p>
+      <p id="error" class="error" role="alert" aria-live="polite"></p>
+      <pre id="preview" aria-label="Redacted configuration preview"></pre>
+      <div class="actions">
+        <button id="download" class="primary" type="button">Download teslausb_setup.json</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+"use strict";
+
+(function () {
+  const ARCHIVE_SYSTEMS = new Set(["none", "cifs", "nfs", "rsync", "rclone"]);
+  // Generated from iso3166-country-codes.json. Tests require exact parity with
+  // that canonical list while this page stays a single, offline-safe file.
+  const ISO3166_ALPHA2_CODES = Object.freeze(`
+AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ
+BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
+CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ
+DE DJ DK DM DO DZ
+EC EE EG EH ER ES ET
+FI FJ FK FM FO FR
+GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY
+HK HM HN HR HT HU
+ID IE IL IM IN IO IQ IR IS IT
+JE JM JO JP
+KE KG KH KI KM KN KP KR KW KY KZ
+LA LB LC LI LK LR LS LT LU LV LY
+MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ
+NA NC NE NF NG NI NL NO NP NR NU NZ
+OM
+PA PE PF PG PH PK PL PM PN PR PS PT PW PY
+QA
+RE RO RS RU RW
+SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ
+TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ
+UA UG UM US UY UZ
+VA VC VE VG VI VN VU
+WF WS
+YE YT
+ZA ZM ZW
+`.trim().split(/\s+/));
+  const WIFI_COUNTRY_CODES = new Set(ISO3166_ALPHA2_CODES);
+  const SENSITIVE_NAMES = new Set([
+    "SSID", "WIFIPASS", "SHARE_NAME", "SHARE_PASSWORD", "SHARE_USER", "ARCHIVE_SERVER",
+    "RSYNC_PATH", "RSYNC_SERVER", "RSYNC_USER", "RCLONE_DRIVE", "RCLONE_PATH",
+    "SSH_ROOT_PUBLIC_KEY", "WEB_PASSWORD", "WEB_USERNAME"
+  ]);
+  const encoder = new TextEncoder();
+
+  function byteLength(value) {
+    return encoder.encode(String(value)).length;
+  }
+
+  function requireText(value, label, preserveWhitespace) {
+    if (typeof value !== "string") {
+      throw new Error(label + " is required.");
+    }
+    const normalized = preserveWhitespace === true ? value : value.trim();
+    if (normalized === "") throw new Error(label + " is required.");
+    if (/[\u0000-\u001f\u007f]/.test(normalized)) {
+      throw new Error(label + " must not contain control characters.");
+    }
+    return normalized;
+  }
+
+  function validateHost(value, label) {
+    const host = requireText(value, label);
+    if (host.length > 253 || /[\s/:?#]/.test(host)) {
+      throw new Error(label + " must be an exact DNS name or IP address without a port.");
+    }
+    return host;
+  }
+
+  function validateTimeZone(value) {
+    const zone = requireText(value, "Named time zone");
+    if (zone === "auto" || zone.startsWith("/") || zone.startsWith("\\") || zone.length > 255) {
+      throw new Error("Use a named IANA time zone rather than auto or an absolute path.");
+    }
+    const parts = zone.split("/");
+    if (parts.some((part) => !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(part) || part === "." || part === "..")) {
+      throw new Error("Named time zone contains an unsupported path segment.");
+    }
+    return zone;
+  }
+
+  function validatePublicKey(value) {
+    const key = String(value || "").trim();
+    if (!key) return "";
+    if (/[\r\n]/.test(key) || !/^(?:ssh-|ecdsa-|sk-)[A-Za-z0-9@._+-]+\s+[A-Za-z0-9+/]+={0,3}(?:\s+[^\r\n]+)?$/.test(key)) {
+      throw new Error("SSH public key must be one valid-looking OpenSSH public-key line.");
+    }
+    return key;
+  }
+
+  function generatePassword(length) {
+    const requestedLength = length === undefined ? 28 : length;
+    if (!Number.isInteger(requestedLength) || requestedLength < 16 || requestedLength > 64) {
+      throw new Error("Generated password length must be between 16 and 64 characters.");
+    }
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*-_=+";
+    const limit = 256 - (256 % alphabet.length);
+    for (;;) {
+      let result = "";
+      while (result.length < requestedLength) {
+        const bytes = new Uint8Array(Math.max(32, requestedLength * 2));
+        globalThis.crypto.getRandomValues(bytes);
+        for (const byte of bytes) {
+          if (byte < limit && result.length < requestedLength) result += alphabet[byte % alphabet.length];
+        }
+      }
+      if (/[A-Z]/.test(result) && /[a-z]/.test(result) && /[0-9]/.test(result) && /[^A-Za-z0-9]/.test(result)) {
+        return result;
+      }
+    }
+  }
+
+  function buildDocument(values) {
+    const country = requireText(values.wifiCountry, "Wi-Fi country").toUpperCase();
+    if (!WIFI_COUNTRY_CODES.has(country)) {
+      throw new Error("Wi-Fi country must be a valid ISO 3166-1 alpha-2 code (use GB for the United Kingdom).");
+    }
+
+    const ssid = requireText(values.ssid, "Wi-Fi name", true);
+    if (byteLength(ssid) > 32) throw new Error("Wi-Fi name must be at most 32 UTF-8 bytes.");
+
+    const wifiPassword = requireText(values.wifiPassword, "Wi-Fi password", true);
+    const wifiPasswordBytes = byteLength(wifiPassword);
+    if (wifiPasswordBytes < 8 || wifiPasswordBytes > 63) {
+      throw new Error("Wi-Fi password must be 8–63 UTF-8 bytes.");
+    }
+
+    const camSize = requireText(values.camSize, "Dashcam drive size").toUpperCase();
+    if (!/^[1-9][0-9]*(?:[KMGTP])?$/.test(camSize)) {
+      throw new Error("Dashcam drive size must be a positive size such as 40G.");
+    }
+
+    const archiveSystem = String(values.archiveSystem || "none");
+    if (!ARCHIVE_SYSTEMS.has(archiveSystem)) throw new Error("Select a supported archive method.");
+
+    const webUsername = requireText(values.webUsername, "Web username");
+    if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(webUsername)) {
+      throw new Error("Web username contains unsupported characters or is too long.");
+    }
+    const webPassword = requireText(values.webPassword, "Web password", true);
+    const webPasswordBytes = byteLength(webPassword);
+    if (webPasswordBytes < 12 || webPasswordBytes > 72 || /[\r\n]/.test(webPassword)) {
+      throw new Error("Web password must be 12–72 UTF-8 bytes with no newline.");
+    }
+    if (["raspberry", "password", "teslausb", webUsername.toLowerCase()].includes(webPassword.toLowerCase())) {
+      throw new Error("Web password must not be a default value or match the username.");
+    }
+
+    const variables = {
+      WIFI_COUNTRY: country,
+      SSID: ssid,
+      WIFIPASS: wifiPassword,
+      ARCHIVE_SYSTEM: archiveSystem,
+      ARCHIVE_RECENTCLIPS: false,
+      CAM_SIZE: camSize,
+      WEB_USERNAME: webUsername,
+      WEB_PASSWORD: webPassword,
+      TIME_ZONE: validateTimeZone(values.timeZone)
+    };
+
+    if (archiveSystem === "cifs") {
+      variables.ARCHIVE_SERVER = validateHost(values.cifsServer, "CIFS server");
+      variables.SHARE_NAME = requireText(values.cifsShare, "CIFS share");
+      variables.SHARE_USER = requireText(values.cifsUser, "CIFS username");
+      variables.SHARE_PASSWORD = requireText(values.cifsPassword, "CIFS password", true);
+    } else if (archiveSystem === "nfs") {
+      variables.ARCHIVE_SERVER = validateHost(values.nfsServer, "NFS server");
+      variables.SHARE_NAME = requireText(values.nfsShare, "NFS export path");
+      if (!variables.SHARE_NAME.startsWith("/")) throw new Error("NFS export path must be absolute.");
+    } else if (archiveSystem === "rsync") {
+      variables.RSYNC_USER = requireText(values.rsyncUser, "rsync username");
+      variables.RSYNC_SERVER = validateHost(values.rsyncServer, "rsync server");
+      variables.RSYNC_PATH = requireText(values.rsyncPath, "rsync destination path");
+    } else if (archiveSystem === "rclone") {
+      variables.RCLONE_DRIVE = requireText(values.rcloneDrive, "rclone remote name");
+      variables.RCLONE_PATH = requireText(values.rclonePath, "rclone destination path");
+    }
+
+    const sshKey = validatePublicKey(values.sshPublicKey);
+    if (sshKey) {
+      variables.SSH_ROOT_PUBLIC_KEY = sshKey;
+      variables.SSH_DISABLE_PASSWORD_AUTHENTICATION = true;
+    }
+
+    if (values.temperatureEnabled === true) {
+      variables.TEMPERATURE_CAUTION = 55000;
+      variables.TEMPERATURE_WARNING = 68000;
+      variables.TEMPERATURE_INTERVAL = 60;
+      variables.TEMPERATURE_POSTARCHIVE = true;
+    }
+
+    return {schema_version: 1, variables};
+  }
+
+  function redactDocument(documentValue) {
+    const output = {schema_version: documentValue.schema_version, variables: {}};
+    for (const [name, value] of Object.entries(documentValue.variables)) {
+      output.variables[name] = SENSITIVE_NAMES.has(name) ? "<redacted>" : value;
+    }
+    return output;
+  }
+
+  function serializeDocument(documentValue) {
+    return JSON.stringify(documentValue, null, 2) + "\n";
+  }
+
+  function readValues(documentObject) {
+    const value = (id) => documentObject.getElementById(id).value;
+    return {
+      wifiCountry: value("wifiCountry"),
+      ssid: value("ssid"),
+      wifiPassword: value("wifiPassword"),
+      camSize: value("camSize"),
+      timeZone: value("timeZone"),
+      archiveSystem: value("archiveSystem"),
+      cifsServer: value("cifsServer"),
+      cifsShare: value("cifsShare"),
+      cifsUser: value("cifsUser"),
+      cifsPassword: value("cifsPassword"),
+      nfsServer: value("nfsServer"),
+      nfsShare: value("nfsShare"),
+      rsyncUser: value("rsyncUser"),
+      rsyncServer: value("rsyncServer"),
+      rsyncPath: value("rsyncPath"),
+      rcloneDrive: value("rcloneDrive"),
+      rclonePath: value("rclonePath"),
+      webUsername: value("webUsername"),
+      webPassword: value("webPassword"),
+      sshPublicKey: value("sshPublicKey"),
+      temperatureEnabled: documentObject.getElementById("temperaturePreset").checked
+    };
+  }
+
+  function populateCountryOptions(documentObject) {
+    const select = documentObject.getElementById("wifiCountry");
+    let displayNames;
+    try {
+      displayNames = typeof Intl.DisplayNames === "function" ?
+        new Intl.DisplayNames(undefined, {type: "region"}) : undefined;
+    } catch (_error) {
+      displayNames = undefined;
+    }
+    for (const code of ISO3166_ALPHA2_CODES) {
+      const option = documentObject.createElement("option");
+      option.value = code;
+      const name = displayNames ? displayNames.of(code) : undefined;
+      option.textContent = name && name !== code ? name + " (" + code + ")" : code;
+      select.appendChild(option);
+    }
+  }
+
+  function initialize(documentObject) {
+    const preview = documentObject.getElementById("preview");
+    const error = documentObject.getElementById("error");
+    const archiveNotice = documentObject.getElementById("archiveNotice");
+    const secretIds = ["wifiPassword", "cifsPassword", "webPassword"];
+
+    populateCountryOptions(documentObject);
+
+    function render() {
+      try {
+        const config = buildDocument(readValues(documentObject));
+        preview.textContent = serializeDocument(redactDocument(config));
+        error.textContent = "";
+      } catch (caught) {
+        preview.textContent = "Complete the required fields to create a redacted preview.";
+        error.textContent = caught instanceof Error ? caught.message : "Configuration is incomplete.";
+      }
+    }
+
+    function updateArchiveFields() {
+      const selected = documentObject.getElementById("archiveSystem").value;
+      for (const name of ["cifs", "nfs", "rsync", "rclone"]) {
+        documentObject.getElementById("archive-" + name).hidden = selected !== name;
+      }
+      archiveNotice.hidden = selected !== "none";
+      render();
+    }
+
+    const inferredZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof inferredZone === "string" && inferredZone.includes("/") && inferredZone !== "Etc/Unknown") {
+      documentObject.getElementById("timeZone").value = inferredZone;
+    }
+    documentObject.getElementById("webPassword").value = generatePassword();
+
+    documentObject.getElementById("generatePassword").addEventListener("click", function () {
+      documentObject.getElementById("webPassword").value = generatePassword();
+      render();
+    });
+    documentObject.getElementById("archiveSystem").addEventListener("change", updateArchiveFields);
+    documentObject.getElementById("toggleSecrets").addEventListener("click", function (event) {
+      const reveal = secretIds.some((id) => documentObject.getElementById(id).type === "password");
+      for (const id of secretIds) documentObject.getElementById(id).type = reveal ? "text" : "password";
+      event.currentTarget.textContent = reveal ? "Hide passwords" : "Show passwords";
+    });
+    documentObject.getElementById("clearSecrets").addEventListener("click", function () {
+      for (const id of secretIds) documentObject.getElementById(id).value = "";
+      documentObject.getElementById("sshPublicKey").value = "";
+      render();
+    });
+    documentObject.getElementById("download").addEventListener("click", function () {
+      try {
+        const config = buildDocument(readValues(documentObject));
+        const blob = new Blob([serializeDocument(config)], {type: "application/json"});
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = documentObject.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = "teslausb_setup.json";
+        documentObject.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(objectUrl);
+        error.textContent = "Configuration downloaded. Copy it to the boot partition before first boot.";
+      } catch (caught) {
+        error.textContent = caught instanceof Error ? caught.message : "Configuration is incomplete.";
+      }
+    });
+    documentObject.addEventListener("input", render);
+    documentObject.addEventListener("change", render);
+    updateArchiveFields();
+  }
+
+  globalThis.TeslaUsbConfigWizard = Object.freeze({
+    buildDocument,
+    countryCodes: ISO3166_ALPHA2_CODES,
+    generatePassword,
+    redactDocument,
+    serializeDocument
+  });
+
+  if (typeof document !== "undefined") initialize(document);
+}());
+  </script>
+</body>
+</html>

@@ -21,6 +21,7 @@ HELPER_PATH = (
     / "teslausb_config.py"
 )
 LOADER_PATH = HELPER_PATH.with_name("teslausb-config-loader.sh")
+COUNTRY_CODES_PATH = HELPER_PATH.with_name("iso3166-country-codes.json")
 NODE_TOOL_PATH = REPO_ROOT / "tools" / "teslausb-config.js"
 SPEC = importlib.util.spec_from_file_location("teslausb_config", HELPER_PATH)
 assert SPEC and SPEC.loader
@@ -35,6 +36,7 @@ def valid_document():
         "variables": {
             "SSID": "Garage $(touch /tmp/not-executed)",
             "WIFIPASS": "literal $HOME and `whoami`",
+            "WIFI_COUNTRY": "US",
             "ARCHIVE_SYSTEM": "none",
             "CAM_SIZE": "40G",
             "WEB_USERNAME": "viewer",
@@ -133,6 +135,37 @@ class DeclarativeConfigTests(unittest.TestCase):
             CONFIG.load_config(self.write_document(document))
         document["variables"]["TESLA_BLE_VIN"] = "5YJ3E1EA7KF000001"
         CONFIG.load_config(self.write_document(document))
+
+    def test_wifi_country_is_explicit_and_validated(self):
+        country_codes_document = json.loads(COUNTRY_CODES_PATH.read_text(encoding="utf-8"))
+        canonical_codes = country_codes_document["codes"]
+        self.assertEqual(country_codes_document["standard"], "ISO 3166-1 alpha-2")
+        self.assertEqual(canonical_codes, sorted(set(canonical_codes)))
+        self.assertEqual(len(canonical_codes), 249)
+        self.assertEqual(CONFIG.ISO3166_ALPHA2_CODES, frozenset(canonical_codes))
+        self.assertIn("US", canonical_codes)
+        self.assertIn("DE", canonical_codes)
+        self.assertNotIn("UK", canonical_codes)
+        self.assertNotIn("ZZ", canonical_codes)
+
+        for invalid in ("us", "USA", "U1", "", "UK", "ZZ"):
+            with self.subTest(invalid=invalid):
+                document = valid_document()
+                document["variables"]["WIFI_COUNTRY"] = invalid
+                with self.assertRaisesRegex(CONFIG.ConfigError, "uppercase two-letter"):
+                    CONFIG.load_config(self.write_document(document))
+
+        for valid in ("US", "DE"):
+            with self.subTest(valid=valid):
+                document = valid_document()
+                document["variables"]["WIFI_COUNTRY"] = valid
+                _, warnings = CONFIG.load_config(self.write_document(document))
+                self.assertEqual(warnings, [])
+
+        document = valid_document()
+        del document["variables"]["WIFI_COUNTRY"]
+        _, warnings = CONFIG.load_config(self.write_document(document))
+        self.assertTrue(any("WIFI_COUNTRY is absent" in warning for warning in warnings))
 
     def test_line_config_and_path_injection_values_are_rejected(self):
         bad_values = {
@@ -259,6 +292,7 @@ class DeclarativeConfigTests(unittest.TestCase):
         )
         self.assertEqual(set(schema["arrayNames"]), CONFIG.ARRAY_NAMES)
         self.assertEqual(set(schema["stringNames"]), CONFIG.STRING_NAMES)
+        self.assertEqual(schema["countryCodes"], sorted(CONFIG.ISO3166_ALPHA2_CODES))
 
     def test_cli_never_writes_secrets_in_validation_output(self):
         path = self.write_document(valid_document())

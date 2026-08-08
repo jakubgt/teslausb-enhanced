@@ -11,6 +11,7 @@ configure_samba="$repo_root/setup/pi/configure-samba.sh"
 configure_ssh="$repo_root/setup/pi/configure-ssh.sh"
 pi_gen_run="$repo_root/pi-gen-sources/00-teslausb-tweaks/00-run.sh"
 pi_gen_config="$repo_root/pi-gen-sources/pi-gen-config"
+wpa_sample="$repo_root/pi-gen-sources/00-teslausb-tweaks/files/wpa_supplicant.conf.sample"
 
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
@@ -380,6 +381,8 @@ assert_contains "$rc_local" 'if ! validate_source_coordinates'
 # removed before either config copy is installed.
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'wpa_passphrase "$SSID"'
+assert_contains "$rc_local" 'raspi-config nonint do_wifi_country "$WIFI_COUNTRY"'
+assert_contains "$rc_local" "printf 'country=%s\\n' \"\$WIFI_COUNTRY\""
 assert_contains "$rc_local" "sed '/^[[:space:]]*#psk=/d'"
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_absent "$rc_local" '"$wpa_config" /teslausb/wpa_supplicant.conf'
@@ -387,6 +390,10 @@ assert_absent "$rc_local" '"$wpa_config" /teslausb/wpa_supplicant.conf'
 assert_contains "$rc_local" 'awk -v old="$old_host_name" -v new="$new_host_name"'
 assert_absent "$rc_local" 'TEMPSSID'
 assert_absent "$rc_local" 'TEMPPASS'
+assert_absent "$rc_local" 'country=US'
+assert_absent "$setup_script" 'country=US'
+assert_absent "$pi_gen_config" 'WPA_COUNTRY=US'
+assert_absent "$wpa_sample" 'country=US'
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_absent "$setup_script" 'sed -i -e "s/$old_host_name/$new_host_name/g"'
 

@@ -8,12 +8,27 @@ const {spawnSync} = require("node:child_process");
 const {
   bashQuote,
   decodeLiteral,
+  declarativeSchema,
   generateConfig,
   migrateConfig,
   parseConfig,
   preflightConfig,
   sanitizeConfig
 } = require("../tools/teslausb-config.js");
+
+const countryCodesDocument = JSON.parse(fs.readFileSync(path.join(
+  __dirname,
+  "..",
+  "pi-gen-sources",
+  "00-teslausb-tweaks",
+  "files",
+  "iso3166-country-codes.json"
+), "utf8"));
+assert.deepEqual(declarativeSchema().countryCodes, countryCodesDocument.codes);
+assert.equal(countryCodesDocument.codes.includes("US"), true);
+assert.equal(countryCodesDocument.codes.includes("DE"), true);
+assert.equal(countryCodesDocument.codes.includes("UK"), false);
+assert.equal(countryCodesDocument.codes.includes("ZZ"), false);
 
 const secret = "spaces ' quotes \\ and $dollars";
 assert.equal(decodeLiteral(bashQuote(secret)), secret);
@@ -23,6 +38,7 @@ assert.equal(decodeLiteral(`${bashQuote(secretWithCommentText)} # safe comment`)
 const generated = generateConfig({
   SSID: "Garage WiFi",
   WIFIPASS: secret,
+  WIFI_COUNTRY: "US",
   ARCHIVE_SYSTEM: "cifs",
   ARCHIVE_SERVER: "nas.local",
   SHARE_NAME: "Tesla/Clips",
@@ -34,8 +50,33 @@ const generated = generateConfig({
 });
 const parsed = parseConfig(generated);
 assert.equal(parsed.assignments.get("WIFIPASS").value, secret);
+assert.equal(parsed.assignments.get("WIFI_COUNTRY").value, "US");
 assert.equal(parsed.assignments.get("ARCHIVE_SYSTEM").value, "cifs");
 assert.equal(preflightConfig(generated).issues.filter((issue) => issue.level === "error").length, 0);
+
+const missingWifiCountry = generated.replace(/export WIFI_COUNTRY=.*\n/, "");
+assert.match(
+  preflightConfig(missingWifiCountry).issues.map((issue) => issue.message).join("\n"),
+  /WIFI_COUNTRY is absent/
+);
+for (const invalidCountry of ["us", "UK", "ZZ"]) {
+  const invalidWifiCountry = generated.replace(
+    /export WIFI_COUNTRY=.*\n/,
+    () => `export WIFI_COUNTRY=$'${invalidCountry}'\n`);
+  assert.match(
+    preflightConfig(invalidWifiCountry).issues.map((issue) => issue.message).join("\n"),
+    /uppercase two-letter ISO 3166-1 alpha-2 regulatory country code/
+  );
+}
+for (const validCountry of ["US", "DE"]) {
+  const validWifiCountry = generated.replace(
+    /export WIFI_COUNTRY=.*\n/,
+    () => `export WIFI_COUNTRY=$'${validCountry}'\n`);
+  assert.equal(
+    preflightConfig(validWifiCountry).issues.filter((issue) => issue.level === "error").length,
+    0
+  );
+}
 
 const partialAuth = generated.replace(/export WEB_PASSWORD=.*\n/, "");
 assert.match(
@@ -239,6 +280,7 @@ assert.throws(
 const quotedArray = generateConfig({
   SSID: "Garage WiFi",
   WIFIPASS: "wifi secret",
+  WIFI_COUNTRY: "GB",
   ARCHIVE_SYSTEM: "none",
   CAM_SIZE: "40G",
   RCLONE_FLAGS: ["header: O'Reilly #tag", "--fast-list"]
@@ -269,6 +311,7 @@ try {
   fs.writeFileSync(valuesPath, JSON.stringify({
     SSID: "Garage WiFi",
     WIFIPASS: "wifi secret",
+    WIFI_COUNTRY: "CA",
     ARCHIVE_SYSTEM: "none",
     CAM_SIZE: "40G"
   }));

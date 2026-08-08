@@ -91,7 +91,11 @@ function manage_free_space {
       exit 1
     fi
     log "low space, deleting $oldest"
-    "$RELEASE_SNAPSHOT" "$oldest"
+    if ! "$RELEASE_SNAPSHOT" "$oldest"
+    then
+      log "Warning: snapshot release failed for $oldest; stopping low-space rotation."
+      exit 1
+    fi
   done
 }
 

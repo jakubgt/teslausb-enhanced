@@ -10,11 +10,15 @@ This is a streamlined process for setting up the Pi. You'll flash the 64-bit Ras
 
 ## Configure the SD card before first boot of the Pi
 
-1.  Build the current private source release with the included [64-bit Trixie pi-gen instructions](../pi-gen-sources/Readme.md), or use a release only when it explicitly includes a compatible `.img` asset. Flash that image using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or a similar flashing tool.
+1.  Sign in to the private repository and download a release's Raspberry Pi Zero 2 W arm64/Trixie `.img.xz` plus its `.sha256` file. Verify the SHA-256 digest, then flash the compressed file directly using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or a similar flashing tool. Use a high-endurance card: 64 GB is the minimum and 128 GB or larger is recommended. If the release has no image asset, build the exact tag with the pinned [64-bit Trixie pi-gen instructions](../pi-gen-sources/Readme.md).
 
-    In Raspberry Pi Imager, you need to click 'Operating System' and then scroll _all the way down_ and select the 'Use custom' option.
+    In Raspberry Pi Imager, click **Operating System**, scroll to **Use custom**, and select the local `.img.xz`; extraction is not required. Flashing erases the selected card. Decline Imager OS customization because TeslaUSB has its own first-boot configuration and SSH provisioning.
 
-1.  Mount the card again, and in the `boot` directory copy `teslausb_setup.json.sample` to `teslausb_setup.json`. Fill in the `variables` object with your archive, Wi-Fi, access, and optional notification settings. The checked-in [JSON sample](../pi-gen-sources/00-teslausb-tweaks/files/teslausb_setup.json.sample) and [declarative configuration guide](DeclarativeConfig.md) describe the required native JSON types.
+1.  Mount the card again and open `teslausb_config_wizard.html` from its `boot` partition. Complete the offline form, download `teslausb_setup.json`, and copy that downloaded file to the root of the `boot` partition. The wizard does not use the network, analytics, browser storage, or remote scripts; it recommends conservative Zero 2 W values and generates its web password locally.
+
+    Every fresh image needs `SSID`, `WIFIPASS`, and an explicit uppercase ISO 3166-1 alpha-2 `WIFI_COUNTRY` for the physical location where it will operate (`GB`, not `UK`, for the United Kingdom). TeslaUSB will not guess a regulatory domain or enable Wi-Fi with a missing/unrecognized country. The recommended starting profile uses `ARCHIVE_SYSTEM: "none"`, `CAM_SIZE: "40G"`, a named timezone, web authentication, and no destructive `DATA_DRIVE` selection. Configure an archive only after the local system is healthy.
+
+    Advanced users can instead copy `teslausb_setup.json.sample` to `teslausb_setup.json` and edit its `variables` object. The checked-in [JSON sample](../pi-gen-sources/00-teslausb-tweaks/files/teslausb_setup.json.sample) and [declarative configuration guide](DeclarativeConfig.md) describe the required native JSON types.
 
     Existing installs may continue to use `teslausb_setup_variables.conf`, but that executable shell format is deprecated. The optional [configuration helper](ConfigTool.md) can safely migrate a literal legacy file to JSON, preflight an edited legacy file without executing it, and create a redacted support copy.
 
@@ -25,6 +29,7 @@ This is a streamlined process for setting up the Pi. You'll flash the 64-bit Ras
 
     ```
     export WIFIPASS='password'
+    export WIFI_COUNTRY='US'
     ```
 
     This works even when the value contains characters that would otherwise be special to Bash.
@@ -104,10 +109,10 @@ Given that the Pi contains sensitive information like your home wifi password an
 - `ssh` to `pi@teslausb.local` (assuming Wifi came up, or your Pi is connected to your computer via USB) and look at the `/teslausb/teslausb-headless-setup.log`.
 - Try `sudo -i` and then run `/etc/rc.local`. The scripts are fairly resilient to restarting and not re-running previous steps, and will tell you about progress/failure.
 - If Wifi didn't come up:
-  - Double-check the `SSID` and `WIFIPASS` values in `teslausb_setup.json` (or the deprecated legacy `.conf`), and remove `WIFI_ENABLED`, then boot the SD in your Pi to retry automatic Wifi setup.
+  - Double-check `SSID`, `WIFIPASS`, and the uppercase ISO 3166-1 alpha-2 `WIFI_COUNTRY` in `teslausb_setup.json` (or the deprecated legacy `.conf`). The country must describe the Pi's physical operating location. Remove `WIFI_ENABLED`, then boot the SD in your Pi to retry automatic Wifi setup.
   - If you are using a WiFi network with a _hidden SSID_, edit `/boot/wpa_supplicant.conf.sample` and uncomment the line `scan_ssid=1` in the `network={...}` block.
   - If still no go, re-run `/etc/rc.local`
-  - If all else fails, copy `/boot/wpa_supplicant.conf.sample` to `/boot/wpa_supplicant.conf` and edit out the `TEMP` variables to your desired settings.
+  - If all else fails, copy `/boot/wpa_supplicant.conf.sample` to `/boot/wpa_supplicant.conf`, add `country=XX` near the top using your real uppercase ISO 3166-1 alpha-2 country code, and replace the `TEMP` values with your network settings.
 - Note: if you get an error about `read-only filesystem`, you may have to `sudo -i` and run `/root/bin/remountfs_rw`.
 - Try `date` to ensure the system clock is set correctly. If it is too far off, SSL/TLS Authentication will fail, preventing the installation from completing. You can set the date like `date -s "2 JAN 2022 15:04:05"`
 - Try `tail -f /teslausb/teslausb-headless-setup.log` to watch the logs during installation, which may shed some light on any errors occurring. Press `Ctrl-C` to stop watching logs.
@@ -122,7 +127,7 @@ When the Pi boots the first time:
 
 - A `/teslausb/teslausb-headless-setup.log` file will be created and stages logged.
 - Marker files will be created in `teslausb` like `TESLA_USB_SETUP_STARTED` and `TESLA_USB_SETUP_FINISHED` to track progress.
-- Wifi is detected by looking for `/teslausb/WIFI_ENABLED` and, if absent, creates the `wpa_supplicant.conf` file using `SSID` and `WIFIPASS` from the validated JSON configuration (or deprecated legacy `.conf`) and reboots.
+- Wifi is detected by looking for `/teslausb/WIFI_ENABLED` and, if absent, first applies the explicit `WIFI_COUNTRY`, then creates the connection using `SSID` and `WIFIPASS` from the validated JSON configuration (or deprecated legacy `.conf`) and reboots.
 - The Pi LED will flash patterns (2, 3, 4, 5) as it gets to each stage (labeled in the setup-teslausb script).
 - After the final stage and reboot the LED will go back to normal. Remember, the step to remount the filesystem takes a few minutes.
 
@@ -132,4 +137,5 @@ At this point the next boot should start the Dashcam/music drives like normal. I
 
 # Image modification sources
 
-The sources for the image modifications, and instructions, are in the [pi-gen-sources folder](https://github.com/marcone/teslausb/tree/main-dev/pi-gen-sources).
+The sources for the image modifications, and instructions, are in the
+[pi-gen-sources folder](../pi-gen-sources/Readme.md).

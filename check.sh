@@ -72,6 +72,7 @@ shellcheck --exclude=SC1091 \
            ./run/rsync_archive/archive-clips.sh \
            ./run/temperature_monitor \
            ./run/waitforidle \
+           ./tools/verify-release-image.sh \
            ./teslausb-www/teslausb-web-sudo \
            ./teslausb-www/html/cgi-bin/api-v1.sh \
            ./teslausb-www/html/cgi-bin/cgi-common.sh \
