@@ -254,6 +254,7 @@ jobs:
             printf '%s\n' "${object_sha}"
           }
 
+          tag_created=false
           tag_response=
           if tag_response=$(gh api \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
@@ -275,527 +276,122 @@ jobs:
               --arg ref "refs/tags/${RELEASE_TAG}" \
               --arg sha "${SOURCE_COMMIT}" \
               '{ref: $ref, sha: $sha}')
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              --input - <<< "${tag_payload}" > /dev/null
-            tag_response=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
+            tag_response=$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" --input - \
+              <<< "${tag_payload}")
             [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
-              echo "Created tag does not resolve to the release source commit" >&2
+              echo "Created tag response does not resolve to the release source commit" >&2
               exit 1
             }
+            tag_created=true
           fi
 
-          prerelease=false
-          if [[ "${VERSION}" == *-rc.* ]]
+          if [ "${tag_created}" = true ]
           then
-            prerelease=true
-          fi
-          expected_title="TeslaUSB Enhanced ${RELEASE_TAG}"
-          expected_body=$(< "${RELEASE_NOTES_PATH}")
-
-          release_response=
-          if release_response=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
-          then
-            jq -e --arg tag "${RELEASE_TAG}" \
-              --arg title "${expected_title}" \
-              --arg source_commit "${SOURCE_COMMIT}" \
-              --argjson prerelease "${prerelease}" \
-              '.tag_name == $tag and .name == $title and .draft == true and
-               .target_commitish == $source_commit and
-               .prerelease == $prerelease' <<< "${release_response}" > /dev/null || {
-              echo "Existing release is not the expected matching draft" >&2
-              exit 1
-            }
-            existing_body=$(jq -r '.body // ""' <<< "${release_response}")
-            [ "${existing_body}" = "${expected_body}" ] || {
-              echo "Existing draft release notes do not match checked-in notes" >&2
-              exit 1
-            }
-          else
-            case "${release_response}" in
-              *'(HTTP 404)'*) ;;
-              *)
-                printf '%s\n' "${release_response}" >&2
-                exit 1
-                ;;
-            esac
-            release_payload=$(jq -n \
-              --arg tag_name "${RELEASE_TAG}" \
-              --arg target_commitish "${SOURCE_COMMIT}" \
-              --arg name "${expected_title}" \
-              --rawfile body "${RELEASE_NOTES_PATH}" \
-              --argjson prerelease "${prerelease}" \
-              '{
-                tag_name: $tag_name,
-                target_commitish: $target_commitish,
-                name: $name,
-                body: $body,
-                draft: true,
-                prerelease: $prerelease,
-                make_latest: "false"
-              }')
-            release_response=$(gh api --method POST \
-              "repos/${GITHUB_REPOSITORY}/releases" --input - \
-              <<< "${release_payload}")
-          fi
-
-          expected_assets=(
-            "${ASSET_STEM}.img.xz"
-            "${ASSET_STEM}.img.xz.sha256"
-            "${ASSET_STEM}.image-metadata.json"
-            "${ASSET_STEM}.packages.tsv"
-          )
-          existing_assets=$(jq -r '.assets[].name' <<< "${release_response}")
-          for expected_asset in "${expected_assets[@]}"
-          do
-            if grep -Fx -- "${expected_asset}" <<< "${existing_assets}" > /dev/null
-            then
-              echo "Draft retry contains an expected asset and cannot be reused: ${expected_asset}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Confirm matching GitHub release exists
-        env:
-          ASSET_STEM: ${{ steps.release.outputs.asset_stem }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          actual_tag=$(gh release view "${RELEASE_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)
-          [ "${actual_tag}" = "${RELEASE_TAG}" ] || {
-            echo "GitHub release does not match ${RELEASE_TAG}" >&2
-            exit 1
-          }
-          existing_assets=$(gh release view "${RELEASE_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
-          expected_assets=(
-            "${ASSET_STEM}.img.xz"
-            "${ASSET_STEM}.img.xz.sha256"
-            "${ASSET_STEM}.image-metadata.json"
-            "${ASSET_STEM}.packages.tsv"
-          )
-          for expected_asset in "${expected_assets[@]}"
-          do
-            if grep -Fx -- "${expected_asset}" <<< "${existing_assets}" > /dev/null
-            then
-              echo "Refusing to replace existing release asset: ${expected_asset}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Reclaim safe ephemeral runner space
-        run: |
-          set -euo pipefail
-          [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] || {
-            echo "Refusing automatic disk cleanup outside a GitHub-hosted ephemeral runner" >&2
-            exit 1
-          }
-
-          cleanup_paths=(
-            /opt/ghc
-            /opt/hostedtoolcache
-            /usr/local/.ghcup
-            /usr/local/lib/android
-            /usr/share/dotnet
-          )
-          for cleanup_path in "${cleanup_paths[@]}"
-          do
-            [ -e "${cleanup_path}" ] || continue
-            [ -d "${cleanup_path}" ] && [ ! -L "${cleanup_path}" ] || {
-              echo "Refusing to remove an unexpected cleanup path: ${cleanup_path}" >&2
-              exit 1
-            }
-            [ "$(readlink -f -- "${cleanup_path}")" = "${cleanup_path}" ] || {
-              echo "Refusing to remove a redirected cleanup path: ${cleanup_path}" >&2
-              exit 1
-            }
-            case "${cleanup_path}" in
-              /opt/ghc|/opt/hostedtoolcache|/usr/local/.ghcup|/usr/local/lib/android|/usr/share/dotnet)
-                sudo rm -rf --one-file-system -- "${cleanup_path}"
-                ;;
-              *)
-                echo "Cleanup path is outside the fixed allowlist: ${cleanup_path}" >&2
-                exit 1
-                ;;
-            esac
-          done
-          if command -v docker > /dev/null && sudo docker info > /dev/null 2>&1
-          then
-            sudo docker system prune --all --force --volumes
-          fi
-          sudo apt-get clean
-          df -h -- "${RUNNER_TEMP}"
-
-      - name: Install native pi-gen dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            arch-test bc bmap-tools coreutils curl debootstrap dosfstools \
-            e2fsprogs file git gpg grep jq kmod libarchive-tools libcap2-bin \
-            parted pigz qemu-user-binfmt quilt rsync util-linux xxd xz-utils \
-            zerofree zip
-          command -v gh > /dev/null || {
-            echo "GitHub CLI is unavailable on the hosted runner" >&2
-            exit 1
-          }
-
-      - name: Require at least 25 GiB free for pi-gen
-        run: |
-          set -euo pipefail
-          available_bytes=$(df -B1 --output=avail -- "${RUNNER_TEMP}" | tail -n 1 | tr -d ' ')
-          minimum_bytes=$((25 * 1024 * 1024 * 1024))
-          [[ "${available_bytes}" =~ ^[0-9]+$ ]] || {
-            echo "Unable to determine free build space" >&2
-            exit 1
-          }
-          if [ "${available_bytes}" -lt "${minimum_bytes}" ]
-          then
-            echo "pi-gen requires at least 25 GiB free; only ${available_bytes} bytes are available" >&2
-            df -h -- "${RUNNER_TEMP}"
-            exit 1
-          fi
-          df -h -- "${RUNNER_TEMP}"
-
-      - name: Clone exact pi-gen source
-        id: pigen
-        run: |
-          set -euo pipefail
-          [[ "${PI_GEN_COMMIT}" =~ ^[0-9a-f]{40}$ ]]
-          pi_gen_dir="${RUNNER_TEMP}/pi-gen"
-          [ ! -e "${pi_gen_dir}" ] || {
-            echo "Refusing to replace existing pi-gen path: ${pi_gen_dir}" >&2
-            exit 1
-          }
-          git init --quiet "${pi_gen_dir}"
-          git -C "${pi_gen_dir}" remote add origin https://github.com/RPi-Distro/pi-gen.git
-          git -C "${pi_gen_dir}" fetch --depth=1 origin "${PI_GEN_COMMIT}"
-          git -C "${pi_gen_dir}" checkout --detach "${PI_GEN_COMMIT}"
-          [ "$(git -C "${pi_gen_dir}" rev-parse HEAD)" = "${PI_GEN_COMMIT}" ]
-          git -C "${pi_gen_dir}" cat-file -e "${PI_GEN_COMMIT}:stage2/prerun.sh"
-          [ -z "$(git -C "${pi_gen_dir}" status --porcelain=v1 --untracked-files=no)" ]
-          printf 'directory=%s\n' "${pi_gen_dir}" >> "${GITHUB_OUTPUT}"
-
-      - name: Prepare pinned TeslaUSB stage
-        env:
-          PI_GEN_DIR: ${{ steps.pigen.outputs.directory }}
-        run: |
-          set -euo pipefail
-          cd "${PI_GEN_DIR}"
-          "${GITHUB_WORKSPACE}/pi-gen-sources/prepare.sh"
-          grep -Fx "RELEASE=trixie" config > /dev/null
-          grep -F 'STAGE_LIST="stage0 stage1 stage2 stage_teslausb"' config > /dev/null
-
-      - name: Build uncompressed arm64 image natively
-        env:
-          ASSET_STEM: ${{ steps.release.outputs.asset_stem }}
-          IMAGE_DATE: ${{ steps.release.outputs.image_date }}
-          PI_GEN_DIR: ${{ steps.pigen.outputs.directory }}
-          SOURCE_EPOCH: ${{ steps.release.outputs.source_epoch }}
-        run: |
-          set -euo pipefail
-          [ "$(uname -m)" = aarch64 ] || {
-            echo "Release image must be built natively on an arm64 runner" >&2
-            exit 1
-          }
-          build_config="${RUNNER_TEMP}/teslausb-release-config"
-          printf '%s\n' \
-            'DEPLOY_COMPRESSION=none' \
-            "IMG_DATE=${IMAGE_DATE}" \
-            "IMG_FILENAME=${ASSET_STEM}" > "${build_config}"
-          chmod 0600 "${build_config}"
-
-          cd "${PI_GEN_DIR}"
-          if ! sudo env SOURCE_DATE_EPOCH="${SOURCE_EPOCH}" \
-            ./build.sh -c "${build_config}"
-          then
-            df -h -- "${RUNNER_TEMP}" || true
-            find work -name build.log -type f -print 2> /dev/null || true
-            exit 1
-          fi
-          sudo chown -R -- "$(id -u):$(id -g)" deploy
-          df -h -- "${RUNNER_TEMP}"
-
-      - name: Verify image and create manifests
-        id: assets
-        env:
-          ASSET_STEM: ${{ steps.release.outputs.asset_stem }}
-          PI_GEN_DIR: ${{ steps.pigen.outputs.directory }}
-          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
-          SOURCE_EPOCH: ${{ steps.release.outputs.source_epoch }}
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          dist_dir="${RUNNER_TEMP}/release-assets"
-          mkdir -m 0700 -- "${dist_dir}"
-
-          images=()
-          while IFS= read -r -d '' image
-          do
-            images+=("${image}")
-          done < <(find "${PI_GEN_DIR}/deploy" -maxdepth 1 -type f -name '*.img' -print0)
-          [ "${#images[@]}" -eq 1 ] || {
-            echo "Expected exactly one uncompressed pi-gen image; found ${#images[@]}" >&2
-            exit 1
-          }
-          raw_image="${dist_dir}/${ASSET_STEM}.img"
-          [ "$(basename -- "${images[0]}")" = "${ASSET_STEM}.img" ] || {
-            echo "pi-gen produced an unexpected image name: ${images[0]}" >&2
-            exit 1
-          }
-          mv -- "${images[0]}" "${raw_image}"
-
-          packages="${dist_dir}/${ASSET_STEM}.packages.tsv"
-          metadata="${dist_dir}/${ASSET_STEM}.image-metadata.json"
-          bash "${GITHUB_WORKSPACE}/tools/verify-release-image.sh" \
-            "${raw_image}" "${VERSION}" "${SOURCE_COMMIT}" "${PI_GEN_COMMIT}" \
-            "${packages}" "${metadata}"
-
-          raw_sha256=$(sha256sum -- "${raw_image}")
-          raw_sha256=${raw_sha256%% *}
-          env -u XZ_DEFAULTS -u XZ_OPT xz --threads=1 --check=crc64 \
-            --lzma2=preset=6 -- "${raw_image}"
-          compressed_image="${raw_image}.xz"
-          [ -f "${compressed_image}" ] && [ ! -L "${compressed_image}" ]
-          [ ! -e "${raw_image}" ]
-          env -u XZ_DEFAULTS -u XZ_OPT xz --test -- "${compressed_image}"
-
-          compressed_bytes=$(stat -c %s -- "${compressed_image}")
-          maximum_release_bytes=$((2 * 1024 * 1024 * 1024 - 1))
-          [ "${compressed_bytes}" -le "${maximum_release_bytes}" ] || {
-            echo "Compressed image exceeds the 2 GiB release-asset safety limit" >&2
-            exit 1
-          }
-          compressed_sha256=$(sha256sum -- "${compressed_image}")
-          compressed_sha256=${compressed_sha256%% *}
-          package_manifest_sha256=$(sha256sum -- "${packages}")
-          package_manifest_sha256=${package_manifest_sha256%% *}
-          build_completed_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-
-          checksum_file="${compressed_image}.sha256"
-          printf '%s  %s\n' "${compressed_sha256}" \
-            "$(basename -- "${compressed_image}")" > "${checksum_file}"
-          chmod 0644 "${checksum_file}"
-          (
-            cd "${dist_dir}"
-            sha256sum -c -- "$(basename -- "${checksum_file}")"
-          )
-
-          metadata_tmp=$(mktemp "${dist_dir}/.image-metadata.XXXXXXXX")
-          jq -S \
-            --arg image_asset "$(basename -- "${compressed_image}")" \
-            --arg checksum_asset "$(basename -- "${checksum_file}")" \
-            --arg package_manifest "$(basename -- "${packages}")" \
-            --arg raw_image_sha256 "${raw_sha256}" \
-            --arg compressed_image_sha256 "${compressed_sha256}" \
-            --arg package_manifest_sha256 "${package_manifest_sha256}" \
-            --arg source_epoch "${SOURCE_EPOCH}" \
-            --arg build_completed_utc "${build_completed_utc}" \
-            --arg runner_arch "${RUNNER_ARCH}" \
-            --arg runner_image_os "${ImageOS:-unknown}" \
-            --arg runner_image_version "${ImageVersion:-unknown}" \
-            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
-            --arg compression 'xz --threads=1 --check=crc64 --lzma2=preset=6' \
-            --argjson compressed_bytes "${compressed_bytes}" \
-            '.artifact = {
-                image: $image_asset,
-                checksum: $checksum_asset,
-                package_manifest: $package_manifest,
-                raw_image_sha256: $raw_image_sha256,
-                compressed_image_sha256: $compressed_image_sha256,
-                package_manifest_sha256: $package_manifest_sha256,
-                compressed_bytes: $compressed_bytes,
-                compression: $compression
-              }
-              | .build = {
-                source_epoch: ($source_epoch | tonumber),
-                build_completed_utc: $build_completed_utc,
-                runner_arch: $runner_arch,
-                runner_image_os: $runner_image_os,
-                runner_image_version: $runner_image_version,
-                workflow_run: $workflow_run,
-                run_attempt: ($run_attempt | tonumber)
-              }' "${metadata}" > "${metadata_tmp}"
-          mv -fT -- "${metadata_tmp}" "${metadata}"
-          chmod 0644 "${metadata}" "${packages}"
-          jq -e \
-            '.image.architecture == "arm64" and
-             .image.debian_codename == "trixie" and
-             .image.first_user_locked == true and
-             .image.active_setup_config_present == false and
-             .artifact.compressed_image_sha256 != ""' \
-            "${metadata}" > /dev/null
-
-          for text_asset in "${checksum_file}" "${metadata}" "${packages}"
-          do
-            if grep -aEq \
-              'github_pat_|gh[pousr]_[A-Za-z0-9_]{20,}|BEGIN [A-Z ]*PRIVATE KEY|must-not-leak' \
-              "${text_asset}"
-            then
-              echo "Potential credential material detected in $(basename -- "${text_asset}")" >&2
-              exit 1
-            fi
-          done
-          [ -z "$(find "${dist_dir}" -maxdepth 1 -type f -name '*.img' -print -quit)" ] || {
-            echo "Uncompressed image remains in the release directory" >&2
-            exit 1
-          }
-
-          {
-            printf 'image=%s\n' "${compressed_image}"
-            printf 'checksum=%s\n' "${checksum_file}"
-            printf 'metadata=%s\n' "${metadata}"
-            printf 'packages=%s\n' "${packages}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Upload verified assets to matching release
-        env:
-          CHECKSUM_ASSET: ${{ steps.assets.outputs.checksum }}
-          GH_TOKEN: ${{ github.token }}
-          IMAGE_ASSET: ${{ steps.assets.outputs.image }}
-          METADATA_ASSET: ${{ steps.assets.outputs.metadata }}
-          PACKAGES_ASSET: ${{ steps.assets.outputs.packages }}
-        run: |
-          set -euo pipefail
-          assets=(
-            "${IMAGE_ASSET}"
-            "${CHECKSUM_ASSET}"
-            "${METADATA_ASSET}"
-            "${PACKAGES_ASSET}"
-          )
-          existing_assets=$(gh release view "${RELEASE_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
-          for asset in "${assets[@]}"
-          do
-            [ -f "${asset}" ] && [ ! -L "${asset}" ] || {
-              echo "Release asset is missing or symbolic: ${asset}" >&2
-              exit 1
-            }
-            asset_name=$(basename -- "${asset}")
-            if grep -Fx -- "${asset_name}" <<< "${existing_assets}" > /dev/null
-            then
-              echo "Refusing to replace existing release asset: ${asset_name}" >&2
-              exit 1
-            fi
-          done
-
-          gh release upload "${RELEASE_TAG}" "${assets[@]}" \
-            --repo "${GITHUB_REPOSITORY}"
-
-          uploaded_assets=$(gh release view "${RELEASE_TAG}" \
-            --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
-          for asset in "${assets[@]}"
-          do
-            grep -Fx -- "$(basename -- "${asset}")" <<< "${uploaded_assets}" > /dev/null || {
-              echo "Uploaded asset is not visible on the release: ${asset}" >&2
-              exit 1
-            }
-          done
-
-      - name: Publish verified VERSION-push release
-        if: github.event_name == 'push'
-        env:
-          CHECKSUM_ASSET: ${{ steps.assets.outputs.checksum }}
-          GH_TOKEN: ${{ github.token }}
-          IMAGE_ASSET: ${{ steps.assets.outputs.image }}
-          METADATA_ASSET: ${{ steps.assets.outputs.metadata }}
-          PACKAGES_ASSET: ${{ steps.assets.outputs.packages }}
-          RELEASE_NOTES_PATH: ${{ steps.release.outputs.release_notes_path }}
-          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          resolve_tag_commit() {
-            local object_json="$1"
-            local object_sha
-            local object_type
-            local depth=0
-
-            object_type=$(jq -er '.object.type' <<< "${object_json}")
-            object_sha=$(jq -er '.object.sha' <<< "${object_json}")
-            while [ "${object_type}" = tag ]
+            tag_visibility_delays=(2 4 8 16)
+            tag_visible=false
+            tag_visibility_error=
+            for ((tag_visibility_attempt = 1;
+                  tag_visibility_attempt <= ${#tag_visibility_delays[@]};
+                  tag_visibility_attempt++))
             do
-              depth=$((depth + 1))
-              [ "${depth}" -le 8 ] || return 1
-              object_json=$(gh api \
-                "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")
-              object_type=$(jq -er '.object.type' <<< "${object_json}")
-              object_sha=$(jq -er '.object.sha' <<< "${object_json}")
+              tag_response=
+              if tag_response=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+              then
+                [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+                  echo "Visible release tag does not target the source commit" >&2
+                  exit 1
+                }
+                tag_visible=true
+                break
+              fi
+              tag_visibility_error=${tag_response}
+              case "${tag_visibility_error}" in
+                *'(HTTP 404)'*) ;;
+                *)
+                  printf '%s\n' "${tag_visibility_error}" >&2
+                  exit 1
+                  ;;
+              esac
+              visibility_delay=${tag_visibility_delays[$((tag_visibility_attempt - 1))]}
+              echo "Created tag is not visible on attempt ${tag_visibility_attempt}; rechecking in ${visibility_delay}s"
+              sleep "${visibility_delay}"
             done
-            [ "${object_type}" = commit ] || return 1
-            printf '%s\n' "${object_sha}"
-          }
+            if [ "${tag_visible}" != true ]
+            then
+              tag_response=
+              if tag_response=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+              then
+                [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+                  echo "Visible release tag does not target the source commit" >&2
+                  exit 1
+                }
+              else
+                printf '%s\n' "${tag_response:-${tag_visibility_error}}" >&2
+                echo "Created tag did not become visible after ${#tag_visibility_delays[@]} bounded checks" >&2
+                exit 1
+              fi
+            fi
+          fi
 
-          tag_response=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
-          [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
-            echo "Release tag changed during the image build" >&2
-            exit 1
-          }
-
-          release_response=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
           prerelease=false
-          make_latest=true
           if [[ "${VERSION}" == *-rc.* ]]
           then
             prerelease=true
-            make_latest=false
           fi
           expected_title="TeslaUSB Enhanced ${RELEASE_TAG}"
           expected_body=$(< "${RELEASE_NOTES_PATH}")
-          jq -e \
-            --arg tag "${RELEASE_TAG}" \
-            --arg title "${expected_title}" \
-            --arg source_commit "${SOURCE_COMMIT}" \
-            --argjson prerelease "${prerelease}" \
-            '.tag_name == $tag and .name == $title and .draft == true and
-             .target_commitish == $source_commit and
-             .prerelease == $prerelease' <<< "${release_response}" > /dev/null || {
-            echo "Release is no longer the expected unpublished draft" >&2
-            exit 1
-          }
-          [ "$(jq -r '.body // ""' <<< "${release_response}")" = "${expected_body}" ] || {
-            echo "Draft release notes changed during the image build" >&2
-            exit 1
-          }
-
-          assets=(
-            "${IMAGE_ASSET}"
-            "${CHECKSUM_ASSET}"
-            "${METADATA_ASSET}"
-            "${PACKAGES_ASSET}"
+          expected_assets=(
+            "${ASSET_STEM}.img.xz"
+            "${ASSET_STEM}.img.xz.sha256"
+            "${ASSET_STEM}.image-metadata.json"
+            "${ASSET_STEM}.packages.tsv"
           )
-          for asset in "${assets[@]}"
+          release_payload=$(jq -n \
+            --arg tag_name "${RELEASE_TAG}" \
+            --arg target_commitish "${SOURCE_COMMIT}" \
+            --arg name "${expected_title}" \
+            --rawfile body "${RELEASE_NOTES_PATH}" \
+            --argjson prerelease "${prerelease}" \
+            '{
+              tag_name: $tag_name,
+              target_commitish: $target_commitish,
+              name: $name,
+              body: $body,
+              draft: true,
+              prerelease: $prerelease,
+              make_latest: "false"
+            }')
+
+          # GitHub's release service can briefly lag a newly created Git tag.
+          # A failed create is never retried until both the tag and release are
+          # fetched again, so an eventually visible draft cannot be duplicated.
+          release_create_delays=(2 4 8 16)
+          release_found=false
+          release_create_error=
+          for ((release_create_attempt = 1;
+                release_create_attempt <= ${#release_create_delays[@]};
+                release_create_attempt++))
           do
-            asset_name=$(basename -- "${asset}")
-            remote_digest=$(jq -er --arg name "${asset_name}" '
-              [.assets[] | select(.name == $name)] |
-              if length == 1 then .[0].digest else error("asset count mismatch") end
-            ' <<< "${release_response}")
-            local_digest=$(sha256sum -- "${asset}")
-            local_digest="sha256:${local_digest%% *}"
-            [ "${remote_digest}" = "${local_digest}" ] || {
-              echo "Remote release digest does not match verified asset: ${asset_name}" >&2
+            tag_response=
+            if ! tag_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" 2>&1)
+            then
+              printf '%s\n' "${tag_response}" >&2
+              exit 1
+            fi
+            [ "$(resolve_tag_commit "${tag_response}")" = "${SOURCE_COMMIT}" ] || {
+              echo "Release tag changed while creating its draft" >&2
               exit 1
             }
-          done
 
-          release_id=$(jq -er '.id' <<< "${release_response}")
-          publish_payload=$(jq -n \
-            --argjson prerelease "${prerelease}" \
-            --arg make_latest "${make_latest}" \
-            '{draft: false, prerelease: $prerelease, make_latest: $make_latest}')
-          published_release=$(gh api --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --input - \
-            <<< "${publish_payload}")
-          jq -e --arg tag "${RELEASE_TAG}" --argjson prerelease "${prerelease}" \
-            '.tag_name == $tag and .draft == false and .prerelease == $prerelease' \
-            <<< "${published_release}" > /dev/null || {
-            echo "GitHub did not publish the verified release in the expected state" >&2
-            exit 1
-          }
+            release_response=
+            if release_response=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
+            then
+              release_found=true
+              break
+            fi
+            case "${release_re
