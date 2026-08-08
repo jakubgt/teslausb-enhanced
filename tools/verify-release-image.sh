@@ -37,14 +37,20 @@ prepare_output_path() {
   local output_parent
   local output_name
 
-  [ ! -e "$requested_path" ] && [ ! -L "$requested_path" ] ||
+  if [ -e "$requested_path" ] || [ -L "$requested_path" ]
+  then
     fail "output already exists or is a symbolic link: $requested_path"
+  fi
   output_parent=$(dirname -- "$requested_path")
   output_name=$(basename -- "$requested_path")
-  [ -n "$output_name" ] && [ "$output_name" != . ] && [ "$output_name" != .. ] ||
+  if [ -z "$output_name" ] || [ "$output_name" = . ] || [ "$output_name" = .. ]
+  then
     fail "invalid output path: $requested_path"
-  [ -d "$output_parent" ] && [ ! -L "$output_parent" ] ||
+  fi
+  if [ ! -d "$output_parent" ] || [ -L "$output_parent" ]
+  then
     fail "output directory is missing or symbolic: $output_parent"
+  fi
   output_parent=$(readlink -f -- "$output_parent")
   printf '%s/%s\n' "$output_parent" "$output_name"
 }
@@ -64,8 +70,10 @@ readonly METADATA_INPUT=$6
   fail "expected TeslaUSB commit must be one lowercase 40-character SHA"
 [[ "$EXPECTED_PI_GEN_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
   fail "expected pi-gen commit must be one lowercase 40-character SHA"
-[ -f "$IMAGE_INPUT" ] && [ ! -L "$IMAGE_INPUT" ] ||
+if [ ! -f "$IMAGE_INPUT" ] || [ -L "$IMAGE_INPUT" ]
+then
   fail "image must be a regular file, not a symbolic link: $IMAGE_INPUT"
+fi
 case "$IMAGE_INPUT" in
   *.img) ;;
   *) fail "uncompressed image name must end in .img" ;;
@@ -203,8 +211,10 @@ for active_config in \
   "$ROOT_MOUNT/root/teslausb_setup.json" \
   "$ROOT_MOUNT/root/teslausb_setup_variables.conf"
 do
-  [ ! -e "$active_config" ] && [ ! -L "$active_config" ] ||
+  if [ -e "$active_config" ] || [ -L "$active_config" ]
+  then
     fail "release image contains an active user configuration: $active_config"
+  fi
 done
 
 file -L -- "$ROOT_MOUNT/usr/bin/bash" |
@@ -236,8 +246,10 @@ awk -F: '$1 == "pi" { count++; uid = $3 } END { exit !(count == 1 && uid == 1000
   "$ROOT_MOUNT/etc/passwd" || fail "first user pi is not the unique UID 1000 account"
 
 machine_id_file="$ROOT_MOUNT/etc/machine-id"
-[ -f "$machine_id_file" ] && [ ! -L "$machine_id_file" ] ||
+if [ ! -f "$machine_id_file" ] || [ -L "$machine_id_file" ]
+then
   fail "etc/machine-id must be a regular file"
+fi
 machine_id=$(tr -d '[:space:]' < "$machine_id_file")
 [ -z "$machine_id" ] || [ "$machine_id" = uninitialized ] ||
   fail "release image contains an initialized machine ID"
@@ -260,8 +272,10 @@ for random_seed in \
   "$ROOT_MOUNT/var/lib/systemd/random-seed" \
   "$ROOT_MOUNT/var/lib/urandom/random-seed"
 do
-  [ ! -e "$random_seed" ] && [ ! -L "$random_seed" ] ||
+  if [ -e "$random_seed" ] || [ -L "$random_seed" ]
+  then
     fail "release image contains a shared random seed: $random_seed"
+  fi
 done
 
 nonempty_build_log=$(find "$ROOT_MOUNT/var/log" -xdev -type f -size +0c -print -quit)
@@ -272,8 +286,10 @@ for build_log in \
   "$ROOT_MOUNT/pi-gen.log" \
   "$ROOT_MOUNT/root/build.log"
 do
-  [ ! -e "$build_log" ] && [ ! -L "$build_log" ] ||
+  if [ -e "$build_log" ] || [ -L "$build_log" ]
+  then
     fail "release image contains a builder log: $build_log"
+  fi
 done
 cached_deb=
 if [ -d "$ROOT_MOUNT/var/cache/apt/archives" ]
@@ -294,8 +310,10 @@ do
     [ -z "$(find "$apt_auth_path" -mindepth 1 -print -quit)" ] ||
       fail "release image contains APT authentication configuration: $apt_auth_path"
   else
-    [ ! -e "$apt_auth_path" ] && [ ! -L "$apt_auth_path" ] ||
+    if [ -e "$apt_auth_path" ] || [ -L "$apt_auth_path" ]
+    then
       fail "release image contains APT authentication configuration: $apt_auth_path"
+    fi
   fi
 done
 proxy_match=$(grep -RIsEil \
@@ -314,8 +332,10 @@ for credential_path in \
   "$ROOT_MOUNT/home/pi/.netrc" \
   "$ROOT_MOUNT/home/pi/.ssh/authorized_keys"
 do
-  [ ! -e "$credential_path" ] && [ ! -L "$credential_path" ] ||
+  if [ -e "$credential_path" ] || [ -L "$credential_path" ]
+  then
     fail "release image contains a credential or history file: $credential_path"
+  fi
 done
 network_profile=$(find "$ROOT_MOUNT/etc/NetworkManager/system-connections" \
   -mindepth 1 \( -type f -o -type l \) -print -quit 2> /dev/null || true)
@@ -331,19 +351,27 @@ for residue_path in \
   "$ROOT_MOUNT/work" \
   "$ROOT_MOUNT/actions-runner"
 do
-  [ ! -e "$residue_path" ] && [ ! -L "$residue_path" ] ||
+  if [ -e "$residue_path" ] || [ -L "$residue_path" ]
+  then
     fail "release image contains build residue: $residue_path"
+  fi
 done
 
 readonly SOURCE_DIR="$ROOT_MOUNT/usr/local/share/teslausb-source"
 readonly SOURCE_METADATA="$SOURCE_DIR/SOURCE-METADATA"
 readonly SOURCE_MANIFEST="$SOURCE_DIR/SOURCE-MANIFEST.sha256"
-[ -d "$SOURCE_DIR" ] && [ ! -L "$SOURCE_DIR" ] ||
+if [ ! -d "$SOURCE_DIR" ] || [ -L "$SOURCE_DIR" ]
+then
   fail "embedded TeslaUSB source bundle is missing or symbolic"
-[ -f "$SOURCE_METADATA" ] && [ ! -L "$SOURCE_METADATA" ] ||
+fi
+if [ ! -f "$SOURCE_METADATA" ] || [ -L "$SOURCE_METADATA" ]
+then
   fail "embedded source metadata is missing or symbolic"
-[ -f "$SOURCE_MANIFEST" ] && [ ! -L "$SOURCE_MANIFEST" ] ||
+fi
+if [ ! -f "$SOURCE_MANIFEST" ] || [ -L "$SOURCE_MANIFEST" ]
+then
   fail "embedded source manifest is missing or symbolic"
+fi
 [ -z "$(find "$SOURCE_DIR" -name .git -print -quit)" ] ||
   fail "embedded source contains Git build metadata"
 

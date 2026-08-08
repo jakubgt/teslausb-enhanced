@@ -381,7 +381,7 @@ assert_contains "$rc_local" 'if ! validate_source_coordinates'
 # removed before either config copy is installed.
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'wpa_passphrase "$SSID"'
-assert_contains "$rc_local" 'raspi-config nonint do_wifi_country "$WIFI_COUNTRY"'
+assert_contains "$rc_local" "raspi-config nonint do_wifi_country \"\$WIFI_COUNTRY\""
 assert_contains "$rc_local" "printf 'country=%s\\n' \"\$WIFI_COUNTRY\""
 assert_contains "$rc_local" "sed '/^[[:space:]]*#psk=/d'"
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
