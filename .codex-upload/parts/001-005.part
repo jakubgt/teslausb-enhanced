@@ -1,8 +1,0 @@
-ases/${release_id}" --input - \
-            <<< "${publish_payload}")
-          jq -e --arg tag "${RELEASE_TAG}" --argjson prerelease "${prerelease}" \
-            '.tag_name == $tag and .draft == false and .prerelease == $prerelease' \
-            <<< "${published_release}" > /dev/null || {
-            echo "GitHub did not publish the verified release in the expected state" >&2
-            exit 1
-          }
