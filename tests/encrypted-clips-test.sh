@@ -323,8 +323,12 @@ ln -s "$snapshot_root/snap-000001/mnt/TeslaCam/EncryptedClips/event" \
   "$mutable_root/EncryptedClips/legacy-link"
 ln -s "$snapshot_root/snap-000001/mnt/TeslaCam/EncryptedClips/event" \
   "$mutable_root/SavedClips/opaque-alias"
-function log () { printf '%s\n' "$*" >> "$TEST_TMP/release.log"; }
+TESLAUSB_TEST_RELEASE_LOG="$TEST_TMP/release.log"
+export TESLAUSB_TEST_RELEASE_LOG
+function log () { printf '%s\n' "$*" >> "$TESLAUSB_TEST_RELEASE_LOG"; }
 export -f log
+bash -eu -c 'log "fixture-ready"'
+grep -Fx 'fixture-ready' "$TESLAUSB_TEST_RELEASE_LOG" > /dev/null
 policy_bin="$TEST_TMP/policy-bin"
 mkdir -p "$policy_bin"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$policy_bin/umount"
@@ -335,7 +339,7 @@ PATH="$policy_bin:$PATH" BACKINGFILES_ROOT="$TEST_TMP/backingfiles-unused" \
 SNAPSHOTS_ROOT="$snapshot_root" SNAPSHOT_MOUNT_ROOT="$snapshot_mount_root" \
 SNAPSHOT_FINDMNT_COMMAND="$policy_findmnt" \
 MUTABLE_TESLACAM="$mutable_root" SNAPSHOT_POLICY_HELPER="$SNAPSHOT_POLICY" \
-  bash "$release_script" snap-000001 || release_status=$?
+  bash -eu "$release_script" snap-000001 || release_status=$?
 [ "$release_status" -eq 75 ]
 [ -d "$snapshot_root/snap-000001" ]
 [ -L "$mutable_root/EncryptedClips/legacy-link" ]
@@ -356,7 +360,7 @@ BACKINGFILES_ROOT="$TEST_TMP/backingfiles-unused" SNAPSHOTS_ROOT="$snapshot_root
 SNAPSHOT_MOUNT_ROOT="$snapshot_mount_root" MUTABLE_TESLACAM="$mutable_root" \
 SNAPSHOT_FINDMNT_COMMAND="$policy_findmnt" \
 SNAPSHOT_POLICY_HELPER="$SNAPSHOT_POLICY" RELEASE_SNAPSHOT="$release_script" \
-  bash "$manage_script" 1 || manage_status=$?
+  timeout 15s bash -eu "$manage_script" 1 || manage_status=$?
 [ "$manage_status" -eq 1 ]
 [ -d "$snapshot_root/snap-000001" ]
 [ ! -e "$snapshot_root/snap-000002" ]

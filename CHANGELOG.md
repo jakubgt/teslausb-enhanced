@@ -4,7 +4,7 @@ All notable changes to this private TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
-## [1.1.0] - 2026-08-02
+## [1.1.0] - 2026-08-08
 
 Follow-up quality-of-life release for Raspberry Pi Zero 2 W and current
 Raspberry Pi OS.
