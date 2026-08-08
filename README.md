@@ -1,89 +1,281 @@
-# teslausb
+# TeslaUSB Enhanced
 
-## Intro
+TeslaUSB Enhanced turns a Raspberry Pi Zero 2 W into a Tesla-compatible USB
+drive with automatic archiving, music storage, a local dashboard, recovery
+tools, and a safer first-boot experience.
 
-Raspberry Pi and other single-board computers (SBCs) can emulate a USB drive, so can act as a drive for your Tesla to write dashcam footage to. Because the SBC has full access to the emulated drive, it can:
+This is a private, unofficial derivative of
+[`marcone/teslausb`](https://github.com/marcone/teslausb). It keeps the upstream
+TeslaUSB workflow while adding a ready-to-flash image, an offline configuration
+wizard, stricter security boundaries, verified archive transfers, and guarded
+recovery and upgrade tools.
 
-- automatically copy the recordings to an archive server when you get home
-- hold both dashcam recordings and music files
-- automatically repair filesystem corruption produced by the Tesla's current failure to properly dismount the USB drives before cutting power to the USB ports
-- serve up a web UI to view or download the recordings
-- retain more than one hour of RecentClips (assuming large enough storage)
+**Project links:** [current image](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4)
+· [all releases](https://github.com/jakubgt/teslausb-enhanced/releases)
+· [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
-This video (not mine) has a nice overview of teslausb and how to install it:
+> [!IMPORTANT]
+> The current image is a prerelease for early testing. Back up your existing
+> configuration, keys, and recordings before flashing it.
 
-[![teslausb intro and installation](http://img.youtube.com/vi/ETs6r1vKTO8/0.jpg)](http://www.youtube.com/watch?v=ETs6r1vKTO8 "teslausb intro and installation")
+## Current release
 
-If you are interested in having more detailed information about how TeslaUsb works, have a look into the [wiki](https://github.com/marcone/teslausb/wiki).
+| Item | Status |
+| --- | --- |
+| Image release | [`v1.2.0-rc.4`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4) — published prerelease |
+| Latest stable source release | [`v1.1.0`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0) — source only, no downloadable image |
+| Primary hardware | Raspberry Pi Zero 2 W |
+| Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
+| Image download | [`teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz) |
+| Image SHA-256 | `a96492c6662cd010b5b95d3eb290996be1bd2f9d423233e0d4437efdce440210` |
+| Source commit | [`6de23a6`](https://github.com/jakubgt/teslausb-enhanced/commit/6de23a6d1643b93a37eeecd3fd23766a68c5d1b8) |
+| Hardware validation | Automated image verification passed; testing of the exact published bytes on a physical Zero 2 W and Tesla is still pending |
 
-### Dashcam encryption compatibility
+The repository and release are private. Download the image while signed in to
+an authorized GitHub account; Raspberry Pi Imager cannot authenticate to a
+private release URL itself.
 
-Tesla vehicles with software 2026.20 or later can encrypt recordings written to the USB drive. TeslaUSB detects the `EncryptedClips` directory and warns on the Status dashboard and in the archive log, but its built-in automation never opens clip contents, requests keys, decrypts, archives, plays, moves, or deletes those recordings. Every built-in camera snapshot trigger, including Samba access, uses one locked live-camera check; while the directory is present, TeslaUSB pauses camera snapshots and camera-clip archiving so the opaque recordings stay outside its data path. Legacy snapshots that contain the directory—and snapshots whose status cannot be established safely—are excluded from automatic rotation. Independently configured music sync continues, and normal camera processing resumes after a later live-camera check no longer detects it. Automatic camera archiving and the web viewer require standard, unencrypted recordings. See [encrypted-clip detection](doc/EncryptedClips.md) and Tesla's [Dashcam documentation](https://www.tesla.com/ownersmanual/model3/en_us/GUID-3BCC07CE-5EA2-4F40-99D1-27690898FF3C.html) for the available viewing and vehicle-setting options.
+## What this fork adds
 
-## Prerequisites
+| Area | Upgrade | Practical benefit |
+| --- | --- | --- |
+| Flashing | Native arm64/Trixie image builds with `.img.xz`, checksum, provenance metadata, and package manifest | Download one verified image and flash it directly with Raspberry Pi Imager |
+| First boot | Self-contained `teslausb_config_wizard.html` on the boot partition | Create a conservative configuration offline without hand-editing shell code |
+| Configuration | Strict `teslausb_setup.json` schema, type and range checks, fixed allowlist, safe migration, and secret sanitization | Configuration text is not evaluated as shell code; unsafe or incomplete values fail before setup |
+| Archive reliability | SHA-256 manifests, destination verification, stable mount identity, bounded retries, and race-safe cleanup | Transfer failures are detected before source links are released |
+| Dashboard and API | Responsive status UI, diagnostics, archive progress, safer file actions, and a versioned local API | Better visibility and fewer risky manual recovery steps |
+| USB recovery | Manual, two-confirmation gadget repair with shared locking, cooldowns, image preflight, and post-rebuild verification | Repairs USB gadget state without silently racing archive or snapshot operations |
+| Application upgrades | Content-addressed releases, checksum validation, atomic activation, health checks, automatic recovery, and rollback | A failed managed application update can return to the previous working release |
+| Encrypted recordings | `EncryptedClips` detection and warnings with guarded snapshot, cleanup, archive, and viewer boundaries | Opaque encrypted recordings stay outside built-in processing instead of being treated as normal clips |
+| Security | Web authentication by default, same-origin POST actions, narrowed nginx/CGI/sudo boundaries, fail-closed drive selection, and pinned optional downloads | Reduces accidental exposure, command injection, and destructive-drive mistakes |
+| Pi Zero 2 W safeguards | Locked image account, no embedded user credentials, current boot/SSH layout, disabled resize/swap services, and exact embedded setup source | First boot is deterministic and does not need a private GitHub token |
 
-### Assumptions
+For the complete version-by-version record, see the
+[`CHANGELOG`](CHANGELOG.md).
 
-- You park in range of your wireless network.
-- Your wireless network is configured with WPA2 PSK access.
+## Quick start: Raspberry Pi Zero 2 W
 
-### Hardware
+### You need
 
-Required:
+- A Raspberry Pi Zero 2 W.
+- A microSD card of at least 64 GB. A high-endurance 128 GB or larger card is
+  recommended for more recording history and better write durability.
+- A known-good USB data cable. Connect the Tesla to the Zero 2 W's **USB/data
+  (OTG)** port, not its power-only port.
+- A 2.4 GHz-capable Wi-Fi network with Internet access during initial setup.
+- [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
 
-- [A Raspberry Pi or other SBC that supports USB OTG](https://github.com/marcone/teslausb/wiki/Hardware).
-- A Micro SD card, at least 64 GB in size, and an adapter (if necessary) to connect the card to your computer.
-- Cable(s) to connect the SBC to the Tesla (USB A/Micro B cable for the Pi Zero, USB A/C cable for the Pi 4 and 5, other SBCs vary)
+The card sizes above are project recommendations, not Raspberry Pi hardware
+limits.
 
-Optional:
+### Flash and configure
 
-- A case and/or cooler for the SBC. For the Raspberry Pi 4 I like the ["armor case"](https://www.amazon.com/s?k=Raspberry+Pi+4+Armor+Case) (available with or without fans), which appears to do a good job of protecting the Pi while keeping it cool.
-- USB Splitter if you don't want to lose a front USB port. [The Onvian Splitter](https://www.amazon.com/gp/product/B01KX4TKH6) has been reported working by multiple people on reddit. Some SBCs require separate power and data connection, so may require a splitter or a USB hub to connect to the car.
+1. Download the current [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz)
+   and its [checksum file](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz.sha256).
+2. Verify the image digest before flashing. It must equal:
 
-## Installing
+   ```text
+   a96492c6662cd010b5b95d3eb290996be1bd2f9d423233e0d4437efdce440210
+   ```
 
-The current image build targets 64-bit Raspberry Pi OS Lite (Debian Trixie). Raspberry Pi Zero 2 W is supported and should use the 64-bit image; its 512 MB memory makes the Lite image the appropriate choice. For other SBCs, start with the [installation wiki](https://github.com/marcone/teslausb/wiki/Installation).
+   On Windows PowerShell:
 
-The downloadable image contains no Wi-Fi, archive, Tesla, web, or SSH credentials. A 64 GB card is the minimum; a 128 GB or larger high-endurance card is recommended for useful clip history and write longevity. Release images are inspected as arm64/Trixie filesystems, checked against their embedded source manifest, and published with SHA-256 and package/provenance assets. Package repositories are not snapshot-pinned, so a complete image build is traceable but is not claimed to be bit-for-bit reproducible.
+   ```powershell
+   Get-FileHash .\teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
+   ```
 
-### Quick start
+3. In Raspberry Pi Imager, choose **Use custom**, select the downloaded
+   `.img.xz` file directly, and write it to the card. Do not extract it first.
+4. Decline Raspberry Pi Imager's OS customization options. TeslaUSB uses its
+   own first-boot configuration and the clean image contains no user Wi-Fi,
+   archive, web, Tesla, or SSH credentials.
+5. Reinsert or remount the card and open
+   `teslausb_config_wizard.html` from its boot partition in a modern browser.
+6. Complete the offline form and download `teslausb_setup.json`. Copy it to the
+   root of the boot partition with that exact filename; remove suffixes such as
+   `(1)` that a browser may add.
+7. Safely eject the card, insert it into the Pi, and boot within Wi-Fi range.
+   Initial setup downloads packages and can take longer than five minutes on a
+   slow connection.
+8. Open `http://teslausb.local/` and confirm storage, network, temperature, and
+   archive status before connecting the Pi to the car.
 
-1. Confirm that your board supports USB OTG and use a microSD card of at least 64 GB. Raspberry Pi Zero 2 W users must connect the car to the USB data/OTG port, not the power-only port.
-2. Sign in to the private repository, open a release that explicitly includes the Zero 2 W arm64/Trixie image, and download its `.img.xz` file plus the matching `.sha256`. Verify the digest before flashing. Private GitHub assets must be downloaded locally; Raspberry Pi Imager cannot authenticate to the private release URL for you.
-3. In Raspberry Pi Imager choose **Use custom**, select the downloaded `.img.xz` directly, and write it to the card. Do not apply Imager OS customization: TeslaUSB uses its own first-boot configuration and the image contains no shared credentials.
-4. Remount or reinsert the card, open `teslausb_config_wizard.html` from the boot partition in a browser, and download the generated file. Copy that file to the root of the boot partition with the exact name `teslausb_setup.json`. The wizard works offline and recommends a 40 GB camera drive, no archive until deliberately configured, a named timezone, web authentication with a locally generated password, and an explicit Wi-Fi regulatory country.
-5. Review the generated configuration, leave `DATA_DRIVE`, third-party WebUI downloads, notifications, guest Samba, and access-point mode unset unless deliberately needed, then keep a private encrypted backup. Advanced users can instead edit the JSON sample documented in the [declarative configuration guide](doc/DeclarativeConfig.md).
-6. Safely eject the card, boot the Pi where it can reach a 2.4 GHz-capable Wi-Fi network and the internet, and allow the setup flashes, reboot, and final steady pulse to finish. Initial setup can take longer than five minutes on a slow connection.
-7. Open `http://teslausb.local/` and confirm storage, network, and archive health before connecting it to the car.
+The [one-step setup guide](doc/OneStepSetup.md) covers configuration choices,
+LED stages, troubleshooting, and what happens during first boot.
 
-If a release does not contain a verified image asset, build it from the exact tag with the pinned [pi-gen instructions](pi-gen-sources/Readme.md). A prerelease image has passed automated inspection but remains a release candidate until its exact bytes complete the documented Pi Zero 2 W hardware smoke test.
+## Offline configuration wizard
 
-See the [one-step setup guide](doc/OneStepSetup.md) for configuration choices, LED stages, security, and troubleshooting.
+The recommended helper is `teslausb_config_wizard.html`, included on every
+release image's boot partition. It:
 
-### Web-interface recovery
+- runs entirely in the browser with no network requests, analytics, remote
+  scripts, form submission, or browser storage;
+- generates the web password with the browser's cryptographic random-number
+  generator;
+- redacts secrets in its on-screen review; and
+- downloads only `teslausb_setup.json` without scanning for or writing to a
+  microSD card automatically.
 
-TeslaUSB provides two interfaces over the same device:
+The downloaded JSON necessarily contains your real credentials. Keep it
+private, retain only an encrypted backup, and remove it from shared computers.
 
-- `http://teslausb.local/` is the bundled legacy interface.
-- `http://teslausb.local/new/` is the optional, separately released interface when an explicitly pinned release has been installed.
+### Recommended first-boot profile
 
-If a saved preference keeps redirecting to an interface that does not load, open `http://teslausb.local/?ui=legacy` to force and remember the legacy interface. You can also open `/new/` directly. If neither works, clear site data for `teslausb.local`, try the device's IP address, and inspect `/teslausb/teslausb-headless-setup.log` over SSH.
+| Setting | Recommended starting value |
+| --- | --- |
+| Camera image | `CAM_SIZE: "40G"` |
+| Archive | `ARCHIVE_SYSTEM: "none"` until local operation is confirmed |
+| RecentClips archive | `ARCHIVE_RECENTCLIPS: false` |
+| Wi-Fi country | Explicit physical-location ISO country code; no default is guessed (`GB`, not `UK`) |
+| Time zone | A reviewed named zone such as `America/Chicago` |
+| Web access | Username `teslausb` and a unique locally generated password |
+| Temperature reporting | 55 °C caution, 68 °C warning, 60-second interval, and post-archive reporting |
+| Destructive or external options | Leave `DATA_DRIVE`, access-point mode, guest Samba, notifications, and third-party WebUI downloads unset initially |
 
-The bundled dashboard uses the [versioned local Web API](doc/WebAPI.md). Read requests use `GET`; actions use `POST` with a same-origin request header. The API is intended for trusted private networks and must not be exposed directly to the Internet.
+`DATA_DRIVE` is destructive: setup may wipe and repartition the selected
+whole-disk device, and ambiguous selection fails closed. Leave it unset unless
+you have independently verified the exact device.
 
-Archive transfers now produce SHA-256 manifests, verify destination content before removing source links, and retain bounded retry state across service restarts. See [archive reliability](doc/ArchiveReliability.md) for behavior, status paths, and operational limits.
+Advanced users can use the dependency-free Node.js helper at
+[`tools/teslausb-config.js`](tools/teslausb-config.js) to preflight, migrate,
+generate, or sanitize configurations. See the
+[configuration helper guide](doc/ConfigTool.md) and
+[declarative JSON reference](doc/DeclarativeConfig.md).
 
-The Status dashboard includes a deliberately manual, two-confirmation [USB gadget repair](doc/USBGadgetRepair.md) action. Use it only after disconnecting the Tesla or computer cleanly; it briefly removes and rebuilds every exported drive.
+## Important safety and security boundaries
 
-Application upgrades use verified, content-addressed releases with automatic health-check rollback. See [transactional upgrades](doc/TransactionalUpgrades.md) for the exact rollback boundary and the clean-flash requirement when moving from Bookworm or 32-bit Raspberry Pi OS to 64-bit Trixie.
+### Encrypted Dashcam recordings
+
+TeslaUSB detects an `EncryptedClips` directory and reports a warning in the
+dashboard, archive log, and local API. Built-in automation does not request
+keys, decrypt, open, archive, play, move, or delete encrypted clip contents.
+
+While encrypted recordings are detected, camera snapshots and camera-clip
+archiving pause. Protected or uninspectable legacy snapshots are retained by
+automatic cleanup, and literal or resolved aliases into `EncryptedClips` are
+excluded from built-in archive and viewer paths. Independent music sync can
+continue. Normal camera processing resumes after a later live check no longer
+detects the directory.
+
+This policy covers built-in automation. Arbitrary trusted root hooks remain
+outside that boundary. See [encrypted clip detection](doc/EncryptedClips.md)
+for the exact behavior.
+
+### Web access
+
+Web authentication is enabled by default, and state-changing actions require
+same-origin `POST` requests. The dashboard still uses HTTP on the local
+network: Basic Authentication controls access but does not encrypt traffic.
+Keep TeslaUSB on a trusted private LAN or access it through a trusted VPN; do
+not expose the dashboard or [local API](doc/WebAPI.md) directly to the Internet.
+
+### Archive integrity
+
+Archive hashes and destination verification detect incomplete or changed
+transfers. They do not make an untrusted or compromised archive server
+trustworthy. Protect the archive separately with appropriate access controls,
+backups, and monitoring. See [archive reliability](doc/ArchiveReliability.md).
+
+### USB gadget repair
+
+The dashboard repair action is deliberately manual and requires two
+confirmations. Disconnect the Tesla or computer cleanly before using it. The
+repair briefly removes and rebuilds all exported drives; failed verification
+leaves the gadget disconnected rather than presenting an unverified device.
+It rebuilds the exported USB gadget only; it does not format, mount, or repair
+a backing image.
+See [USB gadget repair](doc/USBGadgetRepair.md).
+
+## Upgrading an existing installation
+
+- Do **not** perform an in-place Bookworm-to-Trixie or 32-bit-to-64-bit OS
+  upgrade. Back up the private configuration and keys, flash a clean arm64
+  Trixie image, and restore through the JSON configuration workflow.
+- Transactional application upgrades protect the managed application release
+  and `/root/bin` entrypoints. They do not roll back OS packages, firmware,
+  partitions, configuration, credentials, archive data, or separately managed
+  third-party binaries.
+- This repository is private. The image contains the exact setup source needed
+  for first boot, but future source downloads do not receive an embedded GitHub
+  credential, and this fork does not yet provide a signed release-asset updater.
+  Prefer a new verified image unless you have deliberately configured a trusted
+  authenticated update path.
+
+See [transactional upgrades](doc/TransactionalUpgrades.md) for verification,
+recovery, rollback, and the precise transaction boundary.
+
+## Image verification and release boundary
+
+Before publication, the release pipeline checks:
+
+- MBR/FAT/ext4 layout and read-only filesystem access;
+- arm64/Trixie identity and Raspberry Pi Zero 2 W boot artifacts;
+- USB OTG configuration and the FAT-partition SSH marker;
+- a locked default account and absence of active setup credentials;
+- absence of SSH host keys, initialized machine identity, and random seed;
+- the exact embedded source manifest and installed package inventory;
+- disabled resize, swap, and package-backup services required by this image;
+- XZ stream integrity, SHA-256 manifests, and uploaded GitHub asset digests.
+
+The release also provides
+[build metadata](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.image-metadata.json)
+and an
+[installed-package manifest](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.packages.tsv).
+
+These checks are extensive, but they do not replace a complete physical test
+of first boot, 2.4 GHz Wi-Fi, web authentication, USB enumeration, reboot,
+power loss, archive transfer, and vehicle operation. Debian and Raspberry Pi
+package repositories are not snapshot-pinned, so the recorded build is
+provenance-traceable but is not guaranteed to be bit-for-bit reproducible.
+
+## Documentation
+
+| Task | Guide |
+| --- | --- |
+| Flash and first boot | [One-step setup](doc/OneStepSetup.md) |
+| Configure or migrate safely | [Configuration helper](doc/ConfigTool.md) · [Declarative JSON](doc/DeclarativeConfig.md) |
+| Understand encrypted clips | [Encrypted clip detection](doc/EncryptedClips.md) |
+| Diagnose archive behavior | [Archive reliability](doc/ArchiveReliability.md) |
+| Repair USB gadget state | [USB gadget repair](doc/USBGadgetRepair.md) |
+| Upgrade or roll back application files | [Transactional upgrades](doc/TransactionalUpgrades.md) |
+| Integrate with the dashboard | [Local Web API](doc/WebAPI.md) |
+| Build an image from source | [Pinned pi-gen recipe](pi-gen-sources/Readme.md) |
+| Review every release change | [Changelog](CHANGELOG.md) |
+
+For general TeslaUSB concepts and hardware beyond this image's primary Zero 2
+W target, consult the [upstream TeslaUSB wiki](https://github.com/marcone/teslausb/wiki).
+Enhanced-fork defects should be reported in this repository rather than to the
+upstream maintainers. Sanitize configuration and diagnostic output before
+sharing it.
+
+## About TeslaUSB
+
+Single-board computers with USB OTG support can emulate a drive that a Tesla
+uses for Dashcam recordings and music. Because the computer also controls the
+backing storage, TeslaUSB can archive recordings when it reaches a trusted
+network, retain more RecentClips, expose a local viewer, and provide guarded
+filesystem and gadget recovery.
+
+This community video provides a useful introduction to the original TeslaUSB
+architecture and installation flow. Its setup details may not match TeslaUSB
+Enhanced; follow the current quick start above:
+
+[![TeslaUSB introduction and installation](https://img.youtube.com/vi/ETs6r1vKTO8/0.jpg)](https://www.youtube.com/watch?v=ETs6r1vKTO8 "TeslaUSB introduction and installation")
+
+The project traces back to
+[this Reddit thread](https://www.reddit.com/r/teslamotors/comments/9m9gyk/build_a_smart_usb_drive_for_your_tesla_dash_cam/)
+and the community-maintained upstream repository.
 
 ## Contributing
 
-You're welcome to contribute to this repo by submitting pull requests and creating issues.
-For pull requests, please split complex changes into multiple pull requests when feasible, and follow the existing code style.
+Pull requests and issue reports are welcome. Keep changes focused, preserve the
+security and fail-closed boundaries, and include relevant tests or exact
+reproduction steps. Never commit real TeslaUSB configuration files, passwords,
+tokens, private keys, VINs, or archive credentials.
 
-## Meta
+## License and names
 
-This repo contains steps and scripts originally from [this thread on Reddit](https://www.reddit.com/r/teslamotors/comments/9m9gyk/build_a_smart_usb_drive_for_your_tesla_dash_cam/)
-
-Many people in that thread suggested that the scripts be hosted on GitHub but the author didn't seem interested in making that happen, so GitHub user "cimryan" hosted the scripts on GitHub with the Reddit user's permission.
+This derivative is distributed under the included [MIT license](LICENSE). It
+is an independent, unofficial project and is not endorsed by or affiliated
+with Tesla, Inc., Raspberry Pi Ltd., or the upstream TeslaUSB maintainers.
+Product and project names belong to their respective owners.
