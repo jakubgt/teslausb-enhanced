@@ -445,7 +445,7 @@ jobs:
       - name: Require at least 25 GiB free for pi-gen
         run: |
           set -euo pipefail
-          available_bytes=$(df -PB1 --output=avail "${RUNNER_TEMP}" | tail -n 1 | tr -d ' ')
+          available_bytes=$(df -B1 --output=avail -- "${RUNNER_TEMP}" | tail -n 1 | tr -d ' ')
           minimum_bytes=$((25 * 1024 * 1024 * 1024))
           [[ "${available_bytes}" =~ ^[0-9]+$ ]] || {
             echo "Unable to determine free build space" >&2
