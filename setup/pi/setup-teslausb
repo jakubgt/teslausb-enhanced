@@ -342,14 +342,19 @@ function dehumanize () {
 
 REBOOT=false
 
-# wpa_supplicant should have a country code. Use US as the default
-# to avoid using the disallowed channels in the US.
+# wpa_supplicant should have an explicit regulatory country. Never guess one:
+# the wrong value can enable channels that are illegal at the device location.
 WPA=/etc/wpa_supplicant/wpa_supplicant.conf
 if [ -e "$WPA" ] && ! grep -q "country=" $WPA && grep -q "network=" $WPA
 then
-  setup_progress "adding country code to wpa_supplicant.conf"
-  echo "country=US" >> $WPA
-  REBOOT=true
+  if [[ "${WIFI_COUNTRY:-}" =~ ^[A-Z]{2}$ ]]
+  then
+    setup_progress "adding configured country code to wpa_supplicant.conf"
+    printf 'country=%s\n' "$WIFI_COUNTRY" >> "$WPA"
+    REBOOT=true
+  else
+    setup_progress "WARNING: wpa_supplicant.conf has no country code; set WIFI_COUNTRY to an uppercase two-letter regulatory country code."
+  fi
 fi
 
 BOOT_DISK=$(lsblk -dpno pkname "$(findmnt -D -no SOURCE --target /teslausb)")

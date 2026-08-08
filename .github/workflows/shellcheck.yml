@@ -71,3 +71,4 @@ jobs:
           ./tests/filebrowser-helpers.test.js
           ./tests/index-helpers.test.js
           ./tests/config-tool.test.js
+          ./tests/config-wizard.test.js

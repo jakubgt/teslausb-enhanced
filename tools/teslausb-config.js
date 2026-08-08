@@ -11,6 +11,31 @@
 
 const fs = require("node:fs");
 const net = require("node:net");
+const path = require("node:path");
+
+function loadIso3166CountryCodes() {
+  const sourcePath = path.join(
+    __dirname,
+    "..",
+    "pi-gen-sources",
+    "00-teslausb-tweaks",
+    "files",
+    "iso3166-country-codes.json"
+  );
+  const documentValue = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+  const codes = documentValue.codes;
+  if (documentValue.format !== 1 || documentValue.standard !== "ISO 3166-1 alpha-2" ||
+      !Array.isArray(codes) || codes.length === 0 ||
+      codes.some((code) => typeof code !== "string" || !/^[A-Z]{2}$/.test(code)) ||
+      new Set(codes).size !== codes.length ||
+      codes.some((code, index) => index > 0 && codes[index - 1] >= code)) {
+    throw new Error("The canonical ISO 3166-1 alpha-2 country-code list is invalid");
+  }
+  return Object.freeze([...codes]);
+}
+
+const ISO3166_ALPHA2_CODES = loadIso3166CountryCodes();
+const WIFI_COUNTRY_CODES = new Set(ISO3166_ALPHA2_CODES);
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -73,7 +98,7 @@ const DECLARATIVE_STRING_NAMES = new Set([
   "TESLA_BLE_ARTIFACT_SHA256", "TESLA_BLE_ARTIFACT_VERSION", "TESLA_BLE_VIN", "TESSIE_API_TOKEN",
   "TESSIE_VIN", "TIME_ZONE", "TRIGGER_FILE_ANY", "TRIGGER_FILE_RECENT", "TRIGGER_FILE_SAVED",
   "TRIGGER_FILE_SENTRY", "WEBHOOK_URL", "WEB_ALLOWED_HOSTS", "WEB_PASSWORD", "WEB_USERNAME",
-  "WEBUI_RELEASE", "WEBUI_SHA256", "WIFIPASS"
+  "WEBUI_RELEASE", "WEBUI_SHA256", "WIFIPASS", "WIFI_COUNTRY"
 ]);
 const DECLARATIVE_ALLOWED_NAMES = new Set([
   ...DECLARATIVE_BOOLEAN_NAMES,
@@ -105,7 +130,7 @@ const KNOWN_PLACEHOLDER_VALUES = new Set([
   "bot123456789:abcdefghijklmnopqrstuvqxyz987654321"
 ]);
 const CANONICAL_ORDER = [
-  "SSID", "WIFIPASS", "ARCHIVE_SYSTEM", "ARCHIVE_SERVER", "SHARE_NAME",
+  "SSID", "WIFIPASS", "WIFI_COUNTRY", "ARCHIVE_SYSTEM", "ARCHIVE_SERVER", "SHARE_NAME",
   "SHARE_USER", "SHARE_PASSWORD", "RSYNC_USER", "RSYNC_SERVER", "RSYNC_PATH",
   "RCLONE_DRIVE", "RCLONE_PATH", "CAM_SIZE", "MUSIC_SIZE", "LIGHTSHOW_SIZE",
   "BOOMBOX_SIZE", "WEB_USERNAME", "WEB_PASSWORD", "WEB_ALLOWED_HOSTS",
@@ -425,7 +450,8 @@ function declarativeSchema() {
     booleanNames: [...DECLARATIVE_BOOLEAN_NAMES].sort(),
     integerRanges: Object.fromEntries([...DECLARATIVE_INTEGER_RANGES].sort(([left], [right]) => left.localeCompare(right))),
     arrayNames: [...DECLARATIVE_ARRAY_NAMES].sort(),
-    stringNames: [...DECLARATIVE_STRING_NAMES].sort()
+    stringNames: [...DECLARATIVE_STRING_NAMES].sort(),
+    countryCodes: [...ISO3166_ALPHA2_CODES]
   };
 }
 
@@ -475,6 +501,12 @@ function preflightConfig(text) {
   } else {
     requireValue("SSID");
     requireValue("WIFIPASS");
+    if (!present("WIFI_COUNTRY")) {
+      add("warning", "WIFI_COUNTRY is absent; a new image will refuse to enable Wi-Fi until an uppercase two-letter regulatory country is configured", "WIFI_COUNTRY");
+    }
+  }
+  if (present("WIFI_COUNTRY") && !WIFI_COUNTRY_CODES.has(value("WIFI_COUNTRY"))) {
+    add("error", "WIFI_COUNTRY must be a valid uppercase two-letter ISO 3166-1 alpha-2 regulatory country code", "WIFI_COUNTRY");
   }
 
   requireValue("ARCHIVE_SYSTEM");

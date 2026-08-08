@@ -119,6 +119,7 @@ readonly -a REQUIRED_SOURCE_FILES=(
   pi-gen-sources/00-teslausb-tweaks/files/rc.local
   pi-gen-sources/00-teslausb-tweaks/files/teslausb-config-loader.sh
   pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py
+  pi-gen-sources/00-teslausb-tweaks/files/iso3166-country-codes.json
 )
 
 for required_source in "${REQUIRED_SOURCE_FILES[@]}"

@@ -248,6 +248,7 @@ function read_setup_variables {
   export MUSIC_SIZE=${MUSIC_SIZE:-0}
   export BOOMBOX_SIZE=${BOOMBOX_SIZE:-0}
   export LIGHTSHOW_SIZE=${LIGHTSHOW_SIZE:-0}
+  export WIFI_COUNTRY=${WIFI_COUNTRY:-''}
   export DATA_DRIVE=${DATA_DRIVE:-''}
   export USE_EXFAT=${USE_EXFAT:-false}
 }

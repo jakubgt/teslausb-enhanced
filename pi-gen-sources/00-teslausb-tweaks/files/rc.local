@@ -118,6 +118,21 @@ function nm_connect_wifi () {
   done
 }
 
+function configure_wifi_country () {
+  if ! [[ "${WIFI_COUNTRY:-}" =~ ^[A-Z]{2}$ ]]
+  then
+    setup_progress "STOP: WIFI_COUNTRY must be an uppercase two-letter regulatory country code before Wi-Fi can be enabled."
+    return 1
+  fi
+  if ! command -v raspi-config > /dev/null ||
+     ! raspi-config nonint do_wifi_country "$WIFI_COUNTRY"
+  then
+    setup_progress "STOP: failed to configure the Wi-Fi regulatory country '$WIFI_COUNTRY'."
+    return 1
+  fi
+  rfkill unblock wifi &> /dev/null || true
+}
+
 function validate_teslausb_hostname () {
   [ -n "$TESLAUSB_HOSTNAME" ] && [ "${#TESLAUSB_HOSTNAME}" -le 63 ] &&
     [[ "$TESLAUSB_HOSTNAME" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]
@@ -162,6 +177,11 @@ function enable_wifi () {
       then
         /root/bin/remountfs_rw
       fi
+      if ! configure_wifi_country
+      then
+        error_strobe &
+        exit 1
+      fi
       if systemctl -q is-enabled NetworkManager.service
       then
         setup_progress "Connecting to wifi using Network Manager"
@@ -182,6 +202,7 @@ function enable_wifi () {
           exit 1
         fi
         {
+          printf 'country=%s\n' "$WIFI_COUNTRY"
           sed '/^network={[[:space:]]*$/,$d' /teslausb/wpa_supplicant.conf.sample
           # wpa_passphrase emits a plaintext passphrase comment; never persist it.
           sed '/^[[:space:]]*#psk=/d' "$wpa_raw"

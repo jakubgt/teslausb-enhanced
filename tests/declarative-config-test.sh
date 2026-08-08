@@ -46,6 +46,7 @@ cat > "$TEST_TMP/teslausb_setup.json" <<'JSON'
   "variables": {
     "SSID": "Garage $(touch /tmp/teslausb-config-was-executed)",
     "WIFIPASS": "literal $HOME and `whoami`",
+    "WIFI_COUNTRY": "US",
     "ARCHIVE_SYSTEM": "none",
     "CAM_SIZE": "40G",
     "ARCHIVE_RECENTCLIPS": false,
@@ -99,6 +100,7 @@ teslausb_load_json_config "$TEST_TMP/teslausb_setup.json"
 [ "$TESLAUSB_CONFIG_FORMAT" = json ]
 [ "$SSID" = 'Garage $(touch /tmp/teslausb-config-was-executed)' ]
 [ "$WIFIPASS" = 'literal $HOME and `whoami`' ]
+[ "$WIFI_COUNTRY" = US ]
 [ "$ARCHIVE_RECENTCLIPS" = false ]
 [ "${#RCLONE_FLAGS[@]}" -eq 2 ]
 [ "${RCLONE_FLAGS[0]}" = --transfers ]

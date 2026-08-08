@@ -66,6 +66,8 @@ mkdir -p "$source_repo/pi-gen-sources/00-teslausb-tweaks/files" \
   "$source_repo/run" "$source_repo/setup/pi" "$source_repo/teslausb-www"
 
 cp "$REPO_ROOT/pi-gen-sources/prepare.sh" "$source_repo/pi-gen-sources/prepare.sh"
+cp "$REPO_ROOT/pi-gen-sources/00-teslausb-tweaks/files/iso3166-country-codes.json" \
+  "$source_repo/pi-gen-sources/00-teslausb-tweaks/files/iso3166-country-codes.json"
 cp "$REPO_ROOT/LICENSE" "$source_repo/LICENSE"
 chmod 0755 "$source_repo/pi-gen-sources/prepare.sh"
 printf '9.9.9\n' > "$source_repo/VERSION"
@@ -160,6 +162,8 @@ cmp -s "$source_repo/LICENSE" "$bundle/LICENSE" || fail 'MIT LICENSE is absent o
 [ -f "$bundle/run/archiveloop" ] || fail 'required runtime source is missing'
 [ -f "$bundle/setup/pi/setup-teslausb" ] || fail 'required setup source is missing'
 [ -f "$bundle/pi-gen-sources/pi-gen-config" ] || fail 'pi-gen config source is missing'
+[ -f "$bundle/pi-gen-sources/00-teslausb-tweaks/files/iso3166-country-codes.json" ] || \
+  fail 'canonical ISO country list is missing from bundled source'
 [ ! -e "$bundle/run/private.conf" ] || fail 'ignored credential file entered bundle'
 [ ! -e "$bundle/pi-gen-sources/00-teslausb-tweaks/files/local-secret.key" ] || \
   fail 'ignored tweak credential entered bundle'

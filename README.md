@@ -44,14 +44,19 @@ Optional:
 
 The current image build targets 64-bit Raspberry Pi OS Lite (Debian Trixie). Raspberry Pi Zero 2 W is supported and should use the 64-bit image; its 512 MB memory makes the Lite image the appropriate choice. For other SBCs, start with the [installation wiki](https://github.com/marcone/teslausb/wiki/Installation).
 
+The downloadable image contains no Wi-Fi, archive, Tesla, web, or SSH credentials. A 64 GB card is the minimum; a 128 GB or larger high-endurance card is recommended for useful clip history and write longevity. Release images are inspected as arm64/Trixie filesystems, checked against their embedded source manifest, and published with SHA-256 and package/provenance assets. Package repositories are not snapshot-pinned, so a complete image build is traceable but is not claimed to be bit-for-bit reproducible.
+
 ### Quick start
 
 1. Confirm that your board supports USB OTG and use a microSD card of at least 64 GB. Raspberry Pi Zero 2 W users must connect the car to the USB data/OTG port, not the power-only port.
-2. Build the private release's 64-bit Trixie image with the included [pi-gen instructions](pi-gen-sources/Readme.md), then flash the generated image with Raspberry Pi Imager's **Use custom** option. Source-only GitHub releases do not imply that a prebuilt image asset was attached.
-3. Copy and edit `teslausb_setup.json.sample` on the boot partition, then save it as `teslausb_setup.json`. The [declarative configuration guide](doc/DeclarativeConfig.md) documents native JSON types and migration from the deprecated shell configuration.
-4. Before first boot, confirm the archive destination, use unique Wi-Fi and web passwords, and leave `DATA_DRIVE` unset unless you have verified the exact whole-disk device that may be erased. Keep a private backup of the original configuration.
-5. Safely eject the card, boot the Pi with internet access, and allow the setup flashes, reboot, and final steady pulse to finish. Initial setup can take longer than five minutes on a slow connection.
-6. Open `http://teslausb.local/` and confirm storage, network, and archive health before connecting it to the car.
+2. Sign in to the private repository, open a release that explicitly includes the Zero 2 W arm64/Trixie image, and download its `.img.xz` file plus the matching `.sha256`. Verify the digest before flashing. Private GitHub assets must be downloaded locally; Raspberry Pi Imager cannot authenticate to the private release URL for you.
+3. In Raspberry Pi Imager choose **Use custom**, select the downloaded `.img.xz` directly, and write it to the card. Do not apply Imager OS customization: TeslaUSB uses its own first-boot configuration and the image contains no shared credentials.
+4. Remount or reinsert the card, open `teslausb_config_wizard.html` from the boot partition in a browser, and download the generated file. Copy that file to the root of the boot partition with the exact name `teslausb_setup.json`. The wizard works offline and recommends a 40 GB camera drive, no archive until deliberately configured, a named timezone, web authentication with a locally generated password, and an explicit Wi-Fi regulatory country.
+5. Review the generated configuration, leave `DATA_DRIVE`, third-party WebUI downloads, notifications, guest Samba, and access-point mode unset unless deliberately needed, then keep a private encrypted backup. Advanced users can instead edit the JSON sample documented in the [declarative configuration guide](doc/DeclarativeConfig.md).
+6. Safely eject the card, boot the Pi where it can reach a 2.4 GHz-capable Wi-Fi network and the internet, and allow the setup flashes, reboot, and final steady pulse to finish. Initial setup can take longer than five minutes on a slow connection.
+7. Open `http://teslausb.local/` and confirm storage, network, and archive health before connecting it to the car.
+
+If a release does not contain a verified image asset, build it from the exact tag with the pinned [pi-gen instructions](pi-gen-sources/Readme.md). A prerelease image has passed automated inspection but remains a release candidate until its exact bytes complete the documented Pi Zero 2 W hardware smoke test.
 
 See the [one-step setup guide](doc/OneStepSetup.md) for configuration choices, LED stages, security, and troubleshooting.
 

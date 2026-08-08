@@ -13,7 +13,6 @@ DISABLE_FIRST_BOOT_USER_RENAME=1
 # the lightweight first-boot flow on a 512 MB Zero 2 W.
 PASSWORDLESS_SUDO=0
 ENABLE_CLOUD_INIT=0
-WPA_COUNTRY=US
 ENABLE_SSH=1
 STAGE_LIST="stage0 stage1 stage2 stage_teslausb"
 RELEASE=trixie

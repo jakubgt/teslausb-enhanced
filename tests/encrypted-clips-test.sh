@@ -366,6 +366,23 @@ SNAPSHOT_POLICY_HELPER="$SNAPSHOT_POLICY" RELEASE_SNAPSHOT="$release_script" \
 [ ! -e "$snapshot_root/snap-000002" ]
 [ -d "$snapshot_root/snap-000004" ]
 
+# A failed releaser must stop rotation instead of selecting the same snapshot
+# forever while the low-space condition remains true.
+mkdir -p "$snapshot_root/snap-000005/mnt/TeslaCam"
+touch "$snapshot_root/snap-000005/snap.bin"
+printf '%s\n' '#!/bin/sh' 'exit 42' > "$policy_bin/release-fail"
+chmod +x "$policy_bin/release-fail"
+manage_status=0
+FLOCKED="$manage_script" PATH="$policy_bin:$PATH" \
+BACKINGFILES_ROOT="$TEST_TMP/backingfiles-unused" SNAPSHOTS_ROOT="$snapshot_root" \
+SNAPSHOT_MOUNT_ROOT="$snapshot_mount_root" MUTABLE_TESLACAM="$mutable_root" \
+SNAPSHOT_FINDMNT_COMMAND="$policy_findmnt" \
+SNAPSHOT_POLICY_HELPER="$SNAPSHOT_POLICY" RELEASE_SNAPSHOT="$policy_bin/release-fail" \
+  timeout 5s bash -eu "$manage_script" 1 || manage_status=$?
+[ "$manage_status" -eq 1 ]
+[ -d "$snapshot_root/snap-000005" ]
+grep -F 'snapshot release failed for' "$TESLAUSB_TEST_RELEASE_LOG" > /dev/null
+
 # The listing and FUSE viewer layers both enforce literal and resolved-path
 # exclusions; nginx independently blocks direct EncryptedClips URLs.
 grep -F 'resolved_path=$(realpath -e -- "/mutable/TeslaCam/$path"' \

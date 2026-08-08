@@ -3,6 +3,7 @@
   "variables": {
     "SSID": "replace-with-your-2.4-ghz-wifi-name",
     "WIFIPASS": "replace-with-your-wifi-password",
+    "WIFI_COUNTRY": "replace-with-iso-3166-1-alpha-2-code",
     "ARCHIVE_SYSTEM": "none",
     "CAM_SIZE": "40G",
     "WEB_USERNAME": "teslausb",
