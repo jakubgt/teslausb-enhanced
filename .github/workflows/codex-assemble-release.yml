@@ -6,6 +6,9 @@ on:
     paths:
       - .codex-upload/**
       - .github/workflows/codex-assemble-release.yml
+  pull_request:
+    branches: [main-dev]
+    types: [opened, reopened]
 
 permissions:
   contents: write
@@ -23,15 +26,22 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 2
+          ref: release/v1.2.0-rc.1
 
       - name: Reassemble, verify, and commit exact source files
         env:
-          EXPECTED_PARENT: 932fcb5e6a4ffc09911a0eaadb5179c6f20f1432
+          EXPECTED_PARENT: 099bff9ed3ae0fbef9db586d7e29682f76513fba
+          MANIFEST_PARENT: 932fcb5e6a4ffc09911a0eaadb5179c6f20f1432
           TARGET_BRANCH: release/v1.2.0-rc.1
         run: |
           set -euo pipefail
 
-          [ "${GITHUB_REF}" = "refs/heads/${TARGET_BRANCH}" ]
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]
+          then
+            [ "${GITHUB_HEAD_REF}" = "${TARGET_BRANCH}" ]
+          else
+            [ "${GITHUB_REF}" = "refs/heads/${TARGET_BRANCH}" ]
+          fi
           [ "$(git rev-parse HEAD^)" = "${EXPECTED_PARENT}" ] || {
             echo "Unexpected assembly parent commit" >&2
             exit 1
@@ -41,7 +51,7 @@ jobs:
             echo "Assembly manifest is missing or symbolic" >&2
             exit 1
           }
-          jq -e --arg parent "${EXPECTED_PARENT}" '
+          jq -e --arg parent "${MANIFEST_PARENT}" '
             .format == 1 and .parent == $parent and
             (.files | length) == 3 and (.tree | length) == 35
           ' "${manifest}" > /dev/null
