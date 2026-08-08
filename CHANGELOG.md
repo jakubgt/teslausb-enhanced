@@ -4,6 +4,24 @@ All notable changes to this private TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
+## [1.2.0-rc.2] - 2026-08-08
+
+Second release candidate for the downloadable Raspberry Pi Zero 2 W image. It
+supersedes the unpublished `v1.2.0-rc.1` draft; no rc.1 image assets were
+published.
+
+### Fixed
+
+- The GitHub-hosted arm64 runner capacity gate now queries available bytes with
+  compatible GNU `df` options while retaining the fail-closed 25 GiB minimum
+  required before starting pi-gen.
+- Trixie image customization removes the legacy `resize2fs_once` SysV init
+  script idempotently. Current Trixie images omit that path, and its absence no
+  longer aborts the image build.
+
+All feature, security, provenance, and physical-hardware testing boundaries
+documented for rc.1 remain in effect for this candidate.
+
 ## [1.2.0-rc.1] - 2026-08-08
 
 Release candidate for a download-and-flash Raspberry Pi Zero 2 W experience.
@@ -142,3 +160,4 @@ Initial private enhanced release, based on upstream `main-dev` commit
 [1.0.0]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.0.0
 [1.1.0]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0
 [1.2.0-rc.1]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.1
+[1.2.0-rc.2]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.2
