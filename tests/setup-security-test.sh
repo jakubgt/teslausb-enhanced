@@ -73,6 +73,8 @@ function exercise_remountfs_rw () (
   # shellcheck source=../run/remountfs_rw
   source "$remountfs_rw"
 
+  # These command mocks are called indirectly by the sourced remount helper.
+  # shellcheck disable=SC2317
   function readlink () {
     if [ "$#" -ne 3 ] || [ "$1" != -f ] || [ "$2" != -- ] ||
        [ "$3" != /teslausb ]
@@ -83,6 +85,7 @@ function exercise_remountfs_rw () (
     printf '%s\n' "$link_destination"
   }
 
+  # shellcheck disable=SC2317
   function findmnt () {
     if [ "$#" -eq 3 ] && [ "$1" = --fstab ] && [ "$2" = -nro ] &&
        [ "$3" = TARGET ]
@@ -127,6 +130,7 @@ function exercise_remountfs_rw () (
     esac
   }
 
+  # shellcheck disable=SC2317
   function mount () {
     local action
     local target
