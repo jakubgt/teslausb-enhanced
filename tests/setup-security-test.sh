@@ -79,6 +79,7 @@ do
 done
 for invalid_optional_size in 1 1T 1P 4GB 4GiB 4g 512m 1781G 1822721M 1866465281K 999999999999G
 do
+  # shellcheck disable=SC2034 # Read indirectly by validate_optional_storage_size.
   MUSIC_SIZE="$invalid_optional_size"
   if validate_optional_storage_size MUSIC_SIZE
   then
@@ -258,6 +259,7 @@ runtime_cmdline="$test_root/runtime-cmdline.txt"
 printf '%s\n' \
   'console=tty1 modules.load=legacy,g_ether modules-load=foo,dwc2,foo quiet rootwait' \
   > "$runtime_cmdline"
+# shellcheck disable=SC2034 # Read by the evaluated setup function.
 CMDLINE_PATH="$runtime_cmdline"
 setup_progress() { :; }
 fix_cmdline_txt_modules_load
@@ -303,6 +305,7 @@ grep -Fq ' : writable progress' "$progress_log" ||
 progress_stdout="$(
   (
     eval "$rc_setup_progress_function"
+    # shellcheck disable=SC2034 # Read by the evaluated rc.local function.
     SETUP_LOGFILE="$test_root/missing-parent/setup-progress.log"
     setup_progress 'read-only progress'
   ) 2> "$progress_stderr"
@@ -324,7 +327,9 @@ assert_contains "$rc_local" 'if "$RC_LOCAL_TMPDIR/run_once"'
 assert_contains "$rc_local" 'run_once succeeded and consumed its own trigger'
 assert_contains "$rc_local" 'run_once failed; leaving it in place for retry'
 assert_contains "$rc_local" 'WARNING: run_once succeeded but could not be renamed; it will be retried'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
 assert_absent "$rc_local" '"$RC_LOCAL_TMPDIR/run_once" || echo "run_once failed"'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
 run_once_call_line="$(grep -nF -- \
   'if "$RC_LOCAL_TMPDIR/run_once"' "$rc_local" | cut -d: -f1)"
 run_once_rename_line="$(grep -nF -- \
@@ -378,6 +383,7 @@ assert_contains "$release_image_verifier" \
   'boot cmdline.txt must contain exactly one root token'
 assert_contains "$release_image_verifier" \
   'boot cmdline.txt root token does not match the verified root partition'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
 assert_contains "$release_image_verifier" \
   'blkid -p -s PART_ENTRY_UUID -o value -- "$ROOT_PARTITION"'
 assert_contains "$release_image_verifier" \
@@ -406,6 +412,7 @@ assert_absent "$release_image_verifier" \
 
 backing_files_line="$(grep -n '^create_usb_drive_backing_files$' "$setup_script" | cut -d: -f1)"
 recovery_install_line="$(grep -n '^install_transaction_recovery_service$' "$setup_script" | cut -d: -f1)"
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
 recovery_precondition_line="$(grep -nF -- \
   '--mountpoint "$MUTABLE_MOUNTPOINT"' "$setup_script" | cut -d: -f1)"
 recovery_start_line="$(grep -nF -- \
@@ -419,6 +426,7 @@ fi
   fail 'transaction recovery is installed before the mutable filesystem exists'
 [ "$recovery_precondition_line" -lt "$recovery_start_line" ] ||
   fail 'transaction recovery can start before checking the mutable filesystem'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
 assert_contains "$setup_script" \
   '[[ ",$mutable_mount_options," != *,rw,* ]]'
 assert_contains "$setup_script" \
