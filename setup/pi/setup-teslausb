@@ -1218,6 +1218,17 @@ function checkmounted() {
   fi
 }
 
+function check_optional_web_mount() {
+  local -r backingfiles_dir="${1:-/backingfiles}"
+
+  if [ -e "$backingfiles_dir/music_disk.bin" ] ||
+     [ -e "$backingfiles_dir/lightshow_disk.bin" ] ||
+     [ -e "$backingfiles_dir/boombox_disk.bin" ]
+  then
+    checkmounted /var/www/html/fs
+  fi
+}
+
 function checkfsrw() {
   local -r opts=$(findmnt -n -o options "$1")
   local -r rw=${opts:0:2}
@@ -1374,7 +1385,7 @@ function diagnose {
     checkfsrw /backingfiles rw
     checkfsrw /mutable rw
     checkmounted /var/www/html/TeslaCam
-    checkmounted /var/www/html/fs
+    check_optional_web_mount
 
     echo -e "====== disk / images ======"
     parted -s "${BOOT_DISK}" print || true

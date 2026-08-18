@@ -12,6 +12,7 @@ configure_ssh="$repo_root/setup/pi/configure-ssh.sh"
 pi_gen_run="$repo_root/pi-gen-sources/00-teslausb-tweaks/00-run.sh"
 pi_gen_config="$repo_root/pi-gen-sources/pi-gen-config"
 release_image_verifier="$repo_root/tools/verify-release-image.sh"
+remountfs_rw="$repo_root/run/remountfs_rw"
 image_workflow="$repo_root/.github/workflows/build-image.yml"
 wpa_sample="$repo_root/pi-gen-sources/00-teslausb-tweaks/files/wpa_supplicant.conf.sample"
 
@@ -46,9 +47,218 @@ eval "$(sed -n '/^function verify_source_bundle () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_tzupdate_checksum () {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^function set_timezone () {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^function fix_cmdline_txt_modules_load () {$/,/^}$/p' "$setup_script")"
+eval "$(sed -n '/^function check_optional_web_mount() {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^find_enabled_systemd_unit() {$/,/^}$/p' "$release_image_verifier")"
 eval "$(sed -n '/^verify_boot_cmdline() {$/,/^}$/p' "$release_image_verifier")"
 setup_config_message() { :; }
+
+# remountfs_rw must validate the /teslausb link separately from the filesystem
+# that contains it. Shell-function mocks keep the fixtures independent of the
+# host mount table and expose final state plus exact rollback ordering.
+function exercise_remountfs_rw () (
+  local link_destination="$1"
+  local boot_target="$2"
+  local fstab_boot_target="$3"
+  local failure_mode="$4"
+  local expected_result="$5"
+  local expected_calls="$6"
+  local expected_root_state="$7"
+  local expected_boot_state="$8"
+  local root_state="$9"
+  local boot_state="${10}"
+  local root_rw_attempted=false
+  local boot_rw_attempted=false
+  local mount_calls=
+
+  # shellcheck source=../run/remountfs_rw
+  source "$remountfs_rw"
+
+  function readlink () {
+    if [ "$#" -ne 3 ] || [ "$1" != -f ] || [ "$2" != -- ] ||
+       [ "$3" != /teslausb ]
+    then
+      return 64
+    fi
+    [ "$failure_mode" != link-resolve ] || return 1
+    printf '%s\n' "$link_destination"
+  }
+
+  function findmnt () {
+    if [ "$#" -eq 3 ] && [ "$1" = --fstab ] && [ "$2" = -nro ] &&
+       [ "$3" = TARGET ]
+    then
+      [ "$failure_mode" != fstab-resolve ] || return 1
+      case "$fstab_boot_target" in
+        /) printf '/\n' ;;
+        /boot|/boot/firmware) printf '/\n%s\n' "$fstab_boot_target" ;;
+        *) printf '%s\n' "$fstab_boot_target" ;;
+      esac
+      return
+    fi
+    if [ "$#" -ne 4 ] || [ "$1" != -nro ] || [ "$3" != -T ]
+    then
+      return 64
+    fi
+    case "$2:$4" in
+      TARGET:/teslausb)
+        [ "$failure_mode" != active-resolve ] || return 1
+        printf '%s\n' "$boot_target"
+        ;;
+      OPTIONS:/)
+        if [ "$failure_mode" = root-verify-error ] &&
+           [ "$root_rw_attempted" = true ] && [ "$root_state" = rw ]
+        then
+          return 1
+        fi
+        printf '%s,relatime\n' "$root_state"
+        ;;
+      "OPTIONS:$boot_target")
+        case "$failure_mode" in
+          boot-verify-error|boot-rollback-failure)
+            if [ "$boot_rw_attempted" = true ] && [ "$boot_state" = rw ]
+            then
+              return 1
+            fi
+            ;;
+        esac
+        printf '%s,nosuid,nodev\n' "$boot_state"
+        ;;
+      *) return 64 ;;
+    esac
+  }
+
+  function mount () {
+    local action
+    local target
+
+    if [ "$#" -ne 3 ] || [ "$1" != -o ]
+    then
+      return 64
+    fi
+    case "$2" in
+      remount,rw) action=rw ;;
+      remount,ro) action=ro ;;
+      *) return 64 ;;
+    esac
+    target="$3"
+    mount_calls="${mount_calls}${mount_calls:+ }$action:$target"
+    case "$action:$target" in
+      rw:/)
+        root_rw_attempted=true
+        [ "$failure_mode" != root-mount ] || return 1
+        if [ "$failure_mode" = root-mount-after-change ]
+        then
+          root_state=rw
+          return 1
+        fi
+        [ "$failure_mode" = root-stays-ro ] || root_state=rw
+        [ "$boot_target" != / ] || boot_state="$root_state"
+        ;;
+      "rw:$boot_target")
+        boot_rw_attempted=true
+        case "$failure_mode" in
+          boot-mount|root-rollback-failure) return 1 ;;
+          boot-mount-after-change)
+            boot_state=rw
+            return 1
+            ;;
+        esac
+        [ "$failure_mode" = boot-stays-ro ] || boot_state=rw
+        ;;
+      ro:/)
+        [ "$failure_mode" != root-rollback-failure ] || return 1
+        root_state=ro
+        [ "$boot_target" != / ] || boot_state=ro
+        ;;
+      "ro:$boot_target")
+        [ "$failure_mode" != boot-rollback-failure ] || return 1
+        boot_state=ro
+        ;;
+      *) return 64 ;;
+    esac
+  }
+
+  if remount_filesystems_rw > /dev/null 2>&1
+  then
+    [ "$expected_result" = success ] ||
+      fail "remountfs_rw succeeded in $failure_mode fixture"
+  else
+    [ "$expected_result" = failure ] ||
+      fail "remountfs_rw failed in $failure_mode fixture"
+  fi
+  [ "$mount_calls" = "$expected_calls" ] ||
+    fail "remountfs_rw calls for $failure_mode were '$mount_calls', expected '$expected_calls'"
+  [ "$root_state" = "$expected_root_state" ] ||
+    fail "remountfs_rw left root $root_state in $failure_mode fixture"
+  [ "$boot_state" = "$expected_boot_state" ] ||
+    fail "remountfs_rw left boot $boot_state in $failure_mode fixture"
+)
+
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware none \
+  success 'rw:/ rw:/boot/firmware' rw rw ro ro
+exercise_remountfs_rw /boot /boot /boot none \
+  success 'rw:/ rw:/boot' rw rw ro ro
+exercise_remountfs_rw /boot/firmware /boot /boot none \
+  success 'rw:/ rw:/boot' rw rw ro ro
+exercise_remountfs_rw /boot / / none success 'rw:/' rw rw ro ro
+exercise_remountfs_rw /boot/firmware / / none success 'rw:/' rw rw ro ro
+exercise_remountfs_rw /boot / /boot none failure '' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot /boot/firmware none \
+  failure '' ro ro ro ro
+exercise_remountfs_rw /boot / /mutable none failure '' ro ro ro ro
+exercise_remountfs_rw /boot / / fstab-resolve failure '' ro ro ro ro
+exercise_remountfs_rw /mutable / / none failure '' ro ro ro ro
+exercise_remountfs_rw /boot / / link-resolve failure '' ro ro ro ro
+exercise_remountfs_rw /boot /mutable / none failure '' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware active-resolve \
+  failure '' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-mount \
+  failure 'rw:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-mount-after-change \
+  failure 'rw:/ ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-stays-ro \
+  failure 'rw:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-verify-error \
+  failure 'rw:/ ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-mount \
+  failure 'rw:/ rw:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-mount-after-change \
+  failure 'rw:/ rw:/boot/firmware ro:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-stays-ro \
+  failure 'rw:/ rw:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-verify-error \
+  failure 'rw:/ rw:/boot/firmware ro:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-mount \
+  failure 'rw:/boot/firmware' rw ro rw ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-verify-error \
+  failure 'rw:/ ro:/' ro rw ro rw
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware none \
+  success '' rw rw rw rw
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-rollback-failure \
+  failure 'rw:/ rw:/boot/firmware ro:/' rw ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-rollback-failure \
+  failure 'rw:/ rw:/boot/firmware ro:/boot/firmware ro:/' ro rw ro ro
+
+optional_web_mount_checks=()
+checkmounted() {
+  optional_web_mount_checks+=("$1")
+}
+optional_backingfiles="$test_root/optional-backingfiles"
+mkdir -p "$optional_backingfiles"
+check_optional_web_mount "$optional_backingfiles"
+[ "${#optional_web_mount_checks[@]}" -eq 0 ] ||
+  fail 'CAM-only diagnostics required the optional web mount'
+for optional_disk in music_disk.bin lightshow_disk.bin boombox_disk.bin
+do
+  optional_web_mount_checks=()
+  touch "$optional_backingfiles/$optional_disk"
+  check_optional_web_mount "$optional_backingfiles"
+  [ "${#optional_web_mount_checks[@]}" -eq 1 ] ||
+    fail "diagnostics did not require the web mount for $optional_disk"
+  [ "${optional_web_mount_checks[0]}" = /var/www/html/fs ] ||
+    fail "diagnostics checked the wrong optional web mount for $optional_disk"
+  rm -- "$optional_backingfiles/$optional_disk"
+done
 
 for valid_cam_size in 20G 40G 40GiB 1780G
 do

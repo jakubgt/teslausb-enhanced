@@ -23,6 +23,12 @@ image does not contain these repairs.
   mount that cannot exist yet.
 - Completed read-only boots no longer emit harmless boot-log write errors, and
   a failed `run_once` hook remains available for a later retry.
+- The read-write remount helper resolves the real boot mount behind the
+  `/teslausb` link, verifies both root and boot postconditions, and fails
+  explicitly instead of silently leaving `/boot/firmware` read-only.
+- Camera-only diagnostics no longer report the optional media-drive web mount
+  as missing; that mount is required only when a Music, LightShow, or Boombox
+  image exists.
 - An empty `TeslaCam/EncryptedClips` placeholder is treated as clear while any
   file, hidden entry, directory, link, non-directory object, or unknown
   inspection state remains protected. Unknown results invalidate stale
