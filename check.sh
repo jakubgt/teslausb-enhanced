@@ -58,6 +58,7 @@ shellcheck --exclude=SC1091 \
            ./run/cifs_archive/archive-clips.sh \
            ./run/copy-music.sh \
            ./run/detect_encrypted_clips.sh \
+           ./run/encrypted_clips_path_status.sh \
            ./run/guarded_snapshot.sh \
            ./run/force_sync.sh \
            ./run/make_snapshot.sh \

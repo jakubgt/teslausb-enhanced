@@ -448,12 +448,13 @@ function get_common_scripts () {
   copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py /root/bin
   copy_script run/remountfs_rw /root/bin
   copy_script run/make_snapshot.sh /root/bin
+  copy_script run/encrypted_clips_path_status.sh /root/bin
+  copy_script run/detect_encrypted_clips.sh /root/bin
   copy_script run/guarded_snapshot.sh /root/bin
   copy_script run/snapshot_contains_encrypted_clips.sh /root/bin
   copy_script run/release_snapshot.sh /root/bin
   copy_script run/manage_free_space.sh /root/bin
   copy_script run/force_sync.sh /root/bin
-  copy_script run/detect_encrypted_clips.sh /root/bin
   copy_script run/mountoptsforimage /root/bin
   copy_script run/mountimage /root/bin
   copy_script run/enable_gadget.sh /root/bin
@@ -465,9 +466,18 @@ function get_common_scripts () {
 function install_transaction_recovery_service () {
   local recovery_helper=/usr/local/libexec/teslausb-upgrade-recovery
   local source_helper="$TESLAUSB_SCRIPT_TMPDIR/teslausb-upgrade-recovery.new"
+  local mutable_mount_options
   local source_sum
   local installed_sum
   local temporary_helper
+
+  if ! mutable_mount_options=$(findmnt -rn -o OPTIONS \
+       --mountpoint "$MUTABLE_MOUNTPOINT") ||
+     [[ ",$mutable_mount_options," != *,rw,* ]]
+  then
+    setup_progress 'STOP: the mutable filesystem must be mounted read-write before installing transaction recovery'
+    return 1
+  fi
 
   # The boot guard intentionally lives outside the release pointer. If power
   # fails while /root/bin/current is changing, systemd still has a fixed,
@@ -543,30 +553,93 @@ EOF
 # module (the attached host will see no device at all at this point)
 # before creating the mass storage gadget.
 function fix_cmdline_txt_modules_load () {
+  local cmdline_tmp
+  local existing_module
+  local module
+  local module_list
+  local modules_parameter=modules-load=dwc2,g_ether
+  local normalized_cmdline
+  local original_cmdline
+  local token
+  local -a cmdline_lines=()
+  local -a cmdline_tokens=()
+  local -a extra_modules=()
+  local -a modules=()
+  local -a normalized_tokens=()
+
+  if [ -L "$CMDLINE_PATH" ]
+  then
+    setup_progress "STOP: cmdline.txt must not be a symbolic link"
+    return 1
+  fi
   if [ ! -f "$CMDLINE_PATH" ]
   then
     setup_progress "cmdline.txt does not exist, skipping"
     return
   fi
-  # Extract the modules-load portion of the command line.
-  # Note that this not handle spaces in the argument.
-  local curparam
-  curparam=$(grep -P -o " modules.load=[^\s\$]*" "$CMDLINE_PATH" || true)
-  if [[ "$curparam" == "" ]]
+  mapfile -t cmdline_lines < "$CMDLINE_PATH"
+  if [ "${#cmdline_lines[@]}" -ne 1 ] ||
+     [[ "${cmdline_lines[0]}" == *$'\r'* ]]
   then
-    curparam="\$"
-  elif [[ "$curparam" == *"dwc2"* ]] && [[ "$curparam" == *"g_ether"* ]]
+    setup_progress "STOP: cmdline.txt must contain exactly one Unix-format line"
+    return 1
+  fi
+  original_cmdline=${cmdline_lines[0]}
+  read -r -a cmdline_tokens <<< "$original_cmdline"
+  [ "${#cmdline_tokens[@]}" -gt 0 ] || {
+    setup_progress "STOP: cmdline.txt is empty"
+    return 1
+  }
+
+  for token in "${cmdline_tokens[@]}"
+  do
+    case "$token" in
+      modules-load=*|modules.load=*)
+        module_list=${token#*=}
+        IFS=, read -r -a modules <<< "$module_list"
+        for module in "${modules[@]}"
+        do
+          [ -n "$module" ] || continue
+          case "$module" in
+            dwc2|g_ether) continue ;;
+          esac
+          for existing_module in "${extra_modules[@]}"
+          do
+            [ "$existing_module" != "$module" ] || continue 2
+          done
+          extra_modules+=("$module")
+        done
+        ;;
+      *) normalized_tokens+=("$token") ;;
+    esac
+  done
+  for module in "${extra_modules[@]}"
+  do
+    modules_parameter+=",$module"
+  done
+  normalized_tokens+=("$modules_parameter")
+  normalized_cmdline=${normalized_tokens[*]}
+
+  if [ "$original_cmdline" = "$normalized_cmdline" ]
   then
     setup_progress "cmdline.txt is up to date"
     return
   fi
 
-  # replace the current parameter
   setup_progress "Updated cmdline.txt from:"
-  setup_progress "$(cat "$CMDLINE_PATH")"
-  sed -i "s/${curparam}/ modules-load=dwc2,g_ether/" "$CMDLINE_PATH"
+  setup_progress "$original_cmdline"
+  cmdline_tmp=$(mktemp "$(dirname -- "$CMDLINE_PATH")/.cmdline.txt.XXXXXXXX")
+  if ! printf '%s\n' "$normalized_cmdline" > "$cmdline_tmp" ||
+     ! chown --reference="$CMDLINE_PATH" "$cmdline_tmp" ||
+     ! chmod --reference="$CMDLINE_PATH" "$cmdline_tmp" ||
+     ! mv -fT -- "$cmdline_tmp" "$CMDLINE_PATH"
+  then
+    rm -f -- "$cmdline_tmp"
+    setup_progress "STOP: unable to update cmdline.txt"
+    return 1
+  fi
   setup_progress "to:"
-  setup_progress "$(cat "$CMDLINE_PATH")"
+  setup_progress "$normalized_cmdline"
 }
 
 BACKINGFILES_MOUNTPOINT=/backingfiles
@@ -1516,7 +1589,6 @@ headless_setup_progress_flash 3
 mkdir -p /root/bin
 
 get_common_scripts
-install_transaction_recovery_service
 
 pushd ~
 
@@ -1526,6 +1598,7 @@ fix_cmdline_txt_modules_load
 headless_setup_progress_flash 4
 
 create_usb_drive_backing_files
+install_transaction_recovery_service
 
 if [ "$CONFIGURE_ARCHIVING" = true ]
 then

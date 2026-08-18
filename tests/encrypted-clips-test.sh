@@ -17,6 +17,8 @@ REPO_ROOT=$(dirname "$TEST_DIR")
 readonly REPO_ROOT
 DETECTOR="$REPO_ROOT/run/detect_encrypted_clips.sh"
 readonly DETECTOR
+PATH_STATUS="$REPO_ROOT/run/encrypted_clips_path_status.sh"
+readonly PATH_STATUS
 GUARDED_SNAPSHOT="$REPO_ROOT/run/guarded_snapshot.sh"
 readonly GUARDED_SNAPSHOT
 SNAPSHOT_POLICY="$REPO_ROOT/run/snapshot_contains_encrypted_clips.sh"
@@ -43,6 +45,23 @@ result=$(bash "$DETECTOR" --status-file "$status_file" \
 [ -f "$status_file" ]
 [ "$(stat -c '%u:%g:%a' "$status_file")" = '0:0:644' ]
 
+mkdir -p "$TEST_TMP/camera/TeslaCam/EncryptedClips"
+result=$(bash "$DETECTOR" --status-file "$status_file" \
+  "$TEST_TMP/camera/TeslaCam" "$TEST_TMP/snapshot/TeslaCam")
+[[ "$result" == *'"detected":false'* ]]
+[[ "$result" == *'"locations":0'* ]]
+
+# Tesla may create an empty placeholder even when Dashcam encryption is off.
+# Any actual entry, including a hidden one, must still make the path protected.
+touch "$TEST_TMP/camera/TeslaCam/EncryptedClips/.placeholder"
+result=$(bash "$DETECTOR" "$TEST_TMP/camera/TeslaCam")
+[[ "$result" == *'"detected":true'* ]]
+rm -f -- "$TEST_TMP/camera/TeslaCam/EncryptedClips/.placeholder"
+ln -s missing-clip "$TEST_TMP/camera/TeslaCam/EncryptedClips/dangling-entry"
+result=$(bash "$DETECTOR" "$TEST_TMP/camera/TeslaCam")
+[[ "$result" == *'"detected":true'* ]]
+rm -f -- "$TEST_TMP/camera/TeslaCam/EncryptedClips/dangling-entry"
+
 mkdir -p "$TEST_TMP/camera/TeslaCam/EncryptedClips/event"
 printf 'opaque encrypted data\n' > "$TEST_TMP/camera/TeslaCam/EncryptedClips/event/clip.bin"
 clip_before=$(stat -c '%i:%s:%Y:%a' "$TEST_TMP/camera/TeslaCam/EncryptedClips/event/clip.bin")
@@ -57,7 +76,47 @@ result=$(bash "$DETECTOR" --status-file "$status_file" \
 
 mkdir -p "$TEST_TMP/snapshot/TeslaCam/EncryptedClips"
 result=$(bash "$DETECTOR" "$TEST_TMP/camera/TeslaCam" "$TEST_TMP/snapshot/TeslaCam")
+[[ "$result" == *'"locations":1'* ]]
+touch "$TEST_TMP/snapshot/TeslaCam/EncryptedClips/.placeholder"
+result=$(bash "$DETECTOR" "$TEST_TMP/camera/TeslaCam" "$TEST_TMP/snapshot/TeslaCam")
 [[ "$result" == *'"locations":2'* ]]
+
+mkdir -p "$TEST_TMP/symlink-root" "$TEST_TMP/empty-encrypted-target"
+ln -s "$TEST_TMP/empty-encrypted-target" "$TEST_TMP/symlink-root/EncryptedClips"
+result=$(bash "$DETECTOR" "$TEST_TMP/symlink-root")
+[[ "$result" == *'"detected":true'* ]]
+
+mkdir -p "$TEST_TMP/non-directory-root"
+touch "$TEST_TMP/non-directory-root/EncryptedClips"
+result=$(bash "$DETECTOR" "$TEST_TMP/non-directory-root")
+[[ "$result" == *'"detected":true'* ]]
+
+unknown_helper="$TEST_TMP/unknown-path-status"
+printf '%s\n' '#!/bin/sh' 'exit 2' > "$unknown_helper"
+chmod +x "$unknown_helper"
+if TESLAUSB_ENCRYPTED_PATH_STATUS_HELPER="$unknown_helper" \
+    bash "$DETECTOR" --status-file "$status_file" \
+      "$TEST_TMP/camera/TeslaCam" > /dev/null 2>&1
+then
+  echo "detector treated an unknown EncryptedClips state as clear" >&2
+  exit 1
+fi
+[ ! -e "$status_file" ] && [ ! -L "$status_file" ]
+
+# Once an indeterminate check invalidates the stale file, the dashboard API
+# must expose its conservative unavailable state instead of the old result.
+mkdir -p "$TEST_TMP/fake-bin"
+printf '#!/bin/sh\nexit 0\n' > "$TEST_TMP/fake-bin/find"
+chmod +x "$TEST_TMP/fake-bin/find"
+status_response=$(PATH="$TEST_TMP/fake-bin:$PATH" \
+  ENCRYPTED_CLIPS_STATUS_FILE="$status_file" REQUEST_METHOD=GET \
+  bash "$REPO_ROOT/teslausb-www/html/cgi-bin/status.sh")
+[[ "$status_response" == *'"encrypted_clips": {"schema_version":1,"detected":false,"locations":0,"checked_at":"","message":"Encrypted-clip detection has not run yet.","available":false}'* ]]
+
+# Re-publish a known result for the status-file validation checks below.
+result=$(bash "$DETECTOR" --status-file "$status_file" \
+  "$TEST_TMP/camera/TeslaCam" "$TEST_TMP/snapshot/TeslaCam")
+[[ "$result" == *'"detected":true'* ]]
 
 if bash "$DETECTOR" --unknown-option > /dev/null 2>&1
 then
@@ -216,6 +275,7 @@ run_guarded_snapshot() {
   TESLAUSB_ENABLE_GADGET="$guard_fixture/bin/enable" \
   TESLAUSB_RAW_SNAPSHOT_HELPER="$guard_fixture/bin/snapshot" \
   TESLAUSB_ENCRYPTED_CLIPS_DETECTOR="$guard_fixture/bin/detector" \
+  TESLAUSB_ENCRYPTED_PATH_STATUS_HELPER="${FAKE_PATH_STATUS_HELPER:-$PATH_STATUS}" \
   TESLAUSB_GADGET_ACTIVE_FILE="$guard_fixture/UDC" \
   TESLAUSB_MOUNT_COMMAND="$guard_fixture/bin/mount" \
   TESLAUSB_UMOUNT_COMMAND="$guard_fixture/bin/umount" \
@@ -230,7 +290,13 @@ run_guarded_snapshot() {
     bash "$GUARDED_SNAPSHOT" "$@"
 }
 
+mkdir -p "$guard_fixture/cam/TeslaCam/EncryptedClips"
+true > "$guard_fixture/calls"
+run_guarded_snapshot nofsck
+[ "$(<"$guard_fixture/calls")" = $'disable\nmount\numount\nsnapshot-start:nofsck\nsnapshot-end\nenable' ]
+
 mkdir -p "$guard_fixture/cam/TeslaCam/EncryptedClips/event"
+true > "$guard_fixture/calls"
 snapshot_status=0
 run_guarded_snapshot --leave-disconnected nofsck || snapshot_status=$?
 [ "$snapshot_status" -eq 75 ]
@@ -241,6 +307,40 @@ then
 fi
 
 rm -rf -- "$guard_fixture/cam/TeslaCam/EncryptedClips"
+true > "$guard_fixture/calls"
+printf '%s\n' \
+  '{"schema_version":1,"detected":false,"locations":0,"checked_at":"old","message":"stale clear result"}' \
+  > "$guard_fixture/status/status.json"
+snapshot_status=0
+FAKE_PATH_STATUS_HELPER="$unknown_helper" \
+  run_guarded_snapshot --leave-disconnected nofsck || snapshot_status=$?
+[ "$snapshot_status" -eq 75 ]
+[ ! -e "$guard_fixture/status/status.json" ] && \
+  [ ! -L "$guard_fixture/status/status.json" ]
+if grep -F 'snapshot-start' "$guard_fixture/calls" > /dev/null
+then
+  echo "guarded snapshot copied after an unknown EncryptedClips state" >&2
+  exit 1
+fi
+status_response=$(PATH="$TEST_TMP/fake-bin:$PATH" \
+  ENCRYPTED_CLIPS_STATUS_FILE="$guard_fixture/status/status.json" \
+  REQUEST_METHOD=GET \
+  bash "$REPO_ROOT/teslausb-www/html/cgi-bin/status.sh")
+[[ "$status_response" == *'"encrypted_clips": {"schema_version":1,"detected":false,"locations":0,"checked_at":"","message":"Encrypted-clip detection has not run yet.","available":false}'* ]]
+
+# Invalidation must never follow a malicious final-path link. The API already
+# rejects such a link, so leaving it in place is both safe and unavailable.
+printf 'do not modify\n' > "$guard_fixture/status-target"
+ln -s "$guard_fixture/status-target" "$guard_fixture/status/status.json"
+true > "$guard_fixture/calls"
+snapshot_status=0
+FAKE_PATH_STATUS_HELPER="$unknown_helper" \
+  run_guarded_snapshot --leave-disconnected nofsck || snapshot_status=$?
+[ "$snapshot_status" -eq 75 ]
+[ -L "$guard_fixture/status/status.json" ]
+[ "$(<"$guard_fixture/status-target")" = 'do not modify' ]
+rm -f -- "$guard_fixture/status/status.json"
+
 true > "$guard_fixture/calls"
 run_guarded_snapshot nofsck
 [ "$(<"$guard_fixture/calls")" = $'disable\nmount\numount\nsnapshot-start:nofsck\nsnapshot-end\nenable' ]
@@ -295,10 +395,12 @@ mutable_root="$TEST_TMP/release-mutable/TeslaCam"
 mkdir -p "$snapshot_root/snap-000001/mnt/TeslaCam/EncryptedClips/event" \
   "$snapshot_root/snap-000002/mnt/TeslaCam" \
   "$snapshot_root/snap-000004" "$snapshot_mount_root" \
+  "$snapshot_root/snap-000006/mnt/TeslaCam/EncryptedClips" \
   "$mutable_root/EncryptedClips" "$mutable_root/SavedClips"
 touch "$snapshot_root/snap-000001/snap.bin" \
   "$snapshot_root/snap-000002/snap.bin" \
-  "$snapshot_root/snap-000004/snap.bin"
+  "$snapshot_root/snap-000004/snap.bin" \
+  "$snapshot_root/snap-000006/snap.bin"
 policy_findmnt="$TEST_TMP/policy-findmnt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$policy_findmnt"
 chmod +x "$policy_findmnt"
@@ -317,6 +419,17 @@ policy_status=0
 SNAPSHOTS_ROOT="$snapshot_root" SNAPSHOT_MOUNT_ROOT="$snapshot_mount_root" \
 SNAPSHOT_FINDMNT_COMMAND="$policy_findmnt" \
   bash "$SNAPSHOT_POLICY" snap-000004 || policy_status=$?
+[ "$policy_status" -eq 2 ]
+policy_status=0
+SNAPSHOTS_ROOT="$snapshot_root" SNAPSHOT_MOUNT_ROOT="$snapshot_mount_root" \
+SNAPSHOT_FINDMNT_COMMAND="$policy_findmnt" \
+  bash "$SNAPSHOT_POLICY" snap-000006 || policy_status=$?
+[ "$policy_status" -eq 1 ]
+policy_status=0
+SNAPSHOTS_ROOT="$snapshot_root" SNAPSHOT_MOUNT_ROOT="$snapshot_mount_root" \
+SNAPSHOT_FINDMNT_COMMAND="$policy_findmnt" \
+TESLAUSB_ENCRYPTED_PATH_STATUS_HELPER="$unknown_helper" \
+  bash "$SNAPSHOT_POLICY" snap-000002 || policy_status=$?
 [ "$policy_status" -eq 2 ]
 
 ln -s "$snapshot_root/snap-000001/mnt/TeslaCam/EncryptedClips/event" \

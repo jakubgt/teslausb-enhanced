@@ -94,12 +94,17 @@ export SHARE_PASSWORD='password'
 # Notes on sd card and image sizes:
 #   * A 128 GB or larger sd card (or USB drive, when using Pi4) is recommended.
 #     The minimum supported size is 64 GB.
-#   * The setup script will keep a fixed 6 GB of space in reserve regardless of
-#     sd card size.
-#   * CAM_SIZE should generally be somewhat small, 40G is recommended, unless you
-#     plan on accumulating a lot of footage between archive operations, in which
-#     case you should increase the value (an hour of recordings, or 6 Sentry
-#     events, is about 7-10 GB of data, depending on the model year of the car).
+#   * Card labels use decimal GB, while CAM_SIZE uses binary GiB written as G.
+#     Never copy the card's printed capacity into CAM_SIZE. Conservative ceilings
+#     are 40G for 64 GB, 100G for 128 GB, 210G for 256 GB, 440G for 512 GB,
+#     880G for 1 TB, 1330G for 1.5 TB, and 1780G for 2 TB.
+#   * Those values are safety ceilings, not targets. CAM_SIZE must be at least
+#     20G, and 40G remains the recommended starting value. Subtract MUSIC_SIZE,
+#     LIGHTSHOW_SIZE, BOOMBOX_SIZE, and INCREASE_ROOT_SIZE allocations from the
+#     applicable ceiling.
+#   * Increase CAM_SIZE only when you need more footage between archive
+#     operations (an hour of recordings, or 6 Sentry events, is about 7-10 GB,
+#     depending on the model year of the car).
 #   * MUSIC_SIZE should be large enough to hold your music library, obviously.
 #   * If no music size is specified, no music drive will be created.
 #   * If no lightshow size is specified, no lightshow drive will be created.

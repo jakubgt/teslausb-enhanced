@@ -170,7 +170,11 @@ STRING_NAMES = {
 
 ALLOWED_NAMES = BOOLEAN_NAMES | set(INTEGER_RANGES) | ARRAY_NAMES | STRING_NAMES
 ARCHIVE_SYSTEMS = {"cifs", "nfs", "none", "rclone", "rsync"}
-SIZE_PATTERN = re.compile(r"^[1-9][0-9]*(?:[KMGTP])?$", re.IGNORECASE)
+SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)([KMG])$")
+CAM_SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)(?:G|GiB)$")
+MIN_CAM_SIZE_GIB = 20
+MAX_CAM_SIZE_GIB = 1780
+MAX_STORAGE_SIZE_KIB = MAX_CAM_SIZE_GIB * 1024 * 1024
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,63}$)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 SAFE_REF_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -412,9 +416,47 @@ def validate_document(document: Any) -> tuple[dict[str, Any], list[str]]:
     _require_pair(variables, "WEB_USERNAME", "WEB_PASSWORD")
     _require_pair(variables, "WEBUI_RELEASE", "WEBUI_SHA256")
 
-    for name in ("CAM_SIZE", "MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE", "INCREASE_ROOT_SIZE"):
-        if name in variables and variables[name] not in {"", "0"} and not SIZE_PATTERN.fullmatch(variables[name]):
-            raise ConfigError(f"{name} must be a positive size such as 40G or 512M")
+    cam_size_match = CAM_SIZE_PATTERN.fullmatch(variables["CAM_SIZE"])
+    if not cam_size_match:
+        raise ConfigError(
+            "CAM_SIZE must use an explicit G or GiB suffix, such as 40G"
+        )
+    cam_size_digits = cam_size_match.group(1)
+    if len(cam_size_digits) > 4:
+        raise ConfigError(
+            f"CAM_SIZE must be between {MIN_CAM_SIZE_GIB}G and {MAX_CAM_SIZE_GIB}G; "
+            "40G is recommended"
+        )
+    cam_size_gib = int(cam_size_digits)
+    if cam_size_gib < MIN_CAM_SIZE_GIB or cam_size_gib > MAX_CAM_SIZE_GIB:
+        raise ConfigError(
+            f"CAM_SIZE must be between {MIN_CAM_SIZE_GIB}G and {MAX_CAM_SIZE_GIB}G; "
+            "40G is recommended"
+        )
+    variables["CAM_SIZE"] = f"{cam_size_gib}G"
+
+    for name in ("MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE", "INCREASE_ROOT_SIZE"):
+        if name not in variables or variables[name] in {"", "0"}:
+            continue
+        size_match = SIZE_PATTERN.fullmatch(variables[name])
+        if not size_match:
+            raise ConfigError(
+                f"{name} must use an explicit K, M, or G suffix, such as 512M or 4G"
+            )
+        size_digits = size_match.group(1)
+        if len(size_digits) > 10:
+            raise ConfigError(
+                f"{name} must not exceed {MAX_CAM_SIZE_GIB}G"
+            )
+        size_kib = int(size_digits) * {
+            "K": 1,
+            "M": 1024,
+            "G": 1024 * 1024,
+        }[size_match.group(2)]
+        if size_kib > MAX_STORAGE_SIZE_KIB:
+            raise ConfigError(
+                f"{name} must not exceed {MAX_CAM_SIZE_GIB}G"
+            )
 
     if "TESLAUSB_HOSTNAME" in variables and not HOSTNAME_PATTERN.fullmatch(variables["TESLAUSB_HOSTNAME"]):
         raise ConfigError("TESLAUSB_HOSTNAME must be one DNS label of 1-63 characters")

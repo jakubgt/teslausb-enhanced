@@ -4,6 +4,44 @@ All notable changes to this private TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
+## [1.2.0-rc.5] - 2026-08-18
+
+Fifth release candidate for the downloadable Raspberry Pi Zero 2 W image. This
+candidate must be built from the rc.5 source; the previously published rc.4
+image does not contain these repairs.
+
+### Fixed
+
+- First-boot command-line normalization removes the standalone Raspberry Pi OS
+  `resize` trigger, preserves the generated root identity and unrelated
+  options, and enforces exactly one `rootwait` plus one `modules-load` token
+  whose module list begins with `dwc2,g_ether`. Deduplicated extra modules are
+  preserved. Image verification now rejects any image that violates those
+  invariants.
+- Transaction recovery is installed only after the backing-file layout has
+  created and mounted `/mutable`, preventing the first setup from blocking on a
+  mount that cannot exist yet.
+- Completed read-only boots no longer emit harmless boot-log write errors, and
+  a failed `run_once` hook remains available for a later retry.
+- An empty `TeslaCam/EncryptedClips` placeholder is treated as clear while any
+  file, hidden entry, directory, link, non-directory object, or unknown
+  inspection state remains protected. Unknown results invalidate stale
+  dashboard status instead of leaving an earlier clear result visible.
+- The offline configuration wizard no longer contains mojibake-prone text and
+  validates `CAM_SIZE` against the advertised microSD capacity. Unsupported,
+  unitless, overflowing, undersized, and over-capacity values are rejected.
+- Configuration validators accept only size units implemented by the runtime,
+  preventing generated settings from reaching invalid shell arithmetic.
+
+### Documentation
+
+- Added conservative camera-image ceilings for common microSD capacities and
+  clarified the difference between decimal card labels and GiB configuration
+  values, including the reserve needed for system partitions, metadata,
+  snapshots, and optional media images.
+- Recorded the rc.4 first-boot resize defect as a known published-image issue
+  rather than associating that artifact with the rc.5 source repairs.
+
 ## [1.2.0-rc.4] - 2026-08-08
 
 Fourth release candidate for the downloadable Raspberry Pi Zero 2 W image. It
@@ -27,6 +65,15 @@ uploaded or published.
 
 All feature, security, provenance, and physical-hardware testing boundaries
 documented for the preceding candidates remain in effect.
+
+### Known issue discovered after publication
+
+- Although `rpi-resize.service` was disabled, the published rc.4 image retained
+  a standalone `resize` token in `cmdline.txt`. Raspberry Pi OS therefore
+  expanded the root filesystem during early boot, consuming the free space
+  TeslaUSB needed for its backing-file and mutable partitions. Do not treat
+  rc.4 as containing the complete resize repair; use an rc.5-or-newer image
+  after it has been built and verified.
 
 ## [1.2.0-rc.3] - 2026-08-08
 
@@ -210,3 +257,4 @@ Initial private enhanced release, based on upstream `main-dev` commit
 [1.2.0-rc.2]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.2
 [1.2.0-rc.3]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.3
 [1.2.0-rc.4]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4
+[1.2.0-rc.5]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5

@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Detect Tesla's EncryptedClips directory and publish a small status document.
-# This script intentionally does not inspect clip contents, handle keys, decrypt,
-# copy, move, or delete any recording.
+# Detect non-empty Tesla EncryptedClips directories and publish a small status
+# document. This script reads directory entries only; it does not inspect clip
+# contents, handle keys, decrypt, copy, move, or delete any recording.
 
 set -eu
 
@@ -128,6 +128,36 @@ then
   exit 2
 fi
 
+# A failed or indeterminate inspection must not leave a previously-published
+# clear result visible to the dashboard. Removing the status document makes the
+# status API report the conservative built-in unavailable state.
+invalidate_status_file() {
+  local invalidation_dir
+
+  [ -n "$status_file" ] || return 0
+  invalidation_dir=$(dirname -- "$status_file")
+  if [ -L "$invalidation_dir" ] || [ ! -d "$invalidation_dir" ]
+  then
+    return 0
+  fi
+  if [ -e "$status_file" ] || [ -L "$status_file" ]
+  then
+    rm -f -- "$status_file"
+  fi
+}
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+path_status_helper="${TESLAUSB_ENCRYPTED_PATH_STATUS_HELPER:-$script_dir/encrypted_clips_path_status.sh}"
+if [ ! -x "$path_status_helper" ]
+then
+  if ! invalidate_status_file
+  then
+    echo "could not invalidate stale encrypted-clip status" >&2
+  fi
+  echo "encrypted-clip path-status helper is unavailable" >&2
+  exit 1
+fi
+
 if [ "${#search_roots[@]}" -eq 0 ]
 then
   search_roots=(/mnt/cam/TeslaCam /mutable/TeslaCam)
@@ -138,11 +168,24 @@ locations=0
 for root in "${search_roots[@]}"
 do
   candidate="$root/EncryptedClips"
-  if [ -e "$candidate" ] || [ -L "$candidate" ]
-  then
-    detected=true
-    locations=$((locations + 1))
-  fi
+  candidate_status=0
+  "$path_status_helper" "$candidate" || candidate_status=$?
+  case "$candidate_status" in
+    0)
+      detected=true
+      locations=$((locations + 1))
+      ;;
+    1)
+      ;;
+    *)
+      if ! invalidate_status_file
+      then
+        echo "could not invalidate stale encrypted-clip status" >&2
+      fi
+      echo "could not safely inspect $candidate" >&2
+      exit 1
+      ;;
+  esac
 done
 
 checked_at=$(date --utc '+%Y-%m-%dT%H:%M:%SZ')
@@ -150,7 +193,7 @@ if [ "$detected" = true ]
 then
   message='Encrypted Dashcam clips detected. TeslaUSB leaves them untouched and cannot archive or play them.'
 else
-  message='No EncryptedClips directory was detected in the mounted camera or snapshot view.'
+  message='No non-empty EncryptedClips directory was detected in the mounted camera or snapshot view.'
 fi
 json=$(printf '{"schema_version":1,"detected":%s,"locations":%d,"checked_at":"%s","message":"%s"}' \
   "$detected" "$locations" "$checked_at" "$message")

@@ -38,12 +38,53 @@ assert_absent() {
 # envsetup's hardware-specific main body.
 eval "$(sed -n '/^function validate_source_coordinates {$/,/^}$/p' "$envsetup")"
 eval "$(sed -n '/^function validate_teslausb_hostname {$/,/^}$/p' "$envsetup")"
+eval "$(sed -n '/^function normalize_cam_size {$/,/^}$/p' "$envsetup")"
+eval "$(sed -n '/^function validate_optional_storage_size {$/,/^}$/p' "$envsetup")"
 eval "$(sed -n '/^function lock_image_account () {$/,/^}$/p' "$pi_gen_run")"
+eval "$(sed -n '/^function normalize_boot_cmdline () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_source_bundle () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_tzupdate_checksum () {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^function set_timezone () {$/,/^}$/p' "$setup_script")"
+eval "$(sed -n '/^function fix_cmdline_txt_modules_load () {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^find_enabled_systemd_unit() {$/,/^}$/p' "$release_image_verifier")"
+eval "$(sed -n '/^verify_boot_cmdline() {$/,/^}$/p' "$release_image_verifier")"
 setup_config_message() { :; }
+
+for valid_cam_size in 20G 40G 40GiB 1780G
+do
+  CAM_SIZE="$valid_cam_size"
+  normalize_cam_size || fail "CAM_SIZE validator rejected $valid_cam_size"
+  [[ "$CAM_SIZE" =~ ^[0-9]+G$ ]] ||
+    fail "CAM_SIZE validator did not canonicalize $valid_cam_size"
+done
+for invalid_cam_size in 0 19G 1781G 40 40960M 1T 1P 40GB 40g 40GIB 9007199254740993G
+do
+  CAM_SIZE="$invalid_cam_size"
+  if normalize_cam_size
+  then
+    fail "CAM_SIZE validator accepted $invalid_cam_size"
+  fi
+done
+unset CAM_SIZE
+if normalize_cam_size
+then
+  fail "CAM_SIZE validator accepted an unset value"
+fi
+
+for optional_size in 0 1K 512M 4G 1780G 1822720M 1866465280K
+do
+  MUSIC_SIZE="$optional_size"
+  validate_optional_storage_size MUSIC_SIZE ||
+    fail "optional-size validator rejected $optional_size"
+done
+for invalid_optional_size in 1 1T 1P 4GB 4GiB 4g 512m 1781G 1822721M 1866465281K 999999999999G
+do
+  MUSIC_SIZE="$invalid_optional_size"
+  if validate_optional_storage_size MUSIC_SIZE
+  then
+    fail "optional-size validator accepted $invalid_optional_size"
+  fi
+done
 
 REPO=marcone
 BRANCH=release/v1.2.1
@@ -141,11 +182,158 @@ then
   fail 'image-account lock accepted a shadow file without the configured user'
 fi
 
+# The image build removes Raspberry Pi OS's consume-the-card resize request
+# and canonicalizes rootwait to one standalone token. Similar-looking values
+# remain data instead of being changed by substring matching.
+cmdline_rootfs="$test_root/cmdline-rootfs"
+mkdir -p "$cmdline_rootfs/boot/firmware"
+cmdline_file="$cmdline_rootfs/boot/firmware/cmdline.txt"
+printf '%s\n' \
+  'console=tty1 root=/dev/mmcblk0p2 resize rootwait foo=resize modules.load=legacy,g_ether modules-load=foo,dwc2,foo rootwait quiet' \
+  > "$cmdline_file"
+chmod 0640 "$cmdline_file"
+normalize_boot_cmdline "$cmdline_rootfs"
+[ "$(cat "$cmdline_file")" = \
+  'console=tty1 root=/dev/mmcblk0p2 foo=resize quiet rootwait modules-load=dwc2,g_ether,legacy,foo' ] ||
+  fail 'image boot command line was not normalized safely'
+[ "$(stat -c '%a' "$cmdline_file")" = 640 ] ||
+  fail 'image boot command line normalization changed its mode'
+normalized_cmdline_sum="$(sha256sum "$cmdline_file")"
+normalize_boot_cmdline "$cmdline_rootfs"
+[ "$(sha256sum "$cmdline_file")" = "$normalized_cmdline_sum" ] ||
+  fail 'image boot command line normalization is not idempotent'
+
+printf 'root=/dev/mmcblk0p2\nsecond=line\n' > "$cmdline_file"
+if normalize_boot_cmdline "$cmdline_rootfs" 2> /dev/null
+then
+  fail 'image boot command line normalizer accepted multiple lines'
+fi
+printf '\n' > "$cmdline_file"
+if normalize_boot_cmdline "$cmdline_rootfs" 2> /dev/null
+then
+  fail 'image boot command line normalizer accepted an empty line'
+fi
+printf '%s\n' 'root=/dev/mmcblk0p2 rootwait' > "$cmdline_file"
+normalize_boot_cmdline "$cmdline_rootfs"
+[ "$(cat "$cmdline_file")" = \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether' ] ||
+  fail 'image boot command line normalizer did not add a missing modules-load token'
+
+# The release verifier enforces the same invariant on the artifact, catching
+# future pi-gen changes before an unsafe image can be published.
+printf '%s\n' \
+  'root=/dev/mmcblk0p2 foo=resize rootwait modules-load=dwc2,g_ether,legacy,foo' \
+  > "$cmdline_file"
+verify_boot_cmdline "$cmdline_file" 'root=/dev/mmcblk0p2'
+for invalid_cmdline in \
+  'quiet rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 root=/dev/other rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/other rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 resize rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait=5 modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=g_ether,dwc2' \
+  'root=/dev/mmcblk0p2 rootwait modules.load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether,foo,foo'
+do
+  printf '%s\n' "$invalid_cmdline" > "$cmdline_file"
+  if (verify_boot_cmdline "$cmdline_file" 'root=/dev/mmcblk0p2') 2> /dev/null
+  then
+    fail "release verifier accepted unsafe cmdline.txt: $invalid_cmdline"
+  fi
+done
+printf 'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether\r\n' > "$cmdline_file"
+if (verify_boot_cmdline "$cmdline_file" 'root=/dev/mmcblk0p2') 2> /dev/null
+then
+  fail 'release verifier accepted a CRLF cmdline.txt'
+fi
+
+# Runtime setup rewrites all legacy or duplicate module parameters as one
+# canonical token, retains unrelated modules, and puts dwc2 before g_ether.
+runtime_cmdline="$test_root/runtime-cmdline.txt"
+printf '%s\n' \
+  'console=tty1 modules.load=legacy,g_ether modules-load=foo,dwc2,foo quiet rootwait' \
+  > "$runtime_cmdline"
+CMDLINE_PATH="$runtime_cmdline"
+setup_progress() { :; }
+fix_cmdline_txt_modules_load
+[ "$(cat "$runtime_cmdline")" = \
+  'console=tty1 quiet rootwait modules-load=dwc2,g_ether,legacy,foo' ] ||
+  fail 'runtime cmdline module parameters were not canonicalized safely'
+runtime_cmdline_sum="$(sha256sum "$runtime_cmdline")"
+fix_cmdline_txt_modules_load
+[ "$(sha256sum "$runtime_cmdline")" = "$runtime_cmdline_sum" ] ||
+  fail 'runtime cmdline module normalization is not idempotent'
+printf '%s\n' 'console=tty1 rootwait' > "$runtime_cmdline"
+fix_cmdline_txt_modules_load
+[ "$(cat "$runtime_cmdline")" = \
+  'console=tty1 rootwait modules-load=dwc2,g_ether' ] ||
+  fail 'runtime cmdline module parameter was not added when absent'
+printf 'console=tty1\nrootwait\n' > "$runtime_cmdline"
+if fix_cmdline_txt_modules_load 2> /dev/null
+then
+  fail 'runtime cmdline module normalizer accepted multiple lines'
+fi
+
+# Progress remains visible on stdout when /teslausb is read-only. Redirecting
+# stderr before opening the log prevents the shell's failed-redirection error
+# from aborting rc.local or obscuring the useful message.
+rc_setup_progress_function="$(
+  sed -n '/^function setup_progress () {$/,/^}$/p' "$rc_local"
+)"
+progress_log="$test_root/setup-progress.log"
+progress_stderr="$test_root/setup-progress.err"
+progress_stdout="$(
+  (
+    eval "$rc_setup_progress_function"
+    SETUP_LOGFILE="$progress_log"
+    setup_progress 'writable progress'
+  ) 2> "$progress_stderr"
+)"
+[ "$progress_stdout" = 'writable progress' ] ||
+  fail 'rc.local progress did not remain visible on stdout'
+grep -Fq ' : writable progress' "$progress_log" ||
+  fail 'rc.local progress did not append to a writable log'
+[ ! -s "$progress_stderr" ] ||
+  fail 'rc.local progress emitted an unexpected writable-log error'
+progress_stdout="$(
+  (
+    eval "$rc_setup_progress_function"
+    SETUP_LOGFILE="$test_root/missing-parent/setup-progress.log"
+    setup_progress 'read-only progress'
+  ) 2> "$progress_stderr"
+)"
+[ "$progress_stdout" = 'read-only progress' ] ||
+  fail 'rc.local lost progress when its log was unavailable'
+[ ! -s "$progress_stderr" ] ||
+  fail 'rc.local exposed a failed log redirection on stderr'
+
 assert_contains "$pi_gen_config" 'FIRST_USER_NAME=pi'
 assert_contains "$pi_gen_config" 'FIRST_USER_PASS=raspberry'
 assert_contains "$pi_gen_config" 'ENABLE_SSH=1'
 assert_absent "$rc_local" 'lock_fresh_image_default_password'
 assert_absent "$rc_local" 'passwd --lock'
+# A failed one-time repair remains on the boot partition so the next boot can
+# retry it; only a successful exit is allowed to consume the marker.
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
+assert_contains "$rc_local" 'if "$RC_LOCAL_TMPDIR/run_once"'
+assert_contains "$rc_local" 'run_once succeeded and consumed its own trigger'
+assert_contains "$rc_local" 'run_once failed; leaving it in place for retry'
+assert_contains "$rc_local" 'WARNING: run_once succeeded but could not be renamed; it will be retried'
+assert_absent "$rc_local" '"$RC_LOCAL_TMPDIR/run_once" || echo "run_once failed"'
+run_once_call_line="$(grep -nF -- \
+  'if "$RC_LOCAL_TMPDIR/run_once"' "$rc_local" | cut -d: -f1)"
+run_once_rename_line="$(grep -nF -- \
+  'if ! mv /teslausb/run_once /teslausb/ran_once' "$rc_local" | cut -d: -f1)"
+if [ -z "$run_once_call_line" ] || [ -z "$run_once_rename_line" ] ||
+   [ "$run_once_call_line" -ge "$run_once_rename_line" ]
+then
+  fail 'rc.local does not gate run_once consumption on a successful exit'
+fi
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'printf '\''%s:%s\n'\'' "$login_user" "$SSH_USER_PASSWORD" | chpasswd'
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
@@ -154,13 +342,18 @@ assert_contains "$rc_local" 'passwd --unlock "$login_user"'
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
 image_lock_line="$(grep -nF -- 'lock_image_account "${ROOTFS_DIR}" "${FIRST_USER_NAME:-pi}"' "$pi_gen_run" | cut -d: -f1)"
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
+cmdline_normalize_line="$(grep -nF -- 'normalize_boot_cmdline "${ROOTFS_DIR}"' "$pi_gen_run" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal source.
 ssh_enable_line="$(grep -nF -- 'touch "${ROOTFS_DIR}/boot/firmware/ssh"' "$pi_gen_run" | cut -d: -f1)"
-if [ -z "$image_lock_line" ] || [ -z "$ssh_enable_line" ]
+if [ -z "$image_lock_line" ] || [ -z "$cmdline_normalize_line" ] ||
+   [ -z "$ssh_enable_line" ]
 then
-  fail 'pi-gen account lock or SSH enable step was not found'
+  fail 'pi-gen account lock, command-line normalization, or SSH enable step was not found'
 fi
 [ "$image_lock_line" -lt "$ssh_enable_line" ] ||
   fail 'pi-gen enables SSH before locking the image account'
+[ "$cmdline_normalize_line" -lt "$ssh_enable_line" ] ||
+  fail 'pi-gen enables SSH before normalizing the boot command line'
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
 assert_absent "$pi_gen_run" 'touch "${ROOTFS_DIR}/boot/ssh"'
 assert_contains "$pi_gen_run" 'systemctl disable rpi-resize.service'
@@ -177,6 +370,20 @@ assert_contains "$release_image_verifier" \
   'release image contains a legacy root-filesystem SSH marker'
 assert_contains "$release_image_verifier" \
   'automatic root partition resizing remains enabled'
+assert_contains "$release_image_verifier" \
+  'automatic root resize token remains in boot cmdline.txt'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt must contain exactly one rootwait token'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt must contain exactly one root token'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt root token does not match the verified root partition'
+assert_contains "$release_image_verifier" \
+  'blkid -p -s PART_ENTRY_UUID -o value -- "$ROOT_PARTITION"'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt must contain exactly one modules-load token'
+assert_contains "$release_image_verifier" \
+  'boot modules-load token must start with dwc2,g_ether'
 assert_contains "$release_image_verifier" \
   'dpkg database backup timer remains enabled'
 assert_contains "$release_image_verifier" \
@@ -196,6 +403,35 @@ assert_absent "$release_image_verifier" \
 assert_absent "$release_image_verifier" \
   'system-connections" \
   -mindepth 1 \( -type f -o -type l \) -print -quit 2> /dev/null || true'
+
+backing_files_line="$(grep -n '^create_usb_drive_backing_files$' "$setup_script" | cut -d: -f1)"
+recovery_install_line="$(grep -n '^install_transaction_recovery_service$' "$setup_script" | cut -d: -f1)"
+recovery_precondition_line="$(grep -nF -- \
+  '--mountpoint "$MUTABLE_MOUNTPOINT"' "$setup_script" | cut -d: -f1)"
+recovery_start_line="$(grep -nF -- \
+  'systemctl start teslausb-upgrade-recovery.service' "$setup_script" | cut -d: -f1)"
+if [ -z "$backing_files_line" ] || [ -z "$recovery_install_line" ] ||
+   [ -z "$recovery_precondition_line" ] || [ -z "$recovery_start_line" ]
+then
+  fail 'transaction-recovery setup ordering or mutable-mount precondition is missing'
+fi
+[ "$backing_files_line" -lt "$recovery_install_line" ] ||
+  fail 'transaction recovery is installed before the mutable filesystem exists'
+[ "$recovery_precondition_line" -lt "$recovery_start_line" ] ||
+  fail 'transaction recovery can start before checking the mutable filesystem'
+assert_contains "$setup_script" \
+  '[[ ",$mutable_mount_options," != *,rw,* ]]'
+assert_contains "$setup_script" \
+  'the mutable filesystem must be mounted read-write before installing transaction recovery'
+encrypted_helper_install_line="$(grep -nF -- \
+  'copy_script run/encrypted_clips_path_status.sh /root/bin' "$setup_script" | cut -d: -f1)"
+encrypted_guard_install_line="$(grep -nF -- \
+  'copy_script run/guarded_snapshot.sh /root/bin' "$setup_script" | cut -d: -f1)"
+if [ -z "$encrypted_helper_install_line" ] || [ -z "$encrypted_guard_install_line" ] ||
+   [ "$encrypted_helper_install_line" -ge "$encrypted_guard_install_line" ]
+then
+  fail 'fresh setup does not install the encrypted-path helper before its guarded caller'
+fi
 # shellcheck disable=SC2016 # Assertions intentionally search literal workflow source.
 assert_contains "$image_workflow" \
   'sudo -n bash -- "${GITHUB_WORKSPACE}/tools/verify-release-image.sh"'

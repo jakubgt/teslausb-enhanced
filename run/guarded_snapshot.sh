@@ -1,9 +1,9 @@
 #!/bin/bash -eu
 
 # Create a camera snapshot only after checking the live camera filesystem for
-# Tesla's EncryptedClips directory.  The shared gadget-operation lock remains
-# held from USB disconnect through the final block-level snapshot, so the car
-# cannot add an encrypted directory between the check and the copy.
+# entries in Tesla's EncryptedClips directory. The shared gadget-operation lock
+# remains held from USB disconnect through the final block-level snapshot, so
+# the car cannot add an encrypted entry between the check and the copy.
 
 if [ "${BASH_SOURCE[0]}" != "$0" ]
 then
@@ -47,6 +47,7 @@ then
   enable_gadget="${TESLAUSB_ENABLE_GADGET:-/root/bin/enable_gadget.sh}"
   snapshot_helper="${TESLAUSB_RAW_SNAPSHOT_HELPER:-/root/bin/make_snapshot.sh}"
   detector="${TESLAUSB_ENCRYPTED_CLIPS_DETECTOR:-/root/bin/detect_encrypted_clips.sh}"
+  path_status_helper="${TESLAUSB_ENCRYPTED_PATH_STATUS_HELPER:-/root/bin/encrypted_clips_path_status.sh}"
   gadget_active_file="${TESLAUSB_GADGET_ACTIVE_FILE:-/sys/kernel/config/usb_gadget/teslausb/UDC}"
   mount_command="${TESLAUSB_MOUNT_COMMAND:-mount}"
   umount_command="${TESLAUSB_UMOUNT_COMMAND:-umount}"
@@ -63,6 +64,7 @@ else
   enable_gadget=/root/bin/enable_gadget.sh
   snapshot_helper=/root/bin/make_snapshot.sh
   detector=/root/bin/detect_encrypted_clips.sh
+  path_status_helper=/root/bin/encrypted_clips_path_status.sh
   gadget_active_file=/sys/kernel/config/usb_gadget/teslausb/UDC
   mount_command=mount
   umount_command=umount
@@ -70,7 +72,7 @@ else
   lock_timeout=30
 fi
 readonly gadget_lock_dir cam_mount mutable_teslacam snapshots_root status_file envsetup
-readonly disable_gadget enable_gadget snapshot_helper detector
+readonly disable_gadget enable_gadget snapshot_helper detector path_status_helper
 readonly gadget_active_file mount_command umount_command findmnt_command
 
 case "$lock_timeout" in
@@ -99,6 +101,26 @@ then
   }
 fi
 export -f log
+
+invalidate_encrypted_status_file() {
+  local status_dir
+
+  status_dir=$(dirname -- "$status_file")
+  if [ -L "$status_dir" ] || [ ! -d "$status_dir" ]
+  then
+    return 0
+  fi
+  # A symbolic link is already unavailable to the status API. Do not follow it
+  # or remove anything at its target while handling an indeterminate check.
+  if [ -L "$status_file" ]
+  then
+    return 0
+  fi
+  if [ -f "$status_file" ] && ! rm -f -- "$status_file"
+  then
+    log "Failed to invalidate stale encrypted-clip status"
+  fi
+}
 
 [[ ! -L "$gadget_lock_dir" ]] || {
   log "Refusing symbolic-link gadget lock directory"
@@ -205,13 +227,23 @@ mounted_by_us=true
 
 encrypted_clips_path="$cam_mount/TeslaCam/EncryptedClips"
 encrypted_clips_detected=false
-if [ -e "$encrypted_clips_path" ] || [ -L "$encrypted_clips_path" ]
-then
-  encrypted_clips_detected=true
-fi
+encrypted_clips_status=0
+"$path_status_helper" "$encrypted_clips_path" || encrypted_clips_status=$?
+case "$encrypted_clips_status" in
+  0)
+    encrypted_clips_detected=true
+    ;;
+  1)
+    ;;
+  *)
+    invalidate_encrypted_status_file
+    log "Could not safely inspect Tesla EncryptedClips; camera snapshot skipped"
+    exit 75
+    ;;
+esac
 
-# Publish status while the live filesystem is mounted. The detector checks
-# directory entries only and never walks or opens EncryptedClips content.
+# Publish status while the live filesystem is mounted. The detector reads only
+# directory entries and never opens EncryptedClips content.
 status_roots=("$cam_mount/TeslaCam" "$mutable_teslacam")
 latest_snapshot=$(find "$snapshots_root" -mindepth 2 -maxdepth 2 \
   -type l -name mnt -printf '%p\n' 2> /dev/null | LC_ALL=C sort | tail -n 1)

@@ -86,6 +86,72 @@ class DeclarativeConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(CONFIG.ConfigError, "JSON boolean"):
             CONFIG.load_config(self.write_document(document))
 
+    def test_camera_size_has_explicit_safe_gib_bounds(self):
+        for source, normalized in (
+            ("20G", "20G"),
+            ("40G", "40G"),
+            ("40GiB", "40G"),
+            ("1780G", "1780G"),
+        ):
+            with self.subTest(source=source, expected="valid"):
+                document = valid_document()
+                document["variables"]["CAM_SIZE"] = source
+                variables, _warnings = CONFIG.load_config(self.write_document(document))
+                self.assertEqual(variables["CAM_SIZE"], normalized)
+
+        for source in (
+            "0",
+            "19G",
+            "1781G",
+            "40",
+            "40960M",
+            "1T",
+            "1P",
+            "40GB",
+            "40g",
+            "40GIB",
+            "9007199254740993G",
+            f"{'9' * 5000}G",
+        ):
+            with self.subTest(source=source, expected="invalid"):
+                document = valid_document()
+                document["variables"]["CAM_SIZE"] = source
+                with self.assertRaisesRegex(CONFIG.ConfigError, "CAM_SIZE"):
+                    CONFIG.load_config(self.write_document(document))
+
+    def test_optional_sizes_require_supported_explicit_units(self):
+        optional_size_names = (
+            "MUSIC_SIZE",
+            "LIGHTSHOW_SIZE",
+            "BOOMBOX_SIZE",
+            "INCREASE_ROOT_SIZE",
+        )
+        for name in optional_size_names:
+            for source in ("", "0", "1K", "512M", "4G"):
+                with self.subTest(name=name, source=source, expected="valid"):
+                    document = valid_document()
+                    document["variables"][name] = source
+                    CONFIG.load_config(self.write_document(document))
+            for source in (
+                "1",
+                "1T",
+                "1P",
+                "4GB",
+                "4GiB",
+                "4g",
+                "512m",
+                "1781G",
+                "1822721M",
+                "1866465281K",
+                "999999999999G",
+                f"{'9' * 5000}G",
+            ):
+                with self.subTest(name=name, source=source, expected="invalid"):
+                    document = valid_document()
+                    document["variables"][name] = source
+                    with self.assertRaisesRegex(CONFIG.ConfigError, name):
+                        CONFIG.load_config(self.write_document(document))
+
     def test_duplicate_json_keys_are_rejected(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

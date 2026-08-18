@@ -55,6 +55,81 @@ function lock_image_account () {
   fi
 }
 
+function normalize_boot_cmdline () {
+  local rootfs_dir="$1"
+  local cmdline_file="$rootfs_dir/boot/firmware/cmdline.txt"
+  local cmdline_tmp
+  local existing_module
+  local module
+  local module_list
+  local modules_parameter=modules-load=dwc2,g_ether
+  local token
+  local -a cmdline_lines=()
+  local -a cmdline_tokens=()
+  local -a extra_modules=()
+  local -a modules=()
+  local -a normalized_tokens=()
+
+  if [ ! -f "$cmdline_file" ] || [ -L "$cmdline_file" ]
+  then
+    echo "Image boot command line is missing or unsafe: $cmdline_file" >&2
+    return 1
+  fi
+  mapfile -t cmdline_lines < "$cmdline_file"
+  if [ "${#cmdline_lines[@]}" -ne 1 ] ||
+     [[ "${cmdline_lines[0]}" == *$'\r'* ]]
+  then
+    echo "Image boot command line must contain exactly one Unix-format line" >&2
+    return 1
+  fi
+
+  read -r -a cmdline_tokens <<< "${cmdline_lines[0]}"
+  [ "${#cmdline_tokens[@]}" -gt 0 ] || {
+    echo "Image boot command line is empty" >&2
+    return 1
+  }
+  for token in "${cmdline_tokens[@]}"
+  do
+    case "$token" in
+      resize|rootwait) ;;
+      modules-load=*|modules.load=*)
+        module_list=${token#*=}
+        IFS=, read -r -a modules <<< "$module_list"
+        for module in "${modules[@]}"
+        do
+          [ -n "$module" ] || continue
+          case "$module" in
+            dwc2|g_ether) continue ;;
+          esac
+          for existing_module in "${extra_modules[@]}"
+          do
+            [ "$existing_module" != "$module" ] || continue 2
+          done
+          extra_modules+=("$module")
+        done
+        ;;
+      *) normalized_tokens+=("$token") ;;
+    esac
+  done
+  for module in "${extra_modules[@]}"
+  do
+    modules_parameter+=",$module"
+  done
+  normalized_tokens+=(rootwait)
+  normalized_tokens+=("$modules_parameter")
+
+  cmdline_tmp=$(mktemp "$(dirname -- "$cmdline_file")/.cmdline.txt.XXXXXXXX")
+  if ! printf '%s\n' "${normalized_tokens[*]}" > "$cmdline_tmp" ||
+     ! chown --reference="$cmdline_file" "$cmdline_tmp" ||
+     ! chmod --reference="$cmdline_file" "$cmdline_tmp" ||
+     ! mv -fT -- "$cmdline_tmp" "$cmdline_file"
+  then
+    rm -f -- "$cmdline_tmp"
+    echo "Unable to normalize image boot command line" >&2
+    return 1
+  fi
+}
+
 function verify_source_bundle () {
   local source_dir="$1"
   local metadata_file="$source_dir/SOURCE-METADATA"
@@ -144,6 +219,7 @@ function verify_source_bundle () {
 # can boot or its SSH service can accept a password.
 # shellcheck disable=SC2153 # ROOTFS_DIR is provided by pi-gen's stage runner.
 lock_image_account "${ROOTFS_DIR}" "${FIRST_USER_NAME:-pi}"
+normalize_boot_cmdline "${ROOTFS_DIR}"
 
 touch "${ROOTFS_DIR}/boot/firmware/ssh"
 install -m 755 files/rc.local                             "${ROOTFS_DIR}/etc/"

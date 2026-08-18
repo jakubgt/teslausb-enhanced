@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-N+2x5r7ae0du4vpe7qx8qv7pDT1xBsi0+l37L0nXkZI='; style-src 'sha256-wp0XfHkCqE6bOTYWzfRnEmAkcOZoR+Mv60r9jm//8D4='; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; img-src 'none'; font-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Rg3E4dCoUCG5JbvRmbuz9p4bgdJsNS7W5Nnp7Qb7XXE='; style-src 'sha256-wp0XfHkCqE6bOTYWzfRnEmAkcOZoR+Mv60r9jm//8D4='; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; img-src 'none'; font-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'none'">
   <meta name="referrer" content="no-referrer">
   <title>TeslaUSB configuration wizard</title>
   <style>
@@ -174,7 +174,7 @@ pre {
         <div>
           <label for="wifiCountry">Wi-Fi country</label>
           <select id="wifiCountry" autocomplete="country" required>
-            <option value="" selected>Choose the Pi's physical countryâ€¦</option>
+            <option value="" selected>Choose the Pi's physical country...</option>
           </select>
           <span class="hint">Required ISO 3166-1 regulatory code. Use GB for the United Kingdom; no country is preselected.</span>
         </div>
@@ -186,12 +186,17 @@ pre {
         <div>
           <label for="wifiPassword">Wi-Fi password</label>
           <input id="wifiPassword" type="password" maxlength="63" autocomplete="new-password" required>
-          <span class="hint">Use the existing network password; it must be 8–63 UTF-8 bytes.</span>
+          <span class="hint">Use the existing network password; it must be 8 to 63 UTF-8 bytes.</span>
+        </div>
+        <div>
+          <label for="cardCapacityGb">Advertised microSD capacity (GB)</label>
+          <input id="cardCapacityGb" type="number" inputmode="numeric" min="64" max="2000" step="1" placeholder="512" autocomplete="off" required>
+          <span class="hint">Enter the whole decimal GB value printed on the card (64 to 2000). For 1 TB enter 1000. This value stays in the wizard and is not saved in the JSON file.</span>
         </div>
         <div>
           <label for="camSize">Dashcam drive size</label>
-          <input id="camSize" value="40G" maxlength="12" required>
-          <span class="hint">40G is recommended. Use a high-endurance microSD card of at least 64 GB; 128 GB or larger is preferred.</span>
+          <input id="camSize" value="40G" maxlength="16" autocomplete="off" required>
+          <span id="capacityGuidance" class="hint">Enter the card capacity to calculate a safe ceiling. 40G is the recommended starting size.</span>
         </div>
         <div class="wide">
           <label for="timeZone">Named time zone</label>
@@ -205,7 +210,7 @@ pre {
       <h2 id="archive-heading">2. Recording archive</h2>
       <label for="archiveSystem">Archive method</label>
       <select id="archiveSystem">
-        <option value="none" selected>None — start locally</option>
+        <option value="none" selected>None - start locally</option>
         <option value="cifs">CIFS / SMB network share</option>
         <option value="nfs">NFS export</option>
         <option value="rsync">rsync over SSH</option>
@@ -286,13 +291,13 @@ pre {
         </div>
         <div class="wide">
           <label for="sshPublicKey">SSH public key (optional)</label>
-          <textarea id="sshPublicKey" autocomplete="off" placeholder="ssh-ed25519 AAAA… you@example"></textarea>
+          <textarea id="sshPublicKey" autocomplete="off" placeholder="ssh-ed25519 AAAA... you@example"></textarea>
           <span class="hint">When supplied, password authentication is disabled. Private keys never belong here.</span>
         </div>
         <div class="wide">
           <label class="checkbox" for="temperaturePreset">
             <input id="temperaturePreset" type="checkbox" checked>
-            <span>Use the recommended Pi Zero 2 W temperature-monitoring preset (55°C caution, 68°C warning, hourly logging, and a post-archive reading).</span>
+            <span>Use the recommended Pi Zero 2 W temperature-monitoring preset (55 degrees C caution, 68 degrees C warning, hourly logging, and a post-archive reading).</span>
           </label>
         </div>
       </div>
@@ -318,6 +323,7 @@ pre {
 
 (function () {
   const ARCHIVE_SYSTEMS = new Set(["none", "cifs", "nfs", "rsync", "rclone"]);
+  const MIN_CAMERA_SIZE_GIB = 20;
   // Generated from iso3166-country-codes.json. Tests require exact parity with
   // that canonical list while this page stays a single, offline-safe file.
   const ISO3166_ALPHA2_CODES = Object.freeze(`
@@ -369,6 +375,37 @@ ZA ZM ZW
       throw new Error(label + " must not contain control characters.");
     }
     return normalized;
+  }
+
+  function safeCameraMaxGiB(value) {
+    const capacityText = String(value === undefined || value === null ? "" : value).trim();
+    if (!/^[1-9][0-9]*$/.test(capacityText)) {
+      throw new Error("Enter an advertised microSD capacity from 64 to 2000 GB.");
+    }
+    const advertisedGb = Number(capacityText);
+    if (!Number.isSafeInteger(advertisedGb) || advertisedGb < 64 || advertisedGb > 2000) {
+      throw new Error("Enter an advertised microSD capacity from 64 to 2000 GB.");
+    }
+    return Math.floor(((advertisedGb * 9) - 150) / 100) * 10;
+  }
+
+  function parseCameraSizeGiB(value) {
+    const size = requireText(value, "Dashcam drive size");
+    const match = /^([1-9][0-9]*)(?:G|GiB)$/.exec(size);
+    if (!match) {
+      throw new Error("Dashcam drive size must use an explicit G or GiB suffix, for example 40G.");
+    }
+    if (match[1].length > 4) {
+      throw new Error("Dashcam drive size is too large.");
+    }
+    const sizeGiB = Number(match[1]);
+    if (!Number.isSafeInteger(sizeGiB)) {
+      throw new Error("Dashcam drive size is too large.");
+    }
+    if (sizeGiB < MIN_CAMERA_SIZE_GIB) {
+      throw new Error("Dashcam drive size must be at least 20G; 40G is recommended.");
+    }
+    return sizeGiB;
   }
 
   function validateHost(value, label) {
@@ -434,13 +471,23 @@ ZA ZM ZW
     const wifiPassword = requireText(values.wifiPassword, "Wi-Fi password", true);
     const wifiPasswordBytes = byteLength(wifiPassword);
     if (wifiPasswordBytes < 8 || wifiPasswordBytes > 63) {
-      throw new Error("Wi-Fi password must be 8–63 UTF-8 bytes.");
+      throw new Error("Wi-Fi password must be 8 to 63 UTF-8 bytes.");
     }
 
-    const camSize = requireText(values.camSize, "Dashcam drive size").toUpperCase();
-    if (!/^[1-9][0-9]*(?:[KMGTP])?$/.test(camSize)) {
-      throw new Error("Dashcam drive size must be a positive size such as 40G.");
+    const advertisedCardCapacityText = requireText(
+      values.cardCapacityGb,
+      "Advertised microSD capacity"
+    );
+    const safeCameraSizeGiB = safeCameraMaxGiB(advertisedCardCapacityText);
+    const advertisedCardCapacityGb = Number(advertisedCardCapacityText);
+    const cameraSizeGiB = parseCameraSizeGiB(values.camSize);
+    if (cameraSizeGiB > safeCameraSizeGiB) {
+      throw new Error(
+        "Dashcam drive size must not exceed " + safeCameraSizeGiB + "G for a " +
+        advertisedCardCapacityGb + " GB card. This is a safety ceiling, not a target."
+      );
     }
+    const camSize = cameraSizeGiB + "G";
 
     const archiveSystem = String(values.archiveSystem || "none");
     if (!ARCHIVE_SYSTEMS.has(archiveSystem)) throw new Error("Select a supported archive method.");
@@ -452,7 +499,7 @@ ZA ZM ZW
     const webPassword = requireText(values.webPassword, "Web password", true);
     const webPasswordBytes = byteLength(webPassword);
     if (webPasswordBytes < 12 || webPasswordBytes > 72 || /[\r\n]/.test(webPassword)) {
-      throw new Error("Web password must be 12–72 UTF-8 bytes with no newline.");
+      throw new Error("Web password must be 12 to 72 UTF-8 bytes with no newline.");
     }
     if (["raspberry", "password", "teslausb", webUsername.toLowerCase()].includes(webPassword.toLowerCase())) {
       throw new Error("Web password must not be a default value or match the username.");
@@ -522,6 +569,7 @@ ZA ZM ZW
       wifiCountry: value("wifiCountry"),
       ssid: value("ssid"),
       wifiPassword: value("wifiPassword"),
+      cardCapacityGb: value("cardCapacityGb"),
       camSize: value("camSize"),
       timeZone: value("timeZone"),
       archiveSystem: value("archiveSystem"),
@@ -589,6 +637,18 @@ ZA ZM ZW
       render();
     }
 
+    function updateStorageGuidance() {
+      const capacity = documentObject.getElementById("cardCapacityGb").value;
+      const guidance = documentObject.getElementById("capacityGuidance");
+      if (!capacity) {
+        guidance.textContent = "Enter the card capacity to calculate a safe ceiling. 40G is the recommended starting size.";
+        return;
+      }
+      const safeMaximum = safeCameraMaxGiB(capacity);
+      guidance.textContent = "Safe ceiling for this card: " + safeMaximum +
+        "G. Keep 40G unless you need more history; optional music, LightShow, or Boombox images reduce the ceiling.";
+    }
+
     const inferredZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (typeof inferredZone === "string" && inferredZone.includes("/") && inferredZone !== "Etc/Unknown") {
       documentObject.getElementById("timeZone").value = inferredZone;
@@ -600,6 +660,7 @@ ZA ZM ZW
       render();
     });
     documentObject.getElementById("archiveSystem").addEventListener("change", updateArchiveFields);
+    documentObject.getElementById("cardCapacityGb").addEventListener("change", updateStorageGuidance);
     documentObject.getElementById("toggleSecrets").addEventListener("click", function (event) {
       const reveal = secretIds.some((id) => documentObject.getElementById(id).type === "password");
       for (const id of secretIds) documentObject.getElementById(id).type = reveal ? "text" : "password";
@@ -629,6 +690,7 @@ ZA ZM ZW
     });
     documentObject.addEventListener("input", render);
     documentObject.addEventListener("change", render);
+    updateStorageGuidance();
     updateArchiveFields();
   }
 
@@ -636,6 +698,7 @@ ZA ZM ZW
     buildDocument,
     countryCodes: ISO3166_ALPHA2_CODES,
     generatePassword,
+    safeCameraMaxGiB,
     redactDocument,
     serializeDocument
   });
