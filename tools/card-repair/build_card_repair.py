@@ -23,6 +23,9 @@ TARGETS = [
     ("run/release_snapshot.sh", "/root/bin/release_snapshot.sh", "bash", 0o755),
     ("setup/pi/setup-teslausb", "/root/bin/setup-teslausb", "bash", 0o755),
     ("teslausb-www/html/cgi-bin/status.sh", "/var/www/html/cgi-bin/status.sh", "bash", 0o755),
+    ("teslausb-www/html/cgi-bin/api-v1.sh", "/var/www/html/cgi-bin/api-v1.sh", "bash", 0o755),
+    ("teslausb-www/html/cgi-bin/maintenance.sh", "/var/www/html/cgi-bin/maintenance.sh", "bash", 0o755),
+    ("teslausb-www/html/cgi-bin/maintenance.py", "/var/www/html/cgi-bin/maintenance.py", "python", 0o644),
     ("teslausb-www/html/index.html", "/var/www/html/index.html", None, 0o644),
     (None, card_install.DROPIN, None, 0o644),
 ]
@@ -47,6 +50,11 @@ def build(args):
             raise ValueError("Duplicate flat tar name")
         final_sha = card_install.digest(data)
         baseline = baselines[destination]
+        if (not isinstance(baseline, dict) or
+                set(baseline) != {"allowed_sha256", "allow_absent"} or
+                not isinstance(baseline["allowed_sha256"], list) or
+                type(baseline["allow_absent"]) is not bool):
+            raise ValueError("Baseline entry requires a hash list and a boolean allow_absent")
         allowed = set(baseline["allowed_sha256"]) | {final_sha}
         if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in allowed):
             raise ValueError("Malformed baseline SHA256")

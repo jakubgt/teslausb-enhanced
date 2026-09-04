@@ -28,7 +28,7 @@ jobs:
           ./check.sh
       - name: Compile Python helpers
         run: >-
-          python3 -m compileall -q ./run ./tests
+          python3 -m compileall -q ./run ./tests ./teslausb-www/html/cgi-bin
           ./pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py
       - name: Run Python helper tests
         run: python3 -m unittest discover -s ./tests -p 'test_*.py' -v
@@ -75,5 +75,6 @@ jobs:
           node --test
           ./tests/filebrowser-helpers.test.js
           ./tests/index-helpers.test.js
+          ./tests/maintenance-helpers.test.js
           ./tests/config-tool.test.js
           ./tests/config-wizard.test.js

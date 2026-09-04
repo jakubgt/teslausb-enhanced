@@ -12,6 +12,11 @@ image does not contain these repairs.
 
 ### Runtime corrections added 2026-09-04
 
+- The bundled dashboard has a collapsible Advanced maintenance panel with
+  read-only SSH status, a validated copyable connection command, and bounded
+  downloads of saved diagnostics and maintenance logs. It adds no browser
+  shell, SSH configuration mutations, or extra sudo privileges. Diagnostic
+  generation now requires an explicit action instead of running on page load.
 - Periodic snapshots acquire the shared storage lock before disconnecting USB.
   Busy cleanup defers the snapshot instead of holding the camera drive offline
   while old snapshots are deleted. The inherited lock descriptor is checked

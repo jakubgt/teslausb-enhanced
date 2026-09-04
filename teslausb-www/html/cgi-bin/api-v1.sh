@@ -42,6 +42,8 @@ case "$route" in
   "legacy_get_mutations": "deprecated",
   "routes": {
     "status": "/api/v1/status",
+    "maintenance": "/api/v1/maintenance",
+    "maintenance_logs": ["diagnostics", "archiveloop", "setup", "maintenance"],
     "config": "/api/v1/config",
     "videos": "/api/v1/videos",
     "speed_test": "/api/v1/speed-test",
@@ -54,6 +56,9 @@ EOF
     ;;
   /status|/health)
     exec "$script_dir/status.sh"
+    ;;
+  /maintenance|/maintenance/logs/diagnostics|/maintenance/logs/archiveloop|/maintenance/logs/setup|/maintenance/logs/maintenance)
+    exec "$script_dir/maintenance.sh"
     ;;
   /config)
     exec "$script_dir/config.sh"

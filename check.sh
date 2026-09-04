@@ -86,6 +86,7 @@ shellcheck --exclude=SC1091 \
            ./teslausb-www/html/cgi-bin/download.sh \
            ./teslausb-www/html/cgi-bin/downloadzip.sh \
            ./teslausb-www/html/cgi-bin/ls.sh \
+           ./teslausb-www/html/cgi-bin/maintenance.sh \
            ./teslausb-www/html/cgi-bin/mkdir.sh \
            ./teslausb-www/html/cgi-bin/mv.sh \
            ./teslausb-www/html/cgi-bin/pairBLEkey.sh \

@@ -31,6 +31,8 @@ curl -X POST \
 | --- | --- | --- |
 | `GET` | `/api/v1/capabilities` | Discover the API version and routes |
 | `GET` | `/api/v1/status` | Hardware, network, storage, archive health, and encrypted-clip detection |
+| `GET` | `/api/v1/maintenance` | Read-only SSH service state and maintenance-log availability |
+| `GET` | `/api/v1/maintenance/logs/{diagnostics,archiveloop,setup,maintenance}` | Download one fixed maintenance report/log; no arbitrary path arguments |
 | `GET` | `/api/v1/config` | Discover configured virtual drives and BLE |
 | `GET` | `/api/v1/videos` | List linked TeslaCam recordings |
 | `GET` | `/api/v1/speed-test?SECONDS` | Stream bounded test data; `SECONDS` is 1–30 (the bundled UI requests 15) |
@@ -71,6 +73,16 @@ configured camera LUN, and the kernel's host-configured state. `usb_state` is th
 raw controller state, or `unknown` when unreadable. These fields do not assert
 that Tesla is writing recordings. The legacy `drives_active` yes/no field is
 retained for enable/disable compatibility and only indicates gadget preparation.
+
+Maintenance reads never change SSH configuration or account credentials, and
+require the same host and authentication boundary as the rest of the dashboard.
+The SSH service state does not confirm login eligibility or a reachable listener.
+Port 22, when offered, is an explicitly unverified default, not a configuration
+probe. Unknown service status must not be displayed as a working SSH connection.
+Log downloads use fixed server-side paths and attachment responses; missing or
+unreadable files produce errors. Only the latest 8 MiB is returned for a larger
+log, with an explicit truncation header. These endpoints do not generate fresh
+diagnostics; use the existing protected POST action when a fresh report is needed.
 
 The gadget-repair route is intentionally manual and has no legacy GET form.
 It briefly disconnects all virtual drives, rebuilds the configfs mass-storage

@@ -925,6 +925,96 @@ video {
   margin-top: 2px;
 }
 
+.content4 {
+  overflow-y: auto;
+}
+
+.maintenance-panel {
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  margin: 20px 0 12px;
+  max-width: 850px;
+  overflow-wrap: anywhere;
+}
+
+.maintenance-panel summary {
+  cursor: pointer;
+  font-weight: bold;
+  padding: 14px;
+}
+
+.maintenance-content {
+  padding: 0 14px 14px;
+}
+
+.maintenance-panel h3 {
+  margin: 18px 0 8px;
+}
+
+.maintenance-note {
+  color: #444;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.maintenance-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
+.maintenance-fields label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.maintenance-fields input,
+.maintenance-command {
+  box-sizing: border-box;
+  font-size: 1em;
+  min-height: 44px;
+  padding: 8px;
+  width: 100%;
+}
+
+.maintenance-wide {
+  grid-column: 1 / -1;
+}
+
+.maintenance-command {
+  font-family: monospace;
+  margin: 5px 0;
+  resize: vertical;
+}
+
+.maintenance-panel button {
+  min-height: 44px;
+}
+
+.maintenance-panel :focus-visible {
+  outline: 3px solid #1769aa;
+  outline-offset: 2px;
+}
+
+.maintenance-logs {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+}
+
+.maintenance-logs li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.maintenance-logs button {
+  text-align: left;
+  width: min(100%, 225px);
+}
+
 @media screen and (max-width: 824px) {
   .content4 > div {
     box-sizing: border-box;
@@ -1135,6 +1225,52 @@ video {
         </div>
       <p>
       <button class="group2" id="rebootbutton" onclick="rebootfunc(this);">Restart Raspberry Pi</button><span id="reboottext" role="status" aria-live="polite" style="padding-left:20px;"></span>
+      <details class="maintenance-panel" id="maintenance-panel" ontoggle="maintenancePanelToggled(this);">
+        <summary>Advanced maintenance</summary>
+        <div class="maintenance-content">
+          <p class="maintenance-note">Read-only SSH information and diagnostic downloads. This panel does not open a browser shell, enable SSH, or change passwords or keys. Use it on a trusted home network.</p>
+          <h3>SSH access</h3>
+          <p id="maintenance-ssh-status" class="resource-status" role="status" aria-live="polite">SSH status has not been checked.</p>
+          <button type="button" id="maintenance-refresh" onclick="refreshMaintenanceStatus();">Refresh maintenance status</button>
+          <p class="maintenance-note">An active SSH service does not confirm that a port is reachable or that your account and key can sign in. The command below is a template, not a tested login.</p>
+          <div class="maintenance-fields">
+            <div>
+              <label for="maintenance-ssh-user">SSH username</label>
+              <input id="maintenance-ssh-user" value="root" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="updateMaintenanceCommand();" aria-describedby="maintenance-user-help">
+            </div>
+            <div>
+              <label for="maintenance-ssh-host">Pi hostname or IP address</label>
+              <input id="maintenance-ssh-host" maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="updateMaintenanceCommand();">
+            </div>
+            <div>
+              <label for="maintenance-ssh-port">SSH port (verify if customized)</label>
+              <input id="maintenance-ssh-port" value="22" inputmode="numeric" maxlength="5" autocomplete="off" oninput="updateMaintenanceCommand();" aria-describedby="maintenance-port-help">
+            </div>
+            <div class="maintenance-wide">
+              <label for="maintenance-ssh-key">Private-key path on this computer (optional)</label>
+              <input id="maintenance-ssh-key" maxlength="1024" placeholder="Absolute path to your existing key; leave blank for your SSH client defaults" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="updateMaintenanceCommand();" aria-describedby="maintenance-key-help">
+            </div>
+          </div>
+          <p id="maintenance-user-help" class="maintenance-note">The dedicated maintenance key uses <code>root</code>; choose your actual SSH account if different. This default does not mean root login is enabled. No default password is provided.</p>
+          <p id="maintenance-port-help" class="maintenance-note">22 is the standard default, not a verified listening port.</p>
+          <p id="maintenance-key-help" class="maintenance-note">For a nondefault dedicated key, enter its full local path, including the filename. Otherwise your SSH client uses its existing configuration and agent. The key stays on your computer: enter only its path, never the key contents. These fields are not saved or sent to the Pi.</p>
+          <label for="maintenance-ssh-command">Connection command for PowerShell, macOS Terminal, or a Linux shell</label>
+          <textarea id="maintenance-ssh-command" class="maintenance-command" rows="3" readonly spellcheck="false" aria-describedby="maintenance-command-help maintenance-command-status"></textarea>
+          <button type="button" id="maintenance-copy" onclick="copyMaintenanceCommand();">Copy SSH command</button>
+          <p id="maintenance-command-status" class="resource-status" role="status" aria-live="polite"></p>
+          <p id="maintenance-command-help" class="maintenance-note">Run this on your computer, not in the browser or Windows Command Prompt. Verify the Pi's host-key fingerprint before accepting a first connection; do not bypass a changed-host-key warning.</p>
+          <h3>Download support logs</h3>
+          <p class="maintenance-note">Downloads read existing files only; they do not generate diagnostics. Large logs contain only the latest 8 MiB and are marked as truncated. Logs may include network names, IP addresses, and other private details; review them before sharing.</p>
+          <ul class="maintenance-logs">
+            <li><button type="button" id="maintenance-download-diagnostics" onclick="downloadMaintenanceLog('diagnostics', this);">Download saved diagnostics</button><span id="maintenance-log-diagnostics" class="resource-status">Not checked</span></li>
+            <li><button type="button" id="maintenance-download-archiveloop" onclick="downloadMaintenanceLog('archiveloop', this);">Download archiveloop log</button><span id="maintenance-log-archiveloop" class="resource-status">Not checked</span></li>
+            <li><button type="button" id="maintenance-download-setup" onclick="downloadMaintenanceLog('setup', this);">Download setup log</button><span id="maintenance-log-setup" class="resource-status">Not checked</span></li>
+            <li><button type="button" id="maintenance-download-maintenance" onclick="downloadMaintenanceLog('maintenance', this);">Download card-update log</button><span id="maintenance-log-maintenance" class="resource-status">Not checked</span></li>
+          </ul>
+          <button type="button" id="maintenance-generate" onclick="generateMaintenanceDiagnostics(this);">Generate fresh diagnostics</button>
+          <p id="maintenance-download-status" class="resource-status" role="status" aria-live="polite"></p>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -2056,6 +2192,7 @@ function rebootfunc (button) {
 
 async function refreshdiagnostics() {
   var btn1=document.getElementById('diagrefreshbtn');
+  if (btn1.getAttribute("aria-busy") === "true") return false;
   var btn2=document.getElementById('diagdwnbtn');
   var pre=document.getElementById('diagnosticspre');
   btn1.disabled=true;
@@ -2069,9 +2206,11 @@ async function refreshdiagnostics() {
     pre.textContent = report;
     btn2.disabled = false;
     setResourceStatus("diagnosticsstatus", "Diagnostics refreshed", false);
+    return true;
   } catch (error) {
     pre.textContent = "Could not generate diagnostics. " + error.message;
     setResourceStatus("diagnosticsstatus", "Diagnostics failed: " + error.message, true);
+    return false;
   } finally {
     btn1.disabled=false;
     btn1.removeAttribute("aria-busy");
@@ -2605,15 +2744,317 @@ function readconfig() {
   }});
 }
 
+// Advanced maintenance helpers: no polling, shell execution, or key-file access.
+const maintenanceLogFiles = Object.freeze({
+  diagnostics: "diagnostics.txt",
+  archiveloop: "archiveloop.log",
+  setup: "teslausb-headless-setup.log",
+  maintenance: "teslausb-runtime-maintenance.log"
+});
+var maintenanceStatusGeneration = 0;
+
+function validatedMaintenanceHost(value) {
+  var host = String(value || "").trim();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (host.includes(":")) {
+    if (!/^[0-9a-fA-F:]+$/.test(host) || !host.includes("::") && host.split(":").length !== 8) {
+      throw new Error("Enter a hostname, IPv4 address, or IPv6 address without a zone suffix.");
+    }
+    try {
+      return new URL("http://[" + host + "]/").hostname.slice(1, -1);
+    } catch (error) {
+      throw new Error("Enter a valid IPv6 address.");
+    }
+  }
+  if (host.length > 253 || !host || !host.split(".").every(function(label) {
+    return /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label);
+  })) {
+    throw new Error("Enter only the Pi hostname or IP address, without a URL or port.");
+  }
+  if (/^[0-9.]+$/.test(host) && (host.split(".").length !== 4 || !host.split(".").every(function(part) {
+    return /^(0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255;
+  }))) {
+    throw new Error("Enter a valid IPv4 address.");
+  }
+  return host.toLowerCase();
+}
+
+function buildMaintenanceCommand(username, hostname, port, keyPath) {
+  var user = String(username || "").trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/.test(user)) {
+    throw new Error("Enter an SSH username using letters, digits, underscores, or hyphens.");
+  }
+  var host = validatedMaintenanceHost(hostname);
+  var portText = String(port || "").trim();
+  if (!/^[1-9][0-9]{0,4}$/.test(portText) || Number(portText) > 65535) {
+    throw new Error("Enter an SSH port from 1 to 65535.");
+  }
+  var key = String(keyPath || "");
+  // PowerShell also recognizes typographic quotes as quote delimiters. An
+  // ASCII allowlist avoids those and Unicode separators across both shells.
+  if (/[^a-zA-Z0-9 _./\\:()+,@\[\]-]/.test(key)) {
+    throw new Error("Use an absolute local key path with ASCII letters, digits, spaces, and ordinary path punctuation; quotes and shell symbols are not supported.");
+  }
+  key = key.trim();
+  var identity = "";
+  if (key) {
+    // Single-quoted, allowlisted paths work in PowerShell and POSIX shells.
+    if (key.length > 1024 || !(/^[a-zA-Z]:[\\/]/.test(key) || /^\/(?!\/)/.test(key))) {
+      throw new Error("Use an absolute local key path without quotes, control characters, or shell symbols. Spaces are allowed.");
+    }
+    identity = " -o IdentitiesOnly=yes -i '" + key + "'";
+  }
+  return "ssh -p " + portText + identity + " " + user + "@" + host;
+}
+
+function updateMaintenanceCommand() {
+  var command = document.getElementById("maintenance-ssh-command");
+  var button = document.getElementById("maintenance-copy");
+  try {
+    command.value = buildMaintenanceCommand(
+      document.getElementById("maintenance-ssh-user").value,
+      document.getElementById("maintenance-ssh-host").value,
+      document.getElementById("maintenance-ssh-port").value,
+      document.getElementById("maintenance-ssh-key").value);
+    button.disabled = false;
+    setResourceStatus("maintenance-command-status", "Ready to copy. This command has not been tested.", false);
+    return command.value;
+  } catch (error) {
+    command.value = "";
+    button.disabled = true;
+    setResourceStatus("maintenance-command-status", error.message, true);
+    return "";
+  }
+}
+
+async function copyMaintenanceCommand() {
+  var text = updateMaintenanceCommand();
+  if (!text) return false;
+  var field = document.getElementById("maintenance-ssh-command");
+  var previousFocus = document.activeElement;
+  var copied = false;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    }
+  } catch (error) {
+    // HTTP and browser permissions may block the modern clipboard API.
+  }
+  if (!copied) {
+    field.focus();
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    try {
+      copied = Boolean(document.execCommand && document.execCommand("copy"));
+    } catch (error) {
+      copied = false;
+    }
+  }
+  if (copied && previousFocus && typeof previousFocus.focus === "function") previousFocus.focus();
+  setResourceStatus("maintenance-command-status", copied
+    ? "SSH command copied. Run it in your computer's terminal."
+    : "Automatic copy was blocked. The command is selected; press Ctrl+C or Command+C, or use your device's Copy action.", !copied);
+  return copied;
+}
+
+function maintenanceSshStatusText(payload) {
+  if (!payload || payload.schema_version !== 1 || !payload.ssh) {
+    throw new Error("The maintenance status response was not recognized.");
+  }
+  var ssh = payload.ssh;
+  var states = ["active", "inactive", "failed", "unknown", "not-installed"];
+  var startupStates = ["enabled", "disabled", "static", "indirect", "masked", "generated", "transient", "linked", "alias", "unknown", "enabled-runtime", "masked-runtime", "linked-runtime"];
+  var state = states.includes(ssh.service_state) ? ssh.service_state : "unknown";
+  var startup = startupStates.includes(ssh.enabled_state) ? ssh.enabled_state : "unknown";
+  return "SSH service: " + state + ". Startup: " + startup + ". Login and port reachability are not verified.";
+}
+
+function renderMaintenanceLogStatus(logs) {
+  Object.keys(maintenanceLogFiles).forEach(function(id) {
+    var info = logs && Object.prototype.hasOwnProperty.call(logs, id) ? logs[id] : null;
+    var message = "Availability unknown; try downloading or refresh status.";
+    if (info && info.available === true) {
+      message = "Existing file available";
+      if (Number.isSafeInteger(info.size_bytes) && info.size_bytes >= 0) {
+        message += " (" + (info.size_bytes / 1024).toFixed(1) + " KiB)";
+      }
+      message += info.truncated === true ? "; download includes only the latest 8 MiB." : ".";
+    } else if (info && info.available === false) {
+      message = info.reason === "missing" ? "No saved file yet." : "File currently unavailable.";
+    }
+    setResourceStatus("maintenance-log-" + id, message, false);
+  });
+}
+
+async function refreshMaintenanceStatus() {
+  var panel = document.getElementById("maintenance-panel");
+  if (!panel.open) return;
+  var generation = ++maintenanceStatusGeneration;
+  var button = document.getElementById("maintenance-refresh");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setResourceStatus("maintenance-ssh-status", "SSH status unknown while refreshing...", false);
+  renderMaintenanceLogStatus(null);
+  try {
+    var payload = await apiRequest("/api/v1/maintenance", {timeout:15000});
+    if (generation !== maintenanceStatusGeneration || !panel.open) return;
+    var message = maintenanceSshStatusText(payload);
+    setResourceStatus("maintenance-ssh-status", message + " Checked at " + new Date().toLocaleTimeString() + " (this browser).", false);
+    renderMaintenanceLogStatus(payload.logs);
+  } catch (error) {
+    if (generation !== maintenanceStatusGeneration || !panel.open) return;
+    setResourceStatus("maintenance-ssh-status", "SSH status unknown: refresh failed. " + error.message, true);
+    renderMaintenanceLogStatus(null);
+  } finally {
+    if (generation === maintenanceStatusGeneration) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function maintenancePanelToggled(panel) {
+  if (panel.open) {
+    refreshMaintenanceStatus();
+  } else {
+    // Ignore a late response from a previous opening; never keep stale active
+    // status visible after a failed refresh or schedule background polling.
+    maintenanceStatusGeneration++;
+    var button = document.getElementById("maintenance-refresh");
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    setResourceStatus("maintenance-ssh-status", "SSH status has not been checked for this opening.", false);
+  }
+}
+
+function requestMaintenanceLog(id) {
+  if (!Object.prototype.hasOwnProperty.call(maintenanceLogFiles, id)) {
+    return Promise.reject(new Error("Unknown support log."));
+  }
+  return new Promise(function(resolve, reject) {
+    var request = new XMLHttpRequest();
+    var completed = false;
+    var limit = 8 * 1024 * 1024;
+    function finish(error, value) {
+      if (completed) return;
+      completed = true;
+      if (error) reject(error);
+      else resolve(value);
+    }
+    request.open("GET", "/api/v1/maintenance/logs/" + id);
+    request.timeout = 15000;
+    request.responseType = "blob";
+    request.setRequestHeader("Accept", "text/plain");
+    request.onreadystatechange = function() {
+      if (request.readyState !== 4 || completed) return;
+      if (request.status !== 200) {
+        var message = request.status === 404 ? "No saved log is available yet."
+          : request.status === 401 || request.status === 403 ? "Sign in to the dashboard again to download this log."
+          : "Log download failed (HTTP " + request.status + ").";
+        finish(new Error(message));
+        return;
+      }
+      var type = (request.getResponseHeader("Content-Type") || "").split(";")[0].trim().toLowerCase();
+      var truncated = request.getResponseHeader("X-TeslaUSB-Truncated");
+      if (type !== "text/plain" || !["true", "false"].includes(truncated)) {
+        finish(new Error("The server returned an unexpected response; no log was downloaded."));
+      } else if (!request.response || !Number.isSafeInteger(request.response.size) || request.response.size > limit) {
+        finish(new Error("The log exceeded the safe download limit; no file was saved."));
+      } else {
+        finish(null, {blob:request.response, truncated:truncated === "true"});
+      }
+    };
+    request.onprogress = function(event) {
+      if (event.loaded > limit) {
+        finish(new Error("The log exceeded the safe download limit; no file was saved."));
+        request.abort();
+      }
+    };
+    request.onerror = function() { finish(new Error("Network error while downloading the log.")); };
+    request.onabort = function() { finish(new Error("Log download cancelled.")); };
+    request.ontimeout = function() { finish(new Error("Log download timed out. Try again when the Pi is reachable.")); };
+    request.send();
+  });
+}
+
+function saveMaintenanceLog(filename, blob) {
+  var url = URL.createObjectURL(blob);
+  var anchor = document.createElement("a");
+  try {
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+  }
+}
+
+async function downloadMaintenanceLog(id, button) {
+  if (!Object.prototype.hasOwnProperty.call(maintenanceLogFiles, id) || button.disabled) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setResourceStatus("maintenance-download-status", "Fetching " + maintenanceLogFiles[id] + "...", false);
+  try {
+    var result = await requestMaintenanceLog(id);
+    saveMaintenanceLog(maintenanceLogFiles[id], result.blob);
+    var message = "Download started: " + maintenanceLogFiles[id] + ".";
+    message += result.truncated ? " Truncated: only the latest 8 MiB are included; the first line may be partial." : " Complete saved file.";
+    setResourceStatus("maintenance-download-status", message, false);
+  } catch (error) {
+    setResourceStatus("maintenance-download-status", "Could not download " + maintenanceLogFiles[id] + ": " + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
+async function generateMaintenanceDiagnostics(button) {
+  if (button.disabled) return;
+  if (document.getElementById("diagrefreshbtn").getAttribute("aria-busy") === "true") {
+    setResourceStatus("maintenance-download-status", "Diagnostics are already being generated. Check the Diagnostics tab.", false);
+    return;
+  }
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setResourceStatus("maintenance-download-status", "Generating fresh diagnostics; this may take up to two minutes...", false);
+  try {
+    var success = await refreshdiagnostics();
+    setResourceStatus("maintenance-download-status", success
+      ? "Fresh diagnostics generated. Use Download saved diagnostics to save them."
+      : "Diagnostics generation failed. See the Diagnostics tab for details.", !success);
+    if (success) await refreshMaintenanceStatus();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
+function initializeMaintenance() {
+  var hostField = document.getElementById("maintenance-ssh-host");
+  try {
+    hostField.value = validatedMaintenanceHost(window.location.hostname);
+  } catch (error) {
+    hostField.value = "";
+  }
+  updateMaintenanceCommand();
+}
+// End advanced maintenance helpers.
+
 function initialize() {
   setbuttonsdisabled('group1', true);
   setbuttonsdisabled('group2', false);
   reloadLog('archivelooppre', 'archiveloop.log', 'aldwnbtn', 'archiveloopstatus');
   reloadLog('setuplogpre', 'teslausb-headless-setup.log', 'sudwnbtn', 'setuplogstatus');
   showstatus();
-  refreshdiagnostics();
+  readfile({url:'diagnostics.txt', pre:'diagnosticspre', button:'diagdwnbtn', status:'diagnosticsstatus'});
+  document.getElementById('diagrefreshbtn').disabled = false;
   restoreLogWrapSettings();
   initializeAccessibility();
+  initializeMaintenance();
 
   var settingsbtn = document.querySelector('.settingsbuttondiv');
   settingsbtn.onclick = showsettings;

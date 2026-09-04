@@ -37,6 +37,31 @@ gadget, a paused camera LUN, and a host-configured connection. Only the car or
 actual clip inspection can confirm that recording is occurring. Quantities
 divided by powers of 1024 are displayed as GiB/MiB, not decimal GB/MB.
 
+## Advanced maintenance panel
+
+Open **Tools > Advanced maintenance** in the bundled dashboard. The panel shows
+read-only SSH service status and builds a copyable connection command for your
+computer. It does not enable SSH, install keys, reset passwords, or run shell
+commands in the browser. An active SSH service is not proof that your account
+or key can log in. Port 22 is an editable, unverified default, not a detected
+server setting; retain your custom port if you configured one.
+
+Enter your SSH account and, for a non-default dedicated key, its local private-key
+**path**. The browser never needs the key file or its contents. Leave the key path
+blank to use your SSH client's existing identity/agent configuration. Copy works
+on the local HTTP dashboard where possible, with selectable command text as a
+fallback. Keep host-key checking enabled and investigate changed-key warnings.
+
+The panel downloads the saved diagnostic report, archive log, setup log, and
+optional card-maintenance log. Diagnostic generation is a separate explicit
+action. Missing or unreadable logs are reported rather than saved as successful
+downloads. Downloads are bounded to the latest 8 MiB, and a truncated download
+is identified. Review reports for network names, paths, and other personal data
+before sharing them. No private SSH files are exposed by these endpoints.
+
+The alternative, separately distributed interface under `/new/` is not changed;
+use the bundled interface (`/?ui=legacy`) to access this panel.
+
 ## Verify on the actual Pi
 
 1. Install a reviewed, exact-source runtime repair with the Pi powered through
