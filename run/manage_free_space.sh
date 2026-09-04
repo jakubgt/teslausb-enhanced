@@ -18,7 +18,7 @@ readonly SNAPSHOT_FINDMNT_COMMAND SNAPSHOT_POLICY_HELPER RELEASE_SNAPSHOT
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=run/snapshot_lock.sh
 source "$script_dir/snapshot_lock.sh"
-acquire_snapshot_lock
+acquire_snapshot_lock || exit "$?"
 
 function manage_free_space {
   # Try to make free space equal to 10 GB plus three percent of the total

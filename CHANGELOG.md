@@ -28,6 +28,9 @@ image does not contain these repairs.
   host connection state. A prepared gadget no longer implies a connected
   camera drive, and connection status does not claim that Tesla is recording.
   Binary storage quantities are labeled GiB/MiB.
+- USB re-export refuses live image mountpoints that remain mounted, including
+  failed-unmount recovery. Worker processes receive graceful stop signals so
+  clock-service restoration is not skipped during application maintenance.
 - These changes extend the still-unpublished rc.5 source candidate. They do not
   replace any published image or constitute physical-hardware validation.
 

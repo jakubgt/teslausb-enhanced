@@ -64,6 +64,14 @@ credentials, account tokens, or decryption material. `available: false` means th
 detector has not yet produced a trusted status file, not that encryption is
 necessarily absent.
 
+The additive `camera_drive_state` field describes the camera's USB presentation:
+`disabled`, `prepared`, `paused`, `unavailable`, `connecting`, `connected`,
+`suspended`, `disconnected`, or `unknown`. `connected` requires a bound UDC, the
+configured camera LUN, and the kernel's host-configured state. `usb_state` is the
+raw controller state, or `unknown` when unreadable. These fields do not assert
+that Tesla is writing recordings. The legacy `drives_active` yes/no field is
+retained for enable/disable compatibility and only indicates gadget preparation.
+
 The gadget-repair route is intentionally manual and has no legacy GET form.
 It briefly disconnects all virtual drives, rebuilds the configfs mass-storage
 gadget, and verifies the UDC binding and each expected LUN. Concurrent requests

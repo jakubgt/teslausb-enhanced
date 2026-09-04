@@ -222,10 +222,14 @@ grep -F -- '--archive-root "$overlaymerged"' "$archive_loop" > /dev/null
 camera_skip_line=$(grep -n -F 'elif [ "$camera_archive_allowed" != true ]' "$archive_loop" | cut -d: -f1)
 music_sync_line=$(grep -n -F 'if timeout 5 [ -d "${MUSIC_ARCHIVE_MOUNT:-}"' "$archive_loop" | cut -d: -f1)
 [ -n "$camera_skip_line" ] && [ -n "$music_sync_line" ] && [ "$camera_skip_line" -lt "$music_sync_line" ]
-background_prepare_line=$(grep -n -F 'prepare_camera_snapshot || snapshot_status=$?' "$archive_loop" | head -n 1 | cut -d: -f1)
-background_reconnect_line=$(grep -n -F 'connect_usb_drives_to_host || log "Failed to reconnect USB drives after background snapshot check"' "$archive_loop" | cut -d: -f1)
-[ -n "$background_prepare_line" ] && [ -n "$background_reconnect_line" ] && \
-  [ "$background_prepare_line" -lt "$background_reconnect_line" ]
+background_snapshot_body=$(sed -n '/^function snapshotloop {$/,/^}$/p' "$archive_loop")
+grep -F "prepare_camera_snapshot '' --connect-after-copy" \
+  <<< "$background_snapshot_body" > /dev/null
+if grep -F 'connect_usb_drives_to_host' <<< "$background_snapshot_body" > /dev/null
+then
+  echo "background caller overrides the guarded reconnect decision" >&2
+  exit 1
+fi
 
 # Exercise the real guarded entrypoint with fake mount/gadget helpers. Every
 # helper asserts that the outer gadget lock's held-lock convention propagated.

@@ -21,7 +21,7 @@ fi
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=run/snapshot_lock.sh
 source "$script_dir/snapshot_lock.sh"
-acquire_snapshot_lock
+acquire_snapshot_lock || exit "$?"
 
 policy_status=0
 env SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
