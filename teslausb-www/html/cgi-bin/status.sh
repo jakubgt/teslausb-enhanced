@@ -55,7 +55,7 @@ function read_drive_status {
   esac
 }
 
-read_drive_status
+read_drive_status /sys/kernel/config/usb_gadget/teslausb /sys/class/udc
 
 readarray -t snapshots < <(find /backingfiles/snapshots/ -name snap.bin 2> /dev/null | sort)
 readonly numsnapshots=${#snapshots[@]}

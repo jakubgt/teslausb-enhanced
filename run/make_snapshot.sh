@@ -60,13 +60,13 @@ function make_links_for_snapshot {
   local saved="$MUTABLE_TESLACAM/SavedClips"
   local sentry="$MUTABLE_TESLACAM/SentryClips"
   local track="$MUTABLE_TESLACAM/TeslaTrackMode"
-  if [ ! -d $saved ]
+  if [ ! -d "$saved" ]
   then
-    mkdir -p $saved
+    mkdir -p "$saved"
   fi
-  if [ ! -d $sentry ]
+  if [ ! -d "$sentry" ]
   then
-    mkdir -p $sentry
+    mkdir -p "$sentry"
   fi
   local curmnt="$1"
   local finalmnt="$2"
