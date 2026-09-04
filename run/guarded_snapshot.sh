@@ -12,12 +12,16 @@ then
 fi
 
 leave_disconnected=false
+connect_after_copy=false
 snapshot_mode=
 while [ "$#" -gt 0 ]
 do
   case "$1" in
     --leave-disconnected)
       leave_disconnected=true
+      ;;
+    --connect-after-copy)
+      connect_after_copy=true
       ;;
     fsck | nofsck)
       if [ -n "$snapshot_mode" ]
@@ -28,12 +32,17 @@ do
       snapshot_mode="$1"
       ;;
     *)
-      echo "usage: $0 [--leave-disconnected] [fsck|nofsck]" >&2
+      echo "usage: $0 [--leave-disconnected|--connect-after-copy] [fsck|nofsck]" >&2
       exit 64
       ;;
   esac
   shift
 done
+if [ "$leave_disconnected" = true ] && [ "$connect_after_copy" = true ]
+then
+  echo "conflicting USB restore modes" >&2
+  exit 64
+fi
 
 if [[ "${TESLAUSB_GUARDED_SNAPSHOT_TEST_OVERRIDES:-}" == 1 ]]
 then
@@ -102,6 +111,24 @@ then
 fi
 export -f log
 
+# Cleanup may run for minutes on a nearly full card. Defer the snapshot before
+# touching USB whenever it owns the directory lock, leaving recording active.
+SNAPSHOTS_ROOT="$snapshots_root"
+export SNAPSHOTS_ROOT
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=run/snapshot_lock.sh
+source "$script_dir/snapshot_lock.sh"
+snapshot_lock_status=0
+acquire_snapshot_lock || snapshot_lock_status=$?
+if [ "$snapshot_lock_status" -ne 0 ]
+then
+  if [ "$snapshot_lock_status" -eq 99 ]
+  then
+    log "Snapshot deferred: storage cleanup or another snapshot is busy; USB connection unchanged"
+  fi
+  exit "$snapshot_lock_status"
+fi
+
 invalidate_encrypted_status_file() {
   local status_dir
 
@@ -140,7 +167,7 @@ chmod 0600 -- "$gadget_lock_file"
 if ! flock -w "$lock_timeout" 9
 then
   log "Another USB gadget operation is already running; snapshot skipped"
-  exit 75
+  exit 99
 fi
 export TESLAUSB_GADGET_LOCK_HELD=1
 
@@ -154,8 +181,7 @@ cleanup_guarded_snapshot () {
 
   if [ "$mounted_by_us" = true ]
   then
-    if ! "$umount_command" "$cam_mount" > /dev/null 2>&1 &&
-       ! "$umount_command" -l "$cam_mount" > /dev/null 2>&1
+    if ! "$umount_command" "$cam_mount" > /dev/null 2>&1
     then
       camera_still_mounted=true
       log "Failed to unmount the camera filesystem during guarded cleanup"
@@ -181,6 +207,10 @@ cleanup_guarded_snapshot () {
     if [ "$camera_still_mounted" = true ]
     then
       log "Refusing to restore the USB gadget while the camera filesystem is mounted"
+    elif [ -r "$gadget_active_file" ] &&
+         [ -n "$(head -n 1 -- "$gadget_active_file" 2> /dev/null || true)" ]
+    then
+      : # The raw helper already restored USB immediately after its reflink.
     elif ! "$enable_gadget"
     then
       log "Failed to restore the USB gadget after guarded snapshot processing"
@@ -197,6 +227,10 @@ trap 'exit 130' HUP INT TERM
 
 if [ -r "$gadget_active_file" ] &&
    [ -n "$(head -n 1 -- "$gadget_active_file" 2> /dev/null || true)" ]
+then
+  restore_gadget=true
+fi
+if [ "$connect_after_copy" = true ]
 then
   restore_gadget=true
 fi
@@ -259,11 +293,10 @@ fi
 
 if ! "$umount_command" "$cam_mount"
 then
-  if ! "$umount_command" -l "$cam_mount"
-  then
-    log "Failed to unmount the live camera filesystem; snapshot skipped"
-    exit 1
-  fi
+  # Lazy unmount can hide an active filesystem from findmnt while open handles
+  # still refer to it. Require a completed unmount before exporting USB again.
+  log "Failed to unmount the live camera filesystem; snapshot skipped"
+  exit 1
 fi
 if "$findmnt_command" --mountpoint "$cam_mount" > /dev/null 2>&1
 then
@@ -279,6 +312,10 @@ then
 fi
 
 snapshot_args=()
+if [ "$leave_disconnected" = false ] && [ "$restore_gadget" = true ]
+then
+  snapshot_args+=(--resume-gadget)
+fi
 if [ -n "$snapshot_mode" ]
 then
   snapshot_args+=("$snapshot_mode")

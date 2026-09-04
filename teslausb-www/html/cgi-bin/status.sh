@@ -7,12 +7,55 @@ source "$script_dir/cgi-common.sh"
 
 cgi_require_method GET
 
-if [[ -e /sys/kernel/config/usb_gadget/teslausb ]]
-then
-  drives_active=yes
-else
+function read_drive_status {
+  local gadget_root="${1:-/sys/kernel/config/usb_gadget/teslausb}"
+  local udc_class="${2:-/sys/class/udc}"
+  local udc camera_image
+
+  # Keep the legacy enable/disable field aligned with the toggle endpoint.
+  # A prepared gadget alone does not mean the host can see its camera drive.
   drives_active=no
-fi
+  camera_drive_state=disabled
+  usb_state=unknown
+  [[ -d "$gadget_root" ]] || return 0
+  drives_active=yes
+  camera_drive_state=unknown
+  udc=$(cat "$gadget_root/UDC" 2>/dev/null) || return 0
+  if [[ -z "$udc" ]]
+  then
+    camera_drive_state=prepared
+    usb_state='not attached'
+    return 0
+  fi
+  [[ "$udc" != */* && "$udc" != . && "$udc" != .. ]] || return 0
+  usb_state=$(cat "$udc_class/$udc/state" 2>/dev/null) || usb_state=unknown
+
+  if [[ ! -L "$gadget_root/configs/c.1/mass_storage.0" ]]
+  then
+    camera_drive_state=prepared
+    return 0
+  fi
+  camera_image=$(cat "$gadget_root/configs/c.1/mass_storage.0/lun.0/file" 2>/dev/null) || return 0
+  if [[ -z "$camera_image" ]]
+  then
+    camera_drive_state=paused
+    return 0
+  fi
+  if [[ "$camera_image" != /backingfiles/cam_disk.bin ]]
+  then
+    camera_drive_state=unavailable
+    return 0
+  fi
+  case "$usb_state" in
+    configured) camera_drive_state=connected ;;
+    suspended) camera_drive_state=suspended ;;
+    'not attached') camera_drive_state=disconnected ;;
+    attached | powered | default | addressed) camera_drive_state=connecting ;;
+    *) camera_drive_state=unknown ;;
+  esac
+}
+
+read_drive_status
 
 readarray -t snapshots < <(find /backingfiles/snapshots/ -name snap.bin 2> /dev/null | sort)
 readonly numsnapshots=${#snapshots[@]}
@@ -148,6 +191,8 @@ cgi_json_quote "$total_space"; total_space_json="$CGI_JSON"
 cgi_json_quote "$free_space"; free_space_json="$CGI_JSON"
 cgi_json_quote "$ut"; uptime_json="$CGI_JSON"
 cgi_json_quote "$drives_active"; drives_active_json="$CGI_JSON"
+cgi_json_quote "$camera_drive_state"; camera_drive_state_json="$CGI_JSON"
+cgi_json_quote "$usb_state"; usb_state_json="$CGI_JSON"
 cgi_json_quote "$wifi_ssid"; wifi_ssid_json="$CGI_JSON"
 cgi_json_quote "$wifi_freq"; wifi_freq_json="$CGI_JSON"
 cgi_json_quote "$wifi_strength"; wifi_strength_json="$CGI_JSON"
@@ -170,6 +215,8 @@ cat << EOF
    "free_space": $free_space_json,
    "uptime": $uptime_json,
    "drives_active": $drives_active_json,
+   "camera_drive_state": $camera_drive_state_json,
+   "usb_state": $usb_state_json,
    "wifi_ssid": $wifi_ssid_json,
    "wifi_freq": $wifi_freq_json,
    "wifi_strength": $wifi_strength_json,

@@ -2,6 +2,28 @@
 
 source /root/bin/envsetup.sh
 
+function ensure_live_drives_unmounted () {
+  local mounted_targets target
+  # Read the kernel mount table once so a failed inspection cannot look like
+  # four successfully unmounted drives. These are the live image mountpoints
+  # installed by setup; immutable snapshot mounts are intentionally allowed.
+  if ! mounted_targets=$(findmnt --kernel --list --raw --noheadings --output TARGET) ||
+     [ -z "$mounted_targets" ]
+  then
+    echo "error: unable to verify that live USB images are unmounted" >&2
+    return 69
+  fi
+  while IFS= read -r target
+  do
+    case "$target" in
+      /mnt/cam | /mnt/music | /mnt/lightshow | /mnt/boombox)
+        echo "error: refusing USB export while $target is mounted" >&2
+        return 69
+        ;;
+    esac
+  done <<< "$mounted_targets"
+}
+
 if [[ "${TESLAUSB_GADGET_LOCK_HELD:-}" != 1 ]]
 then
   readonly gadget_lock_dir=/run/teslausb
@@ -25,6 +47,10 @@ then
   }
   export TESLAUSB_GADGET_LOCK_HELD=1
 fi
+
+# Every caller, including startup and post-archive recovery, must preserve the
+# guarded snapshot's refusal to expose an image that is still mounted locally.
+ensure_live_drives_unmounted
 
 if ! configfs_root=$(findmnt -o TARGET -n configfs)
 then

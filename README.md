@@ -224,6 +224,11 @@ See [USB gadget repair](doc/USBGadgetRepair.md).
 
 ## Upgrading an existing installation
 
+For the cleanup-delay and independent-clock corrections, connection-status
+semantics, and a safe on-device test plan, see
+[runtime maintenance and verification](doc/RuntimeMaintenance.md). These changes
+extend the unpublished rc.5 candidate; they are not present in the rc.4 image.
+
 - Do **not** perform an in-place Bookworm-to-Trixie or 32-bit-to-64-bit OS
   upgrade. Back up the private configuration and keys, flash a clean arm64
   Trixie image, and restore through the JSON configuration workflow.

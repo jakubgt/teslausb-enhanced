@@ -37,6 +37,13 @@ vm.runInContext(
   extractBetween("function parseWifiStrength", "async function toggledrivesfunc"),
   context
 );
+vm.runInContext(
+  extractBetween("function spaceString", "const longDateOpts"),
+  context
+);
+assert.equal(context.spaceString(37 * 1024 ** 3), "37 GiB");
+assert.equal(context.spaceString(512 * 1024 ** 2), "0.5 GiB");
+assert.equal(context.spaceString(64 * 1024 ** 2), "64 MiB");
 context.spaceString = (bytes) => `${bytes} bytes`;
 vm.runInContext(
   extractBetween("function archiveStatusFromSystemStatus", "function renderArchiveStatus"),
@@ -62,6 +69,27 @@ assert.equal(context.parseWifiStrength("1/0"), null);
 assert.equal(context.parseWifiStrength(""), null);
 assert.equal(context.parseWifiStrength("globalThis.compromised = true"), null);
 assert.equal(context.compromised, undefined);
+
+assert.equal(
+  context.cameraDriveStatusText({camera_drive_state: "connected"}),
+  "Camera drive: connected to host");
+assert.equal(
+  context.cameraDriveStatusText({camera_drive_state: "paused", drives_active: "yes"}),
+  "Camera drive: paused; camera image detached");
+assert.equal(
+  context.cameraDriveStatusText({camera_drive_state: "prepared", drives_active: "yes"}),
+  "Camera drive: prepared, not connected");
+assert.equal(
+  context.cameraDriveStatusText({camera_drive_state: "suspended"}),
+  "Camera drive: host suspended USB");
+assert.equal(
+  context.cameraDriveStatusText({camera_drive_state: "disconnected"}),
+  "Camera drive: waiting for a USB host");
+for (const incompleteStatus of [undefined, {drives_active: "yes"},
+  {camera_drive_state: "toString"}, {camera_drive_state: "future-state"}]) {
+  assert.equal(context.cameraDriveStatusText(incompleteStatus),
+    "Camera drive: connection status unavailable");
+}
 
 const archiveView = context.archiveStatusView({
   archive_status: {
@@ -159,6 +187,8 @@ assert.match(inlineScript, /Confirm USB gadget repair/);
 assert.match(html, /id="repairgadgettext" role="status" aria-live="polite"/);
 assert.match(html, /class="status_encrypted" hidden role="alert"/);
 assert.match(inlineScript, /renderEncryptedClipStatus\(statusvals\)/);
+assert.match(inlineScript, /drivesdiv\.innerText = cameraDriveStatusText\(statusvals\)/);
+assert.doesNotMatch(inlineScript, /Drives: visible to host/);
 assert.match(inlineScript, /fetch\('\/api\/v1\/speed-test\?' \+ SPEED_TEST_SECONDS/);
 assert.match(diagnosticsHtml, /fetchWithTimeout\("\/api\/v1\/actions\/diagnostics",\s*\{\s*method: "POST"/);
 assert.match(diagnosticsHtml, /"X-TeslaUSB-Request": "1"/);

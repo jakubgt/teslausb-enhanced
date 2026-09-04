@@ -448,6 +448,8 @@ function get_common_scripts () {
   copy_script pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py /root/bin
   copy_script run/remountfs_rw /root/bin
   copy_script run/make_snapshot.sh /root/bin
+  copy_script run/snapshot_lock.sh /root/bin
+  copy_script run/sync-time.py /root/bin
   copy_script run/encrypted_clips_path_status.sh /root/bin
   copy_script run/detect_encrypted_clips.sh /root/bin
   copy_script run/guarded_snapshot.sh /root/bin
@@ -1252,6 +1254,17 @@ function diagnose {
     echo -e "====== summary ======"
     echo -e "hardware: ${hardware}"
     echo -e "OS: ${os}"
+    echo "clock UTC: $(date --utc --iso-8601=seconds)"
+    if [ -f /run/teslausb-time/status.json ] && [ ! -L /run/teslausb-time/status.json ]
+    then
+      echo 'clock worker status (last verification, not a guarantee of current connectivity):'
+      head -c 4096 /run/teslausb-time/status.json
+      echo
+    else
+      echo 'clock worker status: unavailable'
+    fi
+    echo 'NTP daemon clock status:'
+    timeout --kill-after=2s 5s ntpq -n -c 'rv 0 leap,stratum' 127.0.0.1 2>&1 || true
     if [ "${ARCHIVE_SYSTEM:-unset}" = "unset" ]
     then
       echo "ERROR: no archive method specified!"

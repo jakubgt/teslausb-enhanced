@@ -60,8 +60,10 @@ shellcheck --exclude=SC1091 \
            ./run/detect_encrypted_clips.sh \
            ./run/encrypted_clips_path_status.sh \
            ./run/guarded_snapshot.sh \
+           ./run/enable_gadget.sh \
            ./run/force_sync.sh \
            ./run/make_snapshot.sh \
+           ./run/snapshot_lock.sh \
            ./run/mountimage \
            ./run/mountoptsforimage \
            ./run/repair_gadget.sh \
@@ -105,6 +107,9 @@ shellcheck --exclude=SC1091 \
            ./tests/dependency-strategy-test.sh \
            ./tests/encrypted-clips-test.sh \
            ./tests/gadget-repair-test.sh \
+           ./tests/gadget-status-test.sh \
+           ./tests/enable-gadget-safety-test.sh \
+           ./tests/snapshot-concurrency-test.sh \
            ./tests/make-snapshot-failure-test.sh \
            ./tests/mount-helpers-test.sh \
            ./tests/prepare-image-test.sh \

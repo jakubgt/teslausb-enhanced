@@ -52,6 +52,7 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
           bash ./tests/mount-helpers-test.sh
           bash ./tests/make-snapshot-failure-test.sh
+          bash ./tests/snapshot-concurrency-test.sh
           bash ./tests/copy-music-test.sh
           bash ./tests/cgi-security-test.sh
           bash ./tests/archive-common-test.sh
@@ -59,6 +60,8 @@ jobs:
           bash ./tests/runtime-qol-test.sh
           bash ./tests/dependency-strategy-test.sh
           bash ./tests/gadget-repair-test.sh
+          bash ./tests/gadget-status-test.sh
+          bash ./tests/enable-gadget-safety-test.sh
           bash ./tests/prepare-image-test.sh
           sudo bash ./tests/declarative-config-test.sh
           sudo bash ./tests/encrypted-clips-test.sh

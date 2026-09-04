@@ -238,9 +238,11 @@ touch "$guard_fixture/envsetup"
 
 printf '%s\n' '#!/bin/bash' 'set -eu' \
   '[ "${TESLAUSB_GADGET_LOCK_HELD:-}" = 1 ]' \
+  ': > "$TESLAUSB_GADGET_ACTIVE_FILE"' \
   'printf "disable\n" >> "$FAKE_CALL_LOG"' > "$guard_fixture/bin/disable"
 printf '%s\n' '#!/bin/bash' 'set -eu' \
   '[ "${TESLAUSB_GADGET_LOCK_HELD:-}" = 1 ]' \
+  'printf "dwc2-test\n" > "$TESLAUSB_GADGET_ACTIVE_FILE"' \
   'printf "enable\n" >> "$FAKE_CALL_LOG"' > "$guard_fixture/bin/enable"
 printf '%s\n' '#!/bin/bash' 'set -eu' \
   '[ "${TESLAUSB_GADGET_LOCK_HELD:-}" = 1 ]' \
@@ -293,7 +295,7 @@ run_guarded_snapshot() {
 mkdir -p "$guard_fixture/cam/TeslaCam/EncryptedClips"
 true > "$guard_fixture/calls"
 run_guarded_snapshot nofsck
-[ "$(<"$guard_fixture/calls")" = $'disable\nmount\numount\nsnapshot-start:nofsck\nsnapshot-end\nenable' ]
+[ "$(<"$guard_fixture/calls")" = $'disable\nmount\numount\nsnapshot-start:--resume-gadget nofsck\nsnapshot-end\nenable' ]
 
 mkdir -p "$guard_fixture/cam/TeslaCam/EncryptedClips/event"
 true > "$guard_fixture/calls"
@@ -342,10 +344,11 @@ FAKE_PATH_STATUS_HELPER="$unknown_helper" \
 rm -f -- "$guard_fixture/status/status.json"
 
 true > "$guard_fixture/calls"
+printf 'dwc2-test\n' > "$guard_fixture/UDC"
 run_guarded_snapshot nofsck
-[ "$(<"$guard_fixture/calls")" = $'disable\nmount\numount\nsnapshot-start:nofsck\nsnapshot-end\nenable' ]
+[ "$(<"$guard_fixture/calls")" = $'disable\nmount\numount\nsnapshot-start:--resume-gadget nofsck\nsnapshot-end\nenable' ]
 
-# If neither a normal nor lazy unmount can be verified, fail closed and do not
+# If a completed normal unmount cannot be verified, fail closed and do not
 # reconnect the gadget to the still-mounted backing image.
 true > "$guard_fixture/calls"
 snapshot_status=0
@@ -363,6 +366,7 @@ rm -f -- "$guard_fixture/mounted"
 true > "$guard_fixture/calls"
 snapshot_started="$guard_fixture/snapshot-started"
 snapshot_release="$guard_fixture/snapshot-release"
+printf 'dwc2-test\n' > "$guard_fixture/UDC"
 FAKE_SNAPSHOT_STARTED="$snapshot_started" \
 FAKE_SNAPSHOT_WAIT_FOR="$snapshot_release" \
   run_guarded_snapshot nofsck > "$guard_fixture/first.out" 2>&1 &
@@ -379,7 +383,7 @@ done
 snapshot_status=0
 GUARD_LOCK_TIMEOUT=0 run_guarded_snapshot --leave-disconnected nofsck \
   > "$guard_fixture/second.out" 2>&1 || snapshot_status=$?
-[ "$snapshot_status" -eq 75 ]
+[ "$snapshot_status" -eq 99 ]
 [ "$(grep -c '^disable$' "$guard_fixture/calls")" -eq 1 ]
 [ "$(grep -c '^snapshot-start:' "$guard_fixture/calls")" -eq 1 ]
 touch "$snapshot_release"

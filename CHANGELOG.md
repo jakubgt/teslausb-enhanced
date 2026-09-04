@@ -10,6 +10,27 @@ Fifth release candidate for the downloadable Raspberry Pi Zero 2 W image. This
 candidate must be built from the rc.5 source; the previously published rc.4
 image does not contain these repairs.
 
+### Runtime corrections added 2026-09-04
+
+- Periodic snapshots acquire the shared storage lock before disconnecting USB.
+  Busy cleanup defers the snapshot instead of holding the camera drive offline
+  while old snapshots are deleted. The inherited lock descriptor is checked
+  against the actual snapshots directory.
+- Startup and periodic snapshots reconnect USB immediately after the immutable
+  copy-on-write copy, before snapshot filesystem checks, indexing, comparison,
+  and duplicate deletion. Archive operations retain their separate disconnected
+  workflow. Live encrypted or uninspectable recordings still block snapshots.
+- Network time synchronization runs independently of archive configuration,
+  with bounded attempts and background retries. Verified time is cached as an
+  explicitly unsynchronized offline lower bound; diagnostics report the last
+  verification separately from the current clock.
+- Dashboard USB status uses the active camera LUN, controller binding, and
+  host connection state. A prepared gadget no longer implies a connected
+  camera drive, and connection status does not claim that Tesla is recording.
+  Binary storage quantities are labeled GiB/MiB.
+- These changes extend the still-unpublished rc.5 source candidate. They do not
+  replace any published image or constitute physical-hardware validation.
+
 ### Fixed
 
 - First-boot command-line normalization removes the standalone Raspberry Pi OS

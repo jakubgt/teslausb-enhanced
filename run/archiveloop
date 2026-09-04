@@ -204,14 +204,16 @@ function update_encrypted_clip_status () {
 }
 
 # Return 75 when an encrypted-clip directory intentionally blocks snapshot
-# creation or another gadget operation owns the lock. Other non-zero statuses
+# creation, and 99 when a busy operation defers it without disconnecting USB.
+# Other non-zero statuses
 # are operational failures. The external helper owns the shared gadget lock
 # across disconnect, the live directory-entry check, unmount verification, and
 # the raw block-level snapshot.
 function prepare_camera_snapshot () {
   local snapshot_mode="${1:-}"
+  local usb_mode="${2:---leave-disconnected}"
   local snapshot_status=0
-  local -a snapshot_args=(--leave-disconnected)
+  local -a snapshot_args=("$usb_mode")
 
   if [ -n "$snapshot_mode" ]
   then
@@ -225,10 +227,14 @@ function prepare_camera_snapshot () {
     75)
       if [ "$encrypted_warning_logged" = false ]
       then
-        log "WARNING: Tesla EncryptedClips may be present or another gadget operation is active; camera snapshot and camera-clip archiving skipped"
+        log "WARNING: Tesla EncryptedClips may be present; camera snapshot and camera-clip archiving skipped"
         encrypted_warning_logged=true
       fi
       return 75
+      ;;
+    99)
+      log "Camera snapshot deferred while another storage or USB operation finishes"
+      return 99
       ;;
     *)
       log "Guarded camera snapshot failed; camera-clip archiving skipped"
@@ -929,38 +935,28 @@ function doubleblink () {
   echo 0 > "$STATUSLED/invert"
 }
 
-function set_time () {
-  log "Trying to set time..."
-  local -r uptime_start=$(awk '{print $1}' /proc/uptime)
-  local -r clocktime_start=$(date +%s.%N)
-  for _ in {1..5}
-  do
-    if sntp -S time.google.com || ntpdig -S time.google.com || sntp -S 129.6.15.28 || ntpdig -S 129.6.15.28 #(time-a-g.nist.gov)
-    then
-      local -r uptime_end=$(awk '{print $1}' /proc/uptime)
-      local -r clocktime_end=$(date +%s.%N)
-      log "$(awk "BEGIN {printf \"Time adjusted by %f seconds after %f seconds\", $clocktime_end-$clocktime_start, $uptime_end-$uptime_start}")"
-      return
-    fi
-    log "ntpdig failed, retrying..."
-    sleep 2
-  done
-  log "Failed to set time"
-}
-
 function snapshotloop {
   echo -n snapshotloop > /proc/self/comm
+  local next_snapshot_delay="${SNAPSHOT_INTERVAL:-3480}"
   while true
   do
-    sleep "${SNAPSHOT_INTERVAL:-3480}"
+    sleep "$next_snapshot_delay"
     /root/bin/waitforidle || true
     local snapshot_status=0
-    prepare_camera_snapshot || snapshot_status=$?
-    if [ "$snapshot_status" -ne 0 ] && [ "$snapshot_status" -ne 75 ]
+    prepare_camera_snapshot '' --connect-after-copy || snapshot_status=$?
+    if [ "$snapshot_status" -ne 0 ] && [ "$snapshot_status" -ne 75 ] && [ "$snapshot_status" -ne 99 ]
     then
       log "Background camera snapshot failed with status $snapshot_status"
     fi
-    connect_usb_drives_to_host || log "Failed to reconnect USB drives after background snapshot check"
+    if [ "$snapshot_status" -eq 99 ]
+    then
+      next_snapshot_delay=60
+    else
+      next_snapshot_delay="${SNAPSHOT_INTERVAL:-3480}"
+    fi
+    # The guard restores USB immediately after the immutable copy, or during
+    # its error cleanup. A busy result leaves the current gadget untouched.
+    # Do not override its refusal to reconnect a still-mounted live image.
   done
 }
 
@@ -1062,6 +1058,14 @@ log "Starting archiveloop at $(awk '{print $1}' /proc/uptime) seconds uptime..."
 archive_status_write idle '' "$(archive_timestamp)" 0 0 0 0 \
   'Archive service started' || log 'Failed to initialize archive status'
 
+# No archive destination (or an unreachable one) must not disable time sync.
+# The worker owns its lock and deadlines; network retries never delay USB.
+/usr/bin/python3 /root/bin/sync-time.py 2>&1 |
+  while IFS= read -r clock_line
+  do
+    log "$clock_line"
+  done &
+
 set_sys_param /proc/sys/vm/dirty_background_bytes DIRTY_BACKGROUND_BYTES 65536
 set_sys_param /proc/sys/vm/dirty_ratio DIRTY_RATIO 80
 set_sys_param /sys/devices/system/cpu/cpufreq/policy0/scaling_governor CPU_GOVERNOR conservative
@@ -1085,7 +1089,7 @@ if has_cam_disk
 then
   # don't need another fsck because fix_errors_in_images already did that
   snapshot_status=0
-  prepare_camera_snapshot nofsck || snapshot_status=$?
+  prepare_camera_snapshot nofsck --connect-after-copy || snapshot_status=$?
   if [ "$snapshot_status" -ne 0 ]
   then
     camera_archive_allowed=false
@@ -1097,8 +1101,6 @@ connect_usb_drives_to_host
 if archive_is_reachable
 then
   fastblink
-
-  set_time
 
   /root/bin/awake_start || true
 
@@ -1120,8 +1122,6 @@ do
   wait_for_archive_to_be_reachable
 
   fastblink
-
-  set_time
 
   /root/bin/awake_start || true
 
