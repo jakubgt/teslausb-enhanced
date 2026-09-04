@@ -32,6 +32,8 @@ jobs:
           ./pi-gen-sources/00-teslausb-tweaks/files/teslausb_config.py
       - name: Run Python helper tests
         run: python3 -m unittest discover -s ./tests -p 'test_*.py' -v
+      - name: Test card maintenance recovery and SSH enrollment
+        run: sudo python3 -m unittest discover -s ./tools/card-repair -p 'test_*.py' -v
       - name: Compile the FUSE helper
         shell: bash
         run: |
