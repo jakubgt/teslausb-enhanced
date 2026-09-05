@@ -12,6 +12,23 @@ image does not contain these repairs.
 
 ### Runtime corrections added 2026-09-04
 
+- Read the complete NTP daemon status instead of requesting variables that
+  suppress its synchronization header, including correct binary leap flags.
+  Accept NTPsec's exact clock-step diagnostics alongside its JSON result, and
+  step using a fresh sample from the validated responding numeric address.
+  This avoids stale multi-address replies without disabling IPv6. Keep bounded
+  retries, request spacing, service restoration, and actual clock verification.
+- Correct the incompatible `findmnt --list --raw` mount check and exercise the
+  real util-linux parser in regression tests.
+- Check unmounted FAT/exFAT images read-only first, require clean verification
+  after repairs, and provide bounded temporary compressed-RAM swap on small
+  boards without creating SD-card swap files. Owned temporary devices tolerate
+  brief cleanup contention without ever resetting active or unrelated swap.
+- Preserve filesystem-check exit statuses, serialize live checks with USB and
+  snapshot operations, and block cleanup/export after failed checks. Terminal
+  filesystem failures require attention; ordinary lock contention remains
+  retryable. Linux process-group interruption and real-lock tests cover these
+  boundaries. Windows checkouts preserve Linux line endings.
 - The bundled dashboard has a collapsible Advanced maintenance panel with
   read-only SSH status, a validated copyable connection command, and bounded
   downloads of saved diagnostics and maintenance logs. It adds no browser

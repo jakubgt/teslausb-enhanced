@@ -7,7 +7,8 @@ function ensure_live_drives_unmounted () {
   # Read the kernel mount table once so a failed inspection cannot look like
   # four successfully unmounted drives. These are the live image mountpoints
   # installed by setup; immutable snapshot mounts are intentionally allowed.
-  if ! mounted_targets=$(findmnt --kernel --list --raw --noheadings --output TARGET) ||
+  # --raw already disables tree output; --list and --raw are mutually exclusive.
+  if ! mounted_targets=$(findmnt --kernel --raw --noheadings --output TARGET) ||
      [ -z "$mounted_targets" ]
   then
     echo "error: unable to verify that live USB images are unmounted" >&2

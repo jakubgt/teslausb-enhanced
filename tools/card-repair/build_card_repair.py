@@ -16,6 +16,7 @@ TARGETS = [
     ("run/archiveloop", "/root/bin/archiveloop", "bash", 0o755),
     ("run/snapshot_lock.sh", "/root/bin/snapshot_lock.sh", "bash", 0o755),
     ("run/sync-time.py", "/root/bin/sync-time.py", "python", 0o755),
+    ("run/check-filesystem.py", "/root/bin/check-filesystem.py", "python", 0o755),
     ("run/enable_gadget.sh", "/root/bin/enable_gadget.sh", "bash", 0o755),
     ("run/guarded_snapshot.sh", "/root/bin/guarded_snapshot.sh", "bash", 0o755),
     ("run/make_snapshot.sh", "/root/bin/make_snapshot.sh", "bash", 0o755),

@@ -106,6 +106,15 @@ configure `MUSIC_SIZE`, `LIGHTSHOW_SIZE`, `BOOMBOX_SIZE`, or
 `INCREASE_ROOT_SIZE`, subtract those allocations from the table ceiling before
 choosing `CAM_SIZE`.
 
+The table limits storage allocation, not filesystem-check memory. Large FAT32
+volumes can require more RAM to check than a Zero 2 W has available. The runtime
+checks an unmounted filesystem read-only first and repairs only when needed,
+then requires a clean verification pass. On boards with 1 GiB RAM or less it
+uses a temporary, bounded compressed-RAM device during the check; it does not
+create an SD-card swap file or enable persistent swap services. A failed live
+drive check stops recording startup instead of repeatedly retrying or reporting
+success. Do not reformat a populated card to resolve a checker-memory error.
+
 ### Flash and configure
 
 1. After rc.5 is published, download its [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz)

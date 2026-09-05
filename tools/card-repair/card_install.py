@@ -34,6 +34,7 @@ DROPIN_DATA = (
     f"ConditionPathExists=!{PENDING}\n"
     "[Service]\n"
     "KillMode=control-group\n"
+    "RestartPreventExitStatus=78\n"
 ).encode()
 
 

@@ -8,6 +8,7 @@ lock. A saved time is only a lower-bound fallback, never proof of NTP sync.
 
 import contextlib
 import datetime
+import ipaddress
 import json
 import math
 import os
@@ -29,6 +30,7 @@ TIME_UNITS = ("ntpsec.service", "ntp.service", "systemd-timesyncd.service",
 MIN_EPOCH = 1577836800  # 2020-01-01
 MAX_EPOCH = 4102444800  # 2100-01-01
 RECHECK_SECONDS = 3600
+NTP_REQUEST_GAP = 2
 
 
 def plausible_epoch(value):
@@ -103,10 +105,34 @@ def command(args, timeout=5):
 
 
 def valid_ntp_reply(result, adjusted=False):
+    """Return (sample epoch, numeric endpoint), never just apparent success."""
     if result is None or result.returncode != 0:
         return None
     try:
-        reply = json.loads(result.stdout)
+        lines = result.stdout.splitlines()
+        if adjusted:
+            # NTPsec's C clock setter may write these diagnostics to stdout
+            # before buffered Python JSON (or after it). Do not discard other
+            # output, duplicate diagnostics, or multiple JSON records.
+            steps, changes, record = [], [], []
+            for line in lines:
+                step = re.fullmatch(r"CLOCK: time stepped by (-?[0-9]+\.[0-9]{6})", line)
+                change = re.fullmatch(
+                    r"CLOCK: time changed from ([0-9]{4}-[0-9]{2}-[0-9]{2}) "
+                    r"to ([0-9]{4}-[0-9]{2}-[0-9]{2})", line)
+                if step:
+                    steps.append(float(step[1]))
+                elif change:
+                    changes.append(tuple(datetime.date.fromisoformat(value)
+                                         for value in change.groups()))
+                else:
+                    record.append(line)
+            if (len(steps) > 1 or len(changes) > 1
+                    or changes and not steps
+                    or any(not math.isfinite(value) for value in steps)):
+                return None
+            lines = record
+        reply = json.loads("\n".join(lines))
         if (type(reply) is not dict or type(reply.get("stratum")) is not int
                 or not 1 <= reply["stratum"] <= 15
                 # The manual's JSON example uses "noleap"; NTPsec's
@@ -114,12 +140,14 @@ def valid_ntp_reply(result, adjusted=False):
                 or reply.get("leap") not in ("no-leap", "noleap", "add-leap", "del-leap")
                 or reply.get("adjusted") is not adjusted
                 or type(reply.get("offset")) not in (int, float)
-                or not math.isfinite(reply["offset"])):
+                or not math.isfinite(reply["offset"])
+                or type(reply.get("ip")) is not str or "%" in reply["ip"]):
             return None
+        address = str(ipaddress.ip_address(reply["ip"]))
         stamp = datetime.datetime.fromisoformat(reply["time"])
         if stamp.tzinfo is None or not plausible_epoch(stamp.timestamp()):
             return None
-        return stamp.timestamp()
+        return stamp.timestamp(), address
     except (ValueError, TypeError, KeyError, OverflowError):
         return None
 
@@ -154,10 +182,15 @@ class ClockWorker:
             self.log(f"Could not publish clock status: {error}")
 
     def daemon_synced(self):
-        result = command(["ntpq", "-n", "-c", "rv 0 leap,stratum", "127.0.0.1"])
+        # NTPsec omits the decoded status header when rv names variables.
+        # Request all system variables so sync_ntp is available to verify
+        # the source, rather than trusting a plausible wall clock alone.
+        result = command(["ntpq", "-n", "-c", "rv 0", "127.0.0.1"])
         if result is None or result.returncode != 0:
             return False
-        leap = re.search(r"\bleap=(0?[012])(?=,|\s|$)", result.stdout)
+        # Cooked ntpq renders LI as two bits: 00/01/10 are valid, 11 is
+        # unsynchronized. Also accept the equivalent single-digit values.
+        leap = re.search(r"\bleap=(?:00|01|10|[012])(?=,|\s|$)", result.stdout)
         stratum = re.search(r"\bstratum=(\d+)(?=,|\s|$)", result.stdout)
         # A configured local/undisciplined clock is not network verification.
         return bool(leap and stratum and 1 <= int(stratum[1]) <= 15
@@ -238,16 +271,25 @@ class ClockWorker:
             # ntpdig's per-address timeout does not bound DNS/all addresses;
             # the outer subprocess deadline covers the complete invocation.
             probe = command(["ntpdig", "-j", "-t", "3", server], timeout=15)
-            if valid_ntp_reply(probe) is None:
+            sample = valid_ntp_reply(probe)
+            if sample is None:
                 continue
+            # Avoid immediately querying the same public server twice. Wait
+            # before pausing daemons; the actual step obtains a fresh sample.
+            time.sleep(NTP_REQUEST_GAP)
+            address = sample[1]
             try:
                 with self.exclusive_clock():
-                    result = command(["ntpdig", "-j", "-S", "-t", "3", server],
+                    # A hostname can leave ntpdig waiting for other addresses
+                    # after receiving its selected sample. Pin this fresh step
+                    # to the responding numeric endpoint (IPv4 or IPv6).
+                    result = command(["ntpdig", "-j", "-S", "-t", "3", address],
                                      timeout=15)
-                    epoch = valid_ntp_reply(result, adjusted=True)
+                    stepped = valid_ntp_reply(result, adjusted=True)
                     # JSON is emitted before clock_settime. Require successful
                     # process exit AND confirmation that the local step took effect.
-                    if epoch is not None and abs(time.time() - epoch) <= 10:
+                    if (stepped is not None and stepped[1] == address
+                            and abs(time.time() - stepped[0]) <= 10):
                         return server
             except OSError:
                 continue

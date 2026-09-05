@@ -23,7 +23,7 @@ def result(text="", status=0):
 
 def reply(adjusted=False, **changes):
     value = {"time": clock.utc(NOW), "stratum": 2, "leap": "no-leap",
-             "adjusted": adjusted, "offset": 100.0}
+             "adjusted": adjusted, "offset": 100.0, "ip": "192.0.2.1"}
     value.update(changes)
     return result(json.dumps(value))
 
@@ -36,11 +36,15 @@ class ClockTests(unittest.TestCase):
     def setUp(self):
         self.worker = clock.ClockWorker()
         self.worker.log = mock.Mock()
+        sleep = mock.patch.object(clock.time, "sleep")
+        self.sleep = sleep.start()
+        self.addCleanup(sleep.stop)
 
     def test_ntp_reply_rejects_untrusted_or_invalid_success_reports(self):
-        self.assertEqual(NOW, clock.valid_ntp_reply(reply()))
-        self.assertEqual(NOW, clock.valid_ntp_reply(reply(True), adjusted=True))
-        self.assertEqual(NOW, clock.valid_ntp_reply(reply(leap="noleap")))
+        expected = (NOW, "192.0.2.1")
+        self.assertEqual(expected, clock.valid_ntp_reply(reply()))
+        self.assertEqual(expected, clock.valid_ntp_reply(reply(True), adjusted=True))
+        self.assertEqual(expected, clock.valid_ntp_reply(reply(leap="noleap")))
         for invalid in (None, result("{}"), result("not json"), result("[]"),
                         reply(stratum=0), reply(stratum=16), reply(stratum=True),
                         reply(leap="unsync"), reply(offset=float("nan")),
@@ -50,6 +54,35 @@ class ClockTests(unittest.TestCase):
                         reply(adjusted=True), result(reply().stdout, status=1)):
             with self.subTest(invalid=invalid):
                 self.assertIsNone(clock.valid_ntp_reply(invalid))
+
+    def test_step_reply_allows_only_known_clock_diagnostics_and_one_record(self):
+        step = "CLOCK: time stepped by 0.014947\n"
+        changed = "CLOCK: time changed from 2026-08-01 to 2026-09-04\n"
+        record = reply(True).stdout + "\n"
+        for output in (step + record, record + step, step + changed + record,
+                       record + step + changed):
+            with self.subTest(output=output):
+                self.assertEqual((NOW, "192.0.2.1"),
+                                 clock.valid_ntp_reply(result(output), adjusted=True))
+        for output in (step + reply().stdout, "unrelated warning\n" + record,
+                       "CLOCK: time stepped by nan\n" + record,
+                       "CLOCK: time stepped by 0.014947 trailing\n" + record,
+                       step + step + record, changed + record,
+                       step + changed + changed + record,
+                       step + "CLOCK: time changed from 2026-99-01 to 2026-09-04\n" + record,
+                       step + record + record, step):
+            with self.subTest(output=output):
+                self.assertIsNone(clock.valid_ntp_reply(result(output), adjusted=True))
+        self.assertIsNone(clock.valid_ntp_reply(result(step + reply().stdout)))
+        self.assertIsNone(clock.valid_ntp_reply(result(step + record, 1), adjusted=True))
+
+    def test_ntp_reply_requires_numeric_ip_and_normalizes_ipv6(self):
+        self.assertEqual((NOW, "2001:db8::1"),
+                         clock.valid_ntp_reply(reply(ip="2001:0db8:0:0:0:0:0:1")))
+        for address in (None, True, 2130706433, "", "time.google.com",
+                        "--help", "192.0.2.999", "192.0.2.1 extra", "fe80::1%eth0"):
+            with self.subTest(address=address):
+                self.assertIsNone(clock.valid_ntp_reply(reply(ip=address)))
 
     def test_archiveloop_launches_once_in_background_before_camera_or_archive_wait(self):
         source = (REPO_ROOT / "run/archiveloop").read_text(encoding="utf-8")
@@ -88,14 +121,48 @@ class ClockTests(unittest.TestCase):
     def test_ntpd_requires_network_sync_and_valid_leap_and_stratum(self):
         cases = [("status=0615 leap_none, sync_ntp, leap=00, stratum=2", True),
                  ("sync_ntp, leap=01, stratum=3", True),
+                 ("sync_ntp, leap=10, stratum=15", True),
+                 ("sync_ntp, leap=0, stratum=1", True),
+                 ("sync_ntp, leap=1, stratum=2", True),
+                 ("sync_ntp, leap=2, stratum=3", True),
                  ("sync_local, leap=00, stratum=2", False),
+                 ("leap=00, stratum=2", False),
+                 ("sync_ntp, leap=11, stratum=2", False),
                  ("sync_ntp, leap=11, stratum=16", False),
                  ("sync_ntp, leap=00, stratum=0", False),
+                 ("sync_ntp, leap=00, stratum=16", False),
+                 ("sync_ntp, leap=02, stratum=2", False),
+                 ("sync_ntp, leap=3, stratum=2", False),
                  ("sync_ntp, leap=000, stratum=2", False),
+                 ("sync_ntp, leap=10x, stratum=2", False),
                  ("", False)]
         for output, expected in cases:
             with self.subTest(output=output), mock.patch.object(clock, "command", return_value=result(output)):
                 self.assertEqual(expected, self.worker.daemon_synced())
+
+    def test_ntpd_requests_full_status_header_and_accepts_cooked_output(self):
+        output = ('associd=0 status=0615 leap_none, sync_ntp, 1 event, clock_sync,\n'
+                  'version="ntpd ntpsec-1.2.2", processor="aarch64",\n'
+                  'leap=00, stratum=2, precision=-20, rootdelay=12.000,\n'
+                  'refid=192.0.2.1, peer=12345, tc=6\n')
+        with mock.patch.object(clock, "command", return_value=result(output)) as run:
+            self.assertTrue(self.worker.daemon_synced())
+        # Naming leap/stratum makes NTPsec suppress the status header,
+        # including sync_ntp, even when the daemon is synchronized.
+        run.assert_called_once_with(["ntpq", "-n", "-c", "rv 0", "127.0.0.1"])
+
+    def test_ntpd_rejects_actual_unsynchronized_restart_status(self):
+        output = ('associd=0 status=c016 leap_alarm, sync_unspec, 1 event, restart,\n'
+                  'leap=11, stratum=16, refid=INIT, peer=0\n')
+        with mock.patch.object(clock, "command", return_value=result(output)):
+            self.assertFalse(self.worker.daemon_synced())
+
+    def test_ntpd_failed_or_timed_out_query_is_not_verification(self):
+        output = "status=0615 leap_none, sync_ntp, leap=00, stratum=2"
+        for response in (None, result(output, status=1)):
+            with self.subTest(response=response), \
+                    mock.patch.object(clock, "command", return_value=response):
+                self.assertFalse(self.worker.daemon_synced())
 
     def test_already_synchronized_clock_does_not_step_or_stop_ntpd(self):
         with mock.patch.object(self.worker, "daemon_synced", return_value=True), \
@@ -178,6 +245,65 @@ class ClockTests(unittest.TestCase):
             self.assertEqual(clock.SERVERS[0], self.worker.sync_once())
         self.assertEqual(1, sum(args[:2] == ["systemctl", "stop"] for args in calls))
         self.assertEqual(["systemctl", "start", "--no-block", "ntpsec.service"], calls[-1])
+
+    def test_step_pins_responding_ip_and_uses_fresh_sample_after_request_gap(self):
+        for address in ("192.0.2.1", "2001:db8::1"):
+            events = []
+
+            @contextlib.contextmanager
+            def exclusive():
+                events.append("pause")
+                try:
+                    yield
+                finally:
+                    events.append("restore")
+
+            def run(args, timeout=5):
+                events.append(args)
+                self.assertEqual(15, timeout)
+                if "-S" in args:
+                    return result("CLOCK: time stepped by 0.014947\n"
+                                  + reply(True, ip=address).stdout)
+                # Other hostname addresses can time out after this response.
+                return reply(ip=address, time=clock.utc(NOW - 13))
+
+            with self.subTest(address=address), \
+                    mock.patch.object(self.worker, "daemon_synced", return_value=False), \
+                    mock.patch.object(self.worker, "exclusive_clock", side_effect=exclusive), \
+                    mock.patch.object(clock, "command", side_effect=run), \
+                    mock.patch.object(clock.time, "time", return_value=NOW), \
+                    mock.patch.object(clock.time, "sleep", side_effect=lambda seconds: events.append(seconds)):
+                self.assertEqual(clock.SERVERS[0], self.worker.sync_once())
+            self.assertEqual([
+                ["ntpdig", "-j", "-t", "3", clock.SERVERS[0]],
+                2, "pause", ["ntpdig", "-j", "-S", "-t", "3", address], "restore",
+            ], events)
+
+    def test_step_reply_from_different_ip_does_not_report_sync(self):
+        run, calls = self.clock_commands(step_result=reply(True, ip="192.0.2.2"))
+        with mock.patch.object(self.worker, "daemon_synced", return_value=False), \
+                mock.patch.object(clock, "command", side_effect=run), \
+                mock.patch.object(clock.time, "time", return_value=NOW):
+            self.assertIsNone(self.worker.sync_once())
+        self.assertEqual(["systemctl", "start", "--no-block", "ntpsec.service"], calls[-1])
+
+    def test_invalid_probe_endpoint_never_pauses_clock_daemons(self):
+        with mock.patch.object(self.worker, "daemon_synced", return_value=False), \
+                mock.patch.object(clock, "command", return_value=reply(ip="not-an-ip")) as run, \
+                mock.patch.object(self.worker, "exclusive_clock") as exclusive:
+            self.assertIsNone(self.worker.sync_once())
+        exclusive.assert_not_called()
+        self.sleep.assert_not_called()
+        self.assertTrue(all(call.args[0][:2] == ["ntpdig", "-j"] for call in run.call_args_list))
+
+    def test_interrupt_during_request_gap_leaves_daemons_running(self):
+        with mock.patch.object(self.worker, "daemon_synced", return_value=False), \
+                mock.patch.object(clock, "command", return_value=reply()), \
+                mock.patch.object(clock.time, "sleep", side_effect=SystemExit(0)), \
+                mock.patch.object(self.worker, "exclusive_clock") as exclusive:
+            with self.assertRaises(SystemExit):
+                self.worker.sync_once()
+        exclusive.assert_not_called()
 
     def test_failed_step_or_unmanaged_daemon_never_reports_sync(self):
         for step, unmanaged in ((result(reply(True).stdout, 1), False), (reply(True), True)):

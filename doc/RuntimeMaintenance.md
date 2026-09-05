@@ -31,6 +31,15 @@ rechecked hourly. A saved verified timestamp can move a reset clock forward at
 boot, but is only a lower bound, not proof of synchronization. Pi log times and
 Tesla-generated clip filenames come from different clocks.
 
+The worker checks the complete NTP daemon status, not just its leap/stratum
+variables. If a DHCP-advertised time server does not respond, the existing
+Google/NIST fallback sources can still verify time without changing router or
+DHCP settings. A successful probe selects a numeric IPv4/IPv6 endpoint; after
+request spacing, the step obtains a fresh sample from that same endpoint.
+Known NTPsec clock-step diagnostics may accompany the JSON response, but a
+successful process exit and confirmation of the clock adjustment are still
+required. An accurate-looking wall clock alone is not synchronization proof.
+
 Diagnostics include current UTC, the worker's last verification and fallback
 state, and a bounded NTP daemon query. The dashboard distinguishes a prepared
 gadget, a paused camera LUN, and a host-configured connection. Only the car or

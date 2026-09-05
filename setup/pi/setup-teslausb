@@ -450,6 +450,7 @@ function get_common_scripts () {
   copy_script run/make_snapshot.sh /root/bin
   copy_script run/snapshot_lock.sh /root/bin
   copy_script run/sync-time.py /root/bin
+  copy_script run/check-filesystem.py /root/bin
   copy_script run/encrypted_clips_path_status.sh /root/bin
   copy_script run/detect_encrypted_clips.sh /root/bin
   copy_script run/guarded_snapshot.sh /root/bin

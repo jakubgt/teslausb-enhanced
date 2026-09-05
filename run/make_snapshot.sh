@@ -183,16 +183,22 @@ function snapshot {
   # loop device in addition to the main loop device, e.g. /dev/loop0 and
   # /dev/loop0p1
 
-  # Use -p repair arg. It works with vfat and exfat.
   LOOP=$(losetup_find_show -P "$newsnapname")
   PARTLOOP=${LOOP}p1
 
+  local check_status=0
+  local detach_status=0
   if [ "$1" = "fsck" ]
   then
-    fsck "$PARTLOOP" -- -p || true
+    python3 /root/bin/check-filesystem.py "$PARTLOOP" || check_status=$?
   fi
 
-  losetup -d "$LOOP"
+  losetup -d "$LOOP" || detach_status=$?
+  if [ "$check_status" -ne 0 ] || [ "$detach_status" -ne 0 ]
+  then
+    log "Snapshot filesystem check or loop cleanup failed (check=$check_status, detach=$detach_status); preserving incomplete snapshot without indexing"
+    return 69
+  fi
 
   # if needed, manually mount the image and check/fix timestamps
   if [ "$(getconf LONG_BIT)" = "32" ] && [ "$(. /etc/os-release && echo "${VERSION_ID:-}")" = "12" ]

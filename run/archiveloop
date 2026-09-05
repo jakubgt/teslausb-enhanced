@@ -98,12 +98,31 @@ function timestamp () {
 
 function fix_errors_in_image () {
   local image="$1"
-  log "Running fsck on $image..."
-  loopback=$(losetup_find_show -P "$image")
-  # Use -p repair arg. It works with vfat and exfat.
-  /sbin/fsck "${loopback}p1" -- -p |& timestamp '| ' >> "$LOG_FILE" || echo ""
-  losetup -d "$loopback"
-  log "Finished fsck on $image."
+  local loopback
+  local detach_status=0
+  local -a check_status
+  log "Checking filesystem on $image..."
+  if ! loopback=$(losetup_find_show -P "$image") || [ -z "$loopback" ]
+  then
+    log "STOP: could not attach $image for a verified filesystem check; manual attention required"
+    return 78
+  fi
+  # An if condition suppresses errexit for this pipeline, including pipefail.
+  # Capture both statuses immediately: the logger must never hide a failed
+  # check, and a logging failure must not be reported as successful checking.
+  if python3 /root/bin/check-filesystem.py "${loopback}p1" |& timestamp '| ' >> "$LOG_FILE"
+  then
+    check_status=("${PIPESTATUS[@]}")
+  else
+    check_status=("${PIPESTATUS[@]}")
+  fi
+  losetup -d "$loopback" || detach_status=$?
+  if [ "${check_status[0]}" -ne 0 ] || [ "${check_status[1]}" -ne 0 ] || [ "$detach_status" -ne 0 ]
+  then
+    log "STOP: filesystem check or loop cleanup failed for $image (check=${check_status[0]}, log=${check_status[1]}, detach=$detach_status); USB export and cleanup blocked; manual attention required"
+    return 78
+  fi
+  log "Finished verified filesystem check on $image."
 }
 
 function archive_is_reachable () {
@@ -357,22 +376,137 @@ function trim_free_space() {
 }
 
 function fix_errors_in_images () {
-  for i in cam music boombox lightshow
-  do
-    img="/backingfiles/${i}_disk.bin"
-    if [ -e "$img" ]
+  # A subshell owns the lock descriptors/claim for exactly this operation. It
+  # cannot leak the gadget-lock flag or held descriptors into later workers.
+  (
+    local check_mode="${1:-always}" i img mounted_targets target configfs_root udc udc_value
+    local disable_status=0
+    local lock_status=0
+    local gadget_lock_dir=/run/teslausb
+    local gadget_lock_file="$gadget_lock_dir/gadget-operation.lock"
+    local udc_class=/sys/class/udc
+    local controller_seen=false
+    SNAPSHOTS_ROOT=/backingfiles/snapshots
+    # Use the same lock order as guarded_snapshot: snapshots, then gadget.
+    # Never disconnect USB while waiting for another snapshot/cleanup operation.
+    # shellcheck source=run/snapshot_lock.sh
+    source /root/bin/snapshot_lock.sh || exit 78
+    acquire_snapshot_lock || lock_status=$?
+    case "$lock_status" in
+      0) ;;
+      99)
+        log "Filesystem check deferred: snapshot/cleanup operation is busy; USB connection unchanged"
+        exit 75
+        ;;
+      *)
+        log "STOP: cannot validate the snapshot lock for filesystem checking"
+        exit 78
+        ;;
+    esac
+    if [[ -L "$gadget_lock_dir" || -L "$gadget_lock_file" ||
+          ( -e "$gadget_lock_file" && ! -f "$gadget_lock_file" ) ]]
     then
-      fix_errors_in_image "$img"
+      log "STOP: unsafe USB gadget lock path"
+      exit 78
     fi
-  done
+    mkdir -p -- "$gadget_lock_dir" || exit 78
+    chmod 0700 -- "$gadget_lock_dir" || exit 78
+    exec 9> "$gadget_lock_file" || exit 78
+    chmod 0600 -- "$gadget_lock_file" || exit 78
+    lock_status=0
+    flock -E 75 -w 30 9 || lock_status=$?
+    case "$lock_status" in
+      0) ;;
+      75)
+        log "Filesystem check deferred: USB gadget operation is busy; USB connection unchanged"
+        exit 75
+        ;;
+      *)
+        log "STOP: cannot validate the USB gadget lock for filesystem checking"
+        exit 78
+        ;;
+    esac
+    export TESLAUSB_GADGET_LOCK_HELD=1
+    if ! configfs_root=$(findmnt -o TARGET -n configfs) ||
+       [[ -z "$configfs_root" || "$configfs_root" == *$'\n'* || ! -d "$configfs_root" ]]
+    then
+      log "STOP: cannot verify configfs before filesystem checking"
+      exit 78
+    fi
+    /root/bin/disable_gadget.sh || disable_status=$?
+    if [ "$disable_status" -ne 0 ] && [ "$disable_status" -ne 2 ]
+    then
+      log "STOP: USB disconnect failed before filesystem checking"
+      exit 78
+    fi
+    for udc in "$configfs_root"/usb_gadget/*/UDC
+    do
+      if [ -e "$udc" ]
+      then
+        if ! udc_value=$(cat -- "$udc") || [ -n "$udc_value" ]
+        then
+          log "STOP: a USB gadget remains bound or unreadable; filesystem checking refused"
+          exit 78
+        fi
+      fi
+    done
+    # usb_gadget/ may not exist before libcomposite loads on a fresh boot.
+    # Controller bindings also catch legacy gadgets outside configfs.
+    for udc in "$udc_class"/*/function
+    do
+      if [ -e "$udc" ]
+      then
+        controller_seen=true
+        if ! udc_value=$(cat -- "$udc") || [ -n "$udc_value" ]
+        then
+          log "STOP: a USB controller remains bound or unreadable; filesystem checking refused"
+          exit 78
+        fi
+      fi
+    done
+    if [ "$controller_seen" != true ]
+    then
+      log "STOP: cannot verify an unbound USB controller before filesystem checking"
+      exit 78
+    fi
+    # Subsequent archive mount calls already have USB disconnected and may
+    # legitimately have another image mounted. Preserve the existing no-recheck
+    # behavior, but only after positively verifying the disconnected state.
+    if [ "$check_mode" = if-disconnected ] && [ "$disable_status" -eq 2 ]
+    then
+      exit 0
+    fi
+    if ! mounted_targets=$(findmnt --kernel --raw --noheadings --output TARGET) ||
+       [ -z "$mounted_targets" ]
+    then
+      log "STOP: cannot inspect live image mounts before filesystem checking"
+      exit 78
+    fi
+    while IFS= read -r target
+    do
+      case "$target" in
+        /mnt/cam|/mnt/cam/*|/mnt/music|/mnt/music/*|/mnt/lightshow|/mnt/lightshow/*|/mnt/boombox|/mnt/boombox/*)
+          log "STOP: $target is still mounted; filesystem checking refused"
+          exit 78
+          ;;
+      esac
+    done <<< "$mounted_targets"
+    for i in cam music boombox lightshow
+    do
+      img="/backingfiles/${i}_disk.bin"
+      if [ -e "$img" ]
+      then
+        fix_errors_in_image "$img" || exit 78
+      fi
+    done
+  )
 }
 
 function disconnect_usb_drives_from_host () {
   log "Disconnecting usb from host..."
-  if /root/bin/disable_gadget.sh
-  then
-    fix_errors_in_images
-  fi
+  # Exit explicitly even when an archive caller runs inside an if/retry context
+  # that disables errexit. The guarded checker performs the disconnect itself.
+  fix_errors_in_images if-disconnected || exit "$?"
   log "Disconnected usb from host."
 }
 
@@ -1072,17 +1206,20 @@ set_sys_param /sys/devices/system/cpu/cpufreq/policy0/scaling_governor CPU_GOVER
 
 /root/bin/temperature_monitor &
 
+logrotator &
+wifichecker &
+
+fix_errors_in_images || exit "$?"
+# always remove files that fsck recoverd
+clean_cam_mount boot
+
+# Retention and snapshot workers must not start before the live image checks
+# succeed. Exit 78 is terminal until an operator investigates and restarts.
 if has_cam_disk
 then
   snapshotloop &
   freespacemanager &
 fi
-logrotator &
-wifichecker &
-
-fix_errors_in_images
-# always remove files that fsck recoverd
-clean_cam_mount boot
 
 camera_archive_allowed=true
 if has_cam_disk

@@ -54,6 +54,7 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
           bash ./tests/mount-helpers-test.sh
           bash ./tests/make-snapshot-failure-test.sh
+          bash ./tests/filesystem-check-integration-test.sh
           bash ./tests/snapshot-concurrency-test.sh
           bash ./tests/copy-music-test.sh
           bash ./tests/cgi-security-test.sh
