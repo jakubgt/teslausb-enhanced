@@ -13,6 +13,9 @@ command -v findmnt >/dev/null || {
 }
 base_mountinfo=$'20 1 8:1 / / rw,relatime - ext4 /dev/fixture-root rw\n21 20 8:2 / /boot/firmware ro,relatime - vfat /dev/fixture-boot ro\n22 20 8:3 / /backingfiles rw,relatime - xfs /dev/fixture-backing rw\n23 20 8:4 / /mutable rw,relatime - ext4 /dev/fixture-mutable rw\n24 20 0:50 / /tmp/snapshots/snap-000123 ro,relatime - tmpfs tmpfs ro'
 mountinfo="$base_mountinfo"
+# Called by the production function loaded with eval above, before this fixture
+# is replaced by the fault-injection implementation below.
+# shellcheck disable=SC2317
 findmnt() {
   command findmnt "$@" --tab-file <(printf '%s\n' "$mountinfo")
 }
