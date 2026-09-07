@@ -1320,6 +1320,7 @@ video {
         <button type="button" id="recording-refresh" disabled onclick="loadRecordings();">Refresh recordings</button>
         <div class="recording-freshness">Snapshot library, not the live camera disk. New recordings appear after a completed snapshot.</div>
         <div class="recording-freshness">Refreshing briefly pauses viewer playback; car recording is unaffected.</div>
+        <div class="recording-freshness">Leaving Viewer releases its video downloads. Returning restores the selected clip and playback state.</div>
         <div id="recording-freshness" class="recording-freshness" role="status" aria-live="polite">Snapshot and recording freshness have not been checked.</div>
       </div>
       <div id="viewerstatus" class="viewerstatus" role="status" aria-live="polite"></div>
@@ -2829,6 +2830,7 @@ function readconfig() {
       const toolsbtn = document.querySelector("#tab4");
       toolsbtn.checked = true;
     }
+    updateTabAccessibility();
     const blebtn = document.getElementById("pairingdiv");
     if (config.uses_ble == "yes") {
       blebtn.style.display = "block";
@@ -3234,6 +3236,7 @@ function updateTabAccessibility() {
     var input = document.getElementById(label.htmlFor);
     label.setAttribute("aria-selected", input && input.checked ? "true" : "false");
   }
+  synchronizeViewerTab();
 }
 
 function initializeAccessibility() {
@@ -3630,6 +3633,13 @@ class VideoSegment {
   }
 
   select(mediaRestore) {
+    if (!viewerTabIsActive()) {
+      clearTimeout(this.mediaRestoreTimer);
+      this.initdefaults();
+      this.mediaRestore = mediaRestore || null;
+      viewerDeferredSelection = {sequence:currentsequence, segment:this, mediaRestore};
+      return;
+    }
     var prefix = "TeslaCam/" + this.group + "/" + this.sequence + "/";
     log("===== segment =====");
     freezeVideoElems();
@@ -4387,6 +4397,41 @@ readconfig();
 initialize();
 
 // Recording library helpers.
+var viewerTabSuspension;
+var viewerDeferredSelection;
+
+function viewerTabIsActive() {
+  return document.getElementById("tab7").checked === true;
+}
+
+function synchronizeViewerTab() {
+  // initializeAccessibility() runs before recordingLibrary is initialized.
+  // The list transaction owns suspension until its callback settles.
+  if (!recordingLibrary || recordingLibrary.inFlight) return;
+  if (!viewerTabIsActive()) {
+    if (!viewerTabSuspension && !viewerDeferredSelection) viewerTabSuspension = suspendRecordingMedia();
+    return;
+  }
+  var deferred = viewerDeferredSelection;
+  var saved = viewerTabSuspension;
+  viewerDeferredSelection = undefined;
+  viewerTabSuspension = undefined;
+  if (deferred) {
+    if (!currentsequence || currentsequence !== deferred.sequence ||
+        currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) !== deferred.segment) return;
+    var seek = deferred.segment.autoseek;
+    var playing = currentsequence.isPlaying();
+    deferred.segment.select(deferred.mediaRestore);
+    if (!deferred.mediaRestore) {
+      if (seek >= 0) deferred.segment.seekTo(seek);
+      if (playing) deferred.segment.play();
+    }
+  } else if (saved) {
+    restoreRecordingMedia(saved);
+    saved.disposed = true;
+  }
+}
+
 var recordingLibrary = {inFlight:false, loaded:false, requestedDay:"latest", page:null,
   refreshedAt:null, snapshot:null, snapshotChecked:false};
 
@@ -4520,6 +4565,11 @@ function sameSuspendedSegment(saved, segment) {
 function restoreRecordingMedia(saved) {
   if (!saved || saved.disposed || saved.restored || currentsequence !== saved.sequence || !saved.segment) return;
   if (currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) !== saved.segment) return;
+  if (!viewerTabIsActive()) {
+    // Keep an independent owner; the list transaction disposes its own copy.
+    viewerTabSuspension = {...saved, disposed:false, restored:false};
+    return;
+  }
   saved.restored = true;
   saved.segment.select(saved);
 }
@@ -4552,7 +4602,10 @@ function loadRecordings(day) {
   initialVideoListLoading = true;
   clearTimeout(statusPollTimer);
   setRecordingControlsBusy(true);
-  var suspended = suspendRecordingMedia();
+  var deferredBeforeLoad = viewerDeferredSelection;
+  var suspended = viewerTabSuspension || suspendRecordingMedia();
+  viewerTabSuspension = undefined;
+  viewerDeferredSelection = undefined;
   showstatus();
   setViewerStatus("Loading recordings for " + (requestedDay === "latest" ? "the latest available day" : requestedDay) +
     "... Viewer playback is briefly paused; car recording is unaffected.", false);
@@ -4582,11 +4635,19 @@ function loadRecordings(day) {
         (recordingLibrary.loaded ? " The previous library is still shown; it was not refreshed." : "");
       setViewerStatus(suspended.statusPrefix, true);
     } finally {
-      try { restoreRecordingMedia(suspended); }
+      try {
+        if (deferredBeforeLoad && !suspended.restored && currentsequence && currentsequence === deferredBeforeLoad.sequence &&
+            currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) === deferredBeforeLoad.segment) {
+          viewerDeferredSelection = deferredBeforeLoad;
+        } else {
+          restoreRecordingMedia(suspended);
+        }
+      }
       catch (restoreError) { log("Could not restore viewer playback: " + restoreError.message); }
       suspended.disposed = true;
       recordingLibrary.inFlight = false;
       setRecordingControlsBusy(false);
+      synchronizeViewerTab();
       finishInitialVideoListLoad();
     }
   }
@@ -4615,6 +4676,8 @@ function sequenceVideoSignature(sequence) {
 }
 
 function clearRecordingPlayback() {
+  viewerTabSuspension = undefined;
+  viewerDeferredSelection = undefined;
   currentsequence = undefined;
   for (var video of videoelems) {
     releaseVideoSource(video, false);

@@ -17,6 +17,11 @@ image does not contain these repairs.
   Preserve per-camera position/audio/rate and playback intent, guard stale
   callbacks, and make failed restoration bounded and retryable. Car recording
   is not interrupted; slow Wi-Fi can still limit high-resolution playback.
+- Release browser video downloads, including paused streams, when leaving the
+  dashboard Viewer so Tools/health requests have available connections. Restore
+  saved playback state for the current selection on return, after any pending
+  refresh/day change; do not start media while away. This is browser-only
+  dashboard navigation, with no USB/service or background-tab behavior change.
 
 - Add day-scoped recording lists, a latest-available-day default, manual
   Refresh recordings, and separate snapshot/index/browser-refresh timestamps.

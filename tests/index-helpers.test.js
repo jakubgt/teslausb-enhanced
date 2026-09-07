@@ -298,6 +298,7 @@ function recordingHarness() {
       }};
   }
   const get = id => { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); };
+  get("tab7").checked = true;
   for (const category of ["RecentClips", "SavedClips", "SentryClips"]) {
     get(category).parentElement = {style:{}, getBoundingClientRect() { return {left:0}; }};
   }
@@ -334,6 +335,7 @@ function recordingHarness() {
     play() { this.playing = true; }
   };
   vm.runInContext(extractBetween("var statusvals;", "var config;"), gate);
+  vm.runInContext(extractBetween("function updateTabAccessibility()", "function initializeAccessibility()"), gate);
   vm.runInContext(extractBetween("// Recording library helpers.", "// End recording library helpers."), gate);
   return {gate, requests, timers, get};
 }
@@ -564,6 +566,128 @@ async function testMediaRestoreRemapsAndUserSeek() {
   assert.ok(gate.videoelems.every(video => !video.src), "disposed transaction must not restore sources");
 }
 
+function selectViewerTab(harness, selected) {
+  harness.get("tab7").checked = selected;
+  harness.gate.updateTabAccessibility();
+}
+
+async function testViewerTabSuspension() {
+  for (const playing of [false, true]) {
+    const h = mediaHarness();
+    const {gate, get, requests, timers} = h;
+    await h.initialize();
+    if (playing) {
+      gate.currentsequence.play();
+      gate.videoelems.forEach(video => { video.paused = false; });
+    }
+    const original = h.state(), requestCount = requests.length;
+    const sequence = gate.currentsequence;
+    const oldCallbacks = gate.videoelems.map(video => [video.ondurationchange, video.onended, video.onerror]);
+    selectViewerTab(h, false);
+    const saved = gate.viewerTabSuspension;
+    assert.ok(saved, "tab change saves viewer state");
+    assert.equal(saved.wasPlaying, playing);
+    assert.ok(gate.videoelems.every(video => !video.src && video.paused), "Tools must have no attached viewer streams");
+    selectViewerTab(h, false);
+    assert.equal(gate.viewerTabSuspension, saved, "repeated navigation notification must not replace saved state with zero");
+    oldCallbacks.forEach((callbacks, index) => callbacks.forEach(callback => callback && callback({target:gate.videoelems[index]})));
+    assert.equal(gate.currentsequence, sequence);
+    assert.equal(requests.length, requestCount, "tab suspension adds no network requests");
+    selectViewerTab(h, true);
+    assert.equal(gate.viewerTabSuspension, undefined);
+    assert.equal(saved.disposed, true, "consuming a tab transaction does not dispose its new media-source owner");
+    const reloads = gate.videoelems.map(video => video.loads);
+    selectViewerTab(h, true);
+    assert.deepEqual(gate.videoelems.map(video => video.loads), reloads, "return consumes saved state only once");
+    assert.ok([...timers.values()].some(timer => timer.delay === 20000));
+    selectViewerTab(h, false); // leave again before any restored metadata arrives
+    assert.ok(![...timers.values()].some(timer => timer.delay === 20000), "leaving cancels the restoration watchdog");
+    assert.ok(gate.videoelems.every(video => !video.src && video.paused));
+    selectViewerTab(h, true);
+    gate.videoelems.forEach(video => video.metadata());
+    assert.deepEqual(h.state(), original, "rapid return/leave preserves pending nonzero camera times");
+    assert.equal(get("position").value, 23456);
+    assert.ok(gate.videoelems.every(video => video.paused !== playing));
+    assert.equal(gate.currentsequence.isPlaying(), playing);
+  }
+}
+
+async function testViewerTabRefreshRaces() {
+  for (const outcome of ["unchanged", "new day", "timeout", "invalid JSON", "return before completion"]) {
+    const h = mediaHarness();
+    const {gate, requests, get} = h;
+    await h.initialize();
+    gate.currentsequence.play();
+    gate.videoelems.forEach(video => { video.paused = false; });
+    const original = h.state();
+    const oldSequence = gate.currentsequence;
+    const newDay = outcome === "new day";
+    const day = newDay ? "2026-09-06" : "2026-09-07";
+    const files = newDay ? h.files.map(file => file.replaceAll("2026-09-07", day)) : h.files;
+    gate.loadRecordings(newDay ? day : "latest");
+    const list = requests.at(-1);
+    selectViewerTab(h, false);
+    assert.ok(gate.videoelems.every(video => !video.src));
+    let resolveMetadata;
+    gate.getMaintenanceStatus = () => new Promise(resolve => { resolveMetadata = resolve; });
+    const completion = list.callback(outcome === "invalid JSON" ? "invalid" : recordingPage(day, files),
+      null, outcome === "timeout" ? new Error("Request timed out") : null);
+    if (resolveMetadata) {
+      assert.ok(gate.videoelems.every(video => !video.src), "media stays detached during metadata wait");
+      if (outcome === "return before completion") {
+        selectViewerTab(h, true);
+        assert.ok(gate.videoelems.every(video => !video.src), "return must not race the in-flight library transaction");
+      }
+      resolveMetadata(null);
+    }
+    await completion;
+    assert.equal(gate.initialVideoListLoading, false, "transaction always releases the status gate");
+    assert.equal(gate.recordingLibrary.inFlight, false);
+    assert.equal(get("recording-refresh").disabled, false);
+    if (outcome !== "return before completion") {
+      assert.ok(gate.videoelems.every(video => !video.src && video.paused), "completion in Tools must not attach or autoplay media");
+      selectViewerTab(h, true);
+    }
+    gate.videoelems.forEach(video => video.metadata());
+    if (newDay) {
+      assert.notEqual(gate.currentsequence, oldSequence);
+      assert.ok(gate.videoelems.every(video => video.src.includes(day) && video.paused));
+    } else {
+      assert.equal(gate.currentsequence, oldSequence);
+      assert.deepEqual(h.state(), original);
+      assert.ok(gate.videoelems.every(video => !video.paused));
+    }
+  }
+}
+
+async function testInitialLibraryAwayFromViewer() {
+  for (const anotherRefresh of [false, true]) {
+    const h = mediaHarness();
+    const {gate, get, requests} = h;
+    selectViewerTab(h, false);
+    gate.loadRecordings("latest");
+    await requests[0].callback(recordingPage("2026-09-07", h.files));
+    assert.ok(gate.viewerDeferredSelection);
+    assert.ok(gate.videoelems.every(video => !video.src));
+    assert.equal(gate.initialVideoListLoading, false);
+    assert.equal(requests.at(-1).url, "/api/v1/status", "initial off-Viewer list does not freeze health/status");
+    if (anotherRefresh) {
+      gate.statusRequestInFlight = false;
+      gate.loadRecordings();
+      await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+      assert.ok(gate.videoelems.every(video => !video.src));
+    }
+    selectViewerTab(h, true);
+    gate.videoelems.forEach(video => video.metadata());
+    assert.ok(gate.videoelems.every(video => video.src && video.paused));
+    assert.equal(get("position").value, 0);
+    selectViewerTab(h, false);
+    gate.currentsequence = undefined; // obsolete saved selection must not be revived
+    selectViewerTab(h, true);
+    assert.ok(gate.videoelems.every(video => !video.src));
+  }
+}
+
 async function testInitialStatusGate() {
   const gateOffset = inlineScript.indexOf("var initialVideoListLoading = true;");
   const initializationOffset = inlineScript.search(/readconfig\(\);\s*initialize\(\);/);
@@ -718,6 +842,9 @@ async function run() {
   await testMediaRestoreRaces();
   await testMediaPlayPromiseOwnership();
   await testMediaRestoreRemapsAndUserSeek();
+  await testViewerTabSuspension();
+  await testViewerTabRefreshRaces();
+  await testInitialLibraryAwayFromViewer();
   const normalCachebusting = context.cachebustingurl;
   context.cachebustingurl = url => url + "&_=unexpected";
   for (const day of ["latest", "2026-09-07"]) {

@@ -98,6 +98,16 @@ It affects browser playback only, not the car's recording. Camera restoration is
 bounded and retryable on a slow/offline connection. This does not create extra
 Wi-Fi bandwidth: large high-resolution recordings can still buffer on a slow link.
 
+Leaving the dashboard's Viewer section also releases its browser video downloads,
+including paused streams, so Tools/health requests do not wait behind them. The
+selected sequence/segment, per-camera position, audio/rate settings, and
+playing-versus-paused intent are saved. Returning restores the still-current
+selection once, after any pending refresh/day change finishes; a day changed
+while away does not start media downloads until Viewer is reopened. Existing
+restoration timeouts and retry limits still apply. This is dashboard navigation
+only, not browser-background-tab behavior, and does not affect car recording,
+USB state, or server services.
+
 The bundled viewer opens the latest available recording day and provides a day
 selector and **Refresh recordings** button. Each request rebuilds the selected
 day from current index metadata; it is not a stale persistent listing cache.
