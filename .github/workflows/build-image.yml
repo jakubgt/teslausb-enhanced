@@ -217,6 +217,7 @@ jobs:
           }
 
       - name: Create or validate VERSION-push draft release
+        id: draft_release
         if: github.event_name == 'push'
         env:
           ASSET_STEM: ${{ steps.release.outputs.asset_stem }}
@@ -226,6 +227,108 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
+
+          lookup_release() {
+            # The tag endpoint only returns published releases, never drafts.
+            python3 - "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" <<'PY'
+          # BEGIN draft release lookup
+          import json
+          import re
+          import subprocess
+          import sys
+
+
+          class ReleaseLookupError(Exception):
+              pass
+
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ReleaseLookupError("GitHub returned duplicate JSON fields")
+                  result[key] = value
+              return result
+
+
+          def api_json(endpoint, *options):
+              try:
+                  response = subprocess.run(
+                      ["gh", "api", "--method", "GET", endpoint, *options],
+                      check=True, capture_output=True, text=True, timeout=120,
+                  )
+                  return json.loads(response.stdout, object_pairs_hook=unique_object)
+              except (subprocess.SubprocessError, OSError):
+                  raise ReleaseLookupError(
+                      "Release lookup failed; refusing to infer that a draft is absent"
+                  ) from None
+              except (ValueError, TypeError):
+                  raise ReleaseLookupError("GitHub returned invalid release JSON") from None
+
+
+          def valid_id(value):
+              return type(value) is int and 0 < value <= 9007199254740991
+
+
+          def lookup_release(repository, tag):
+              if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+                  raise ReleaseLookupError("Invalid release repository")
+              if not re.fullmatch(
+                  r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+                  r"(-rc\.(0|[1-9][0-9]*))?", tag,
+              ):
+                  raise ReleaseLookupError("Invalid release tag")
+              # --slurp preserves page boundaries; a failed/partial request is
+              # never interpreted as an empty successful list.
+              pages = api_json(
+                  f"repos/{repository}/releases", "--paginate", "--slurp",
+                  "-F", "per_page=100",
+              )
+              if not isinstance(pages, list) or not pages:
+                  raise ReleaseLookupError("Invalid paginated release listing")
+              matches = []
+              seen_ids = set()
+              for index, page in enumerate(pages):
+                  if (not isinstance(page, list) or len(page) > 100 or
+                          (index < len(pages) - 1 and len(page) != 100)):
+                      raise ReleaseLookupError("Incomplete or malformed release pagination")
+                  for release in page:
+                      if (not isinstance(release, dict) or
+                              not valid_id(release.get("id")) or
+                              not isinstance(release.get("tag_name"), str) or
+                              type(release.get("draft")) is not bool):
+                          raise ReleaseLookupError("Invalid release listing entry")
+                      if release["id"] in seen_ids:
+                          raise ReleaseLookupError("Duplicate release ID in listing")
+                      seen_ids.add(release["id"])
+                      if release["tag_name"] == tag:
+                          matches.append(release)
+              if len(matches) > 1:
+                  raise ReleaseLookupError("Multiple releases have the requested tag")
+              if not matches:
+                  return None
+              listed = matches[0]
+              if not listed["draft"]:
+                  raise ReleaseLookupError("Matching release is already published")
+              release = api_json(f"repos/{repository}/releases/{listed['id']}")
+              if (not isinstance(release, dict) or
+                      not valid_id(release.get("id")) or
+                      release["id"] != listed["id"] or
+                      release.get("tag_name") != tag or
+                      release.get("draft") is not True):
+                  raise ReleaseLookupError("Release identity changed after listing")
+              return release
+
+
+          if __name__ == "__main__":
+              try:
+                  print(json.dumps(lookup_release(*sys.argv[1:])))
+              except ReleaseLookupError as error:
+                  print(str(error), file=sys.stderr)
+                  sys.exit(1)
+          # END draft release lookup
+          PY
+          }
 
           resolve_tag_commit() {
             local object_json="$1"
@@ -366,8 +469,8 @@ jobs:
             }')
 
           # GitHub's release service can briefly lag a newly created Git tag.
-          # A failed create is never retried until both the tag and release are
-          # fetched again, so an eventually visible draft cannot be duplicated.
+          # A failed create is never retried until the tag and a complete draft-
+          # aware release listing are fetched again. Lookup errors abort.
           release_create_delays=(2 4 8 16)
           release_found=false
           release_create_error=
@@ -388,19 +491,15 @@ jobs:
             }
 
             release_response=
-            if release_response=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
+            if ! release_response=$(lookup_release)
+            then
+              exit 1
+            fi
+            if [ "${release_response}" != null ]
             then
               release_found=true
               break
             fi
-            case "${release_response}" in
-              *'(HTTP 404)'*) ;;
-              *)
-                printf '%s\n' "${release_response}" >&2
-                exit 1
-                ;;
-            esac
 
             if release_response=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/releases" --input - \
@@ -436,18 +535,14 @@ jobs:
               echo "Release tag changed after the final draft-create attempt" >&2
               exit 1
             }
-            if release_response=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)
+            if ! release_response=$(lookup_release)
+            then
+              exit 1
+            fi
+            if [ "${release_response}" != null ]
             then
               release_found=true
             else
-              case "${release_response}" in
-                *'(HTTP 404)'*) ;;
-                *)
-                  printf '%s\n' "${release_response}" >&2
-                  exit 1
-                  ;;
-              esac
               printf '%s\n' "${release_create_error}" >&2
               echo "Release draft did not become visible after ${#release_create_delays[@]} bounded create attempts" >&2
               exit 1
@@ -479,6 +574,15 @@ jobs:
               exit 1
             fi
           done
+
+          release_id=$(jq -er '.id |
+            if type == "number" and . > 0 and . <= 9007199254740991 and floor == .
+            then . else error("invalid release ID") end' <<< "${release_response}")
+          [[ "${release_id}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "GitHub returned an invalid draft release ID" >&2
+            exit 1
+          }
+          printf 'release_id=%s\n' "${release_id}" >> "${GITHUB_OUTPUT}"
 
       - name: Confirm matching GitHub release exists
         env:
@@ -842,6 +946,7 @@ jobs:
           METADATA_ASSET: ${{ steps.assets.outputs.metadata }}
           PACKAGES_ASSET: ${{ steps.assets.outputs.packages }}
           RELEASE_NOTES_PATH: ${{ steps.release.outputs.release_notes_path }}
+          RELEASE_ID: ${{ steps.draft_release.outputs.release_id }}
           SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
@@ -875,8 +980,12 @@ jobs:
             exit 1
           }
 
+          [[ "${RELEASE_ID}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "Missing or invalid captured draft release ID" >&2
+            exit 1
+          }
           release_response=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
           prerelease=false
           make_latest=true
           if [[ "${VERSION}" == *-rc.* ]]
@@ -887,11 +996,12 @@ jobs:
           expected_title="TeslaUSB Enhanced ${RELEASE_TAG}"
           expected_body=$(< "${RELEASE_NOTES_PATH}")
           jq -e \
+            --argjson release_id "${RELEASE_ID}" \
             --arg tag "${RELEASE_TAG}" \
             --arg title "${expected_title}" \
             --arg source_commit "${SOURCE_COMMIT}" \
             --argjson prerelease "${prerelease}" \
-            '.tag_name == $tag and .name == $title and .draft == true and
+            '.id == $release_id and .tag_name == $tag and .name == $title and .draft == true and
              .target_commitish == $source_commit and
              .prerelease == $prerelease' <<< "${release_response}" > /dev/null || {
             echo "Release is no longer the expected unpublished draft" >&2
@@ -923,16 +1033,16 @@ jobs:
             }
           done
 
-          release_id=$(jq -er '.id' <<< "${release_response}")
           publish_payload=$(jq -n \
             --argjson prerelease "${prerelease}" \
             --arg make_latest "${make_latest}" \
             '{draft: false, prerelease: $prerelease, make_latest: $make_latest}')
           published_release=$(gh api --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --input - \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --input - \
             <<< "${publish_payload}")
-          jq -e --arg tag "${RELEASE_TAG}" --argjson prerelease "${prerelease}" \
-            '.tag_name == $tag and .draft == false and .prerelease == $prerelease' \
+          jq -e --argjson release_id "${RELEASE_ID}" \
+            --arg tag "${RELEASE_TAG}" --argjson prerelease "${prerelease}" \
+            '.id == $release_id and .tag_name == $tag and .draft == false and .prerelease == $prerelease' \
             <<< "${published_release}" > /dev/null || {
             echo "GitHub did not publish the verified release in the expected state" >&2
             exit 1
