@@ -10,6 +10,42 @@ Fifth release candidate for the downloadable Raspberry Pi Zero 2 W image. This
 candidate must be built from the rc.5 source; the previously published rc.4
 image does not contain these repairs.
 
+### Viewer and runtime corrections added 2026-09-07
+
+- Add day-scoped recording lists, a latest-available-day default, manual
+  Refresh recordings, and separate snapshot/index/browser-refresh timestamps.
+  Preserve the legacy complete-list API and its bounded numeric `_`
+  cache-buster. Reject malformed or unknown query parameters.
+- Replace per-link subprocess/character-by-character listing overhead with
+  bounded metadata scans grouped by target directory. Prevent overlapping scans
+  per web-worker UID, defer browser status polling during list loading, and
+  fail explicitly on timeout or unreadable/oversized indexes. Failed refreshes
+  retain the previous library; successful refreshes do not duplicate entries
+  and preserve the selected media where possible. Correct timeout/network
+  event ordering in viewer, API, maintenance download, and log-tail requests.
+- Extend Advanced maintenance with actual backing/mutable space, the exact
+  cleanup reserve, read-only mount status, finalized snapshot metadata, aged
+  clock evidence, and bounded recovery-backup allocation summaries. Unknown
+  values remain unknown; shared allocations are not reclaimable-space claims.
+  Add only the fixed read-only `maintenance-health` privileged action, with
+  protected helper paths, bounded output, and no shell or arbitrary-path
+  authority. This is an explicit addition to the September 4 privilege scope.
+- Log completed snapshot releases separately from pre-deletion attempts, with
+  explicit UTC and verified unmount/no-mount evidence. Do not alter deletion
+  policy or remove retained recovery backups. Full near-capacity rollover
+  remains unverified until observed during normal recording.
+- Configure BusyBox system logging to use a bounded volatile RAM ring without
+  file-rule precedence opening root log files. Fix exact fstab mountpoint
+  detection so `/var/log/nginx` cannot masquerade as `/var/log`; add a 32 MiB
+  parent tmpfs when absent, with next-boot verification still required.
+- Document the supported next-boot cloud-init disable marker only for the
+  diagnosed, already-provisioned legacy read-only-filesystem failure. Do not
+  generically disable undiagnosed services, purge cloud-init, clear its state,
+  or reprovision. New image builds already disable cloud-init in their recipe.
+- These are source-candidate/PR changes, not a newly published image or an
+  automatic update to installed cards. Live metadata/UI checks do not replace
+  reboot, vehicle recording, or complete rollover validation.
+
 ### Runtime corrections added 2026-09-04
 
 - Read the complete NTP daemon status instead of requesting variables that

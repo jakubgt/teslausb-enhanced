@@ -58,6 +58,26 @@ DEBIAN_FRONTEND=noninteractive apt-get -y install \
   ntpsec ntpsec-ntpdig busybox-syslogd
 dpkg --purge rsyslog
 
+# -C alone is insufficient when /etc/syslog.conf contains file rules: BusyBox
+# handles those rules before its RAM ring. Keep local system logs in bounded
+# shared memory, including during maintenance when root temporarily becomes RW.
+function configure_ram_syslog() {
+  # This helper does not rely on errexit inherited from its caller. Stop at
+  # the first failed step rather than reporting a successful read-only setup.
+  install -d -m 0755 /etc/systemd/system/busybox-syslogd.service.d || return 1
+  install -o root -g root -m 0644 \
+    "${SOURCE_DIR:?}/setup/pi/busybox-syslogd-ram.conf" \
+    /etc/systemd/system/busybox-syslogd.service.d/30-teslausb-ram.conf || return 1
+  systemctl daemon-reload || return 1
+  systemctl restart busybox-syslogd.service || return 1
+}
+
+if ! configure_ram_syslog
+then
+  log_progress "STOP: could not configure RAM-only system logging"
+  exit 1
+fi
+
 log_progress "Configuring system..."
 
 # Add fsck.mode=auto, noswap and/or ro to end of cmdline.txt
@@ -161,22 +181,28 @@ then
   sed -i -r "s@(/\s+ext4\s+\S+)@\1,ro@" /etc/fstab
 fi
 
-if ! grep -w -q "/var/log" /etc/fstab
+function fstab_has_mountpoint() {
+  # Compare the mountpoint field exactly. grep -w also matches /var/log/nginx
+  # when asked for /var/log, silently skipping the required parent tmpfs.
+  awk -v target="$1" '$1 !~ /^#/ && $2 == target { found = 1 } END { exit !found }' "${2:-/etc/fstab}"
+}
+
+if ! fstab_has_mountpoint /var/log
 then
-  echo "tmpfs /var/log tmpfs nodev,nosuid 0 0" >> /etc/fstab
+  echo "tmpfs /var/log tmpfs nodev,nosuid,size=32M,mode=0755 0 0" >> /etc/fstab
 fi
 
-if ! grep -w -q "/var/tmp" /etc/fstab
+if ! fstab_has_mountpoint /var/tmp
 then
   echo "tmpfs /var/tmp tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
 
-if ! grep -w -q "/tmp" /etc/fstab
+if ! fstab_has_mountpoint /tmp
 then
   echo "tmpfs /tmp    tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
 
-if ! grep -w -q "/var/spool" /etc/fstab
+if ! fstab_has_mountpoint /var/spool
 then
   echo "tmpfs /var/spool tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
@@ -189,7 +215,7 @@ then
   # image provides the traditional account instead.
   NTP_STATE_USER=ntp
 fi
-if ! grep -w -q "$NTP_STATE_DIR" /etc/fstab
+if ! fstab_has_mountpoint "$NTP_STATE_DIR"
 then
   if [ ! -d "$NTP_STATE_DIR" ]
   then

@@ -486,6 +486,7 @@ SNAPSHOT_POLICY_HELPER="$SNAPSHOT_POLICY" RELEASE_SNAPSHOT="$release_script" \
 [ -d "$snapshot_root/snap-000001" ]
 [ ! -e "$snapshot_root/snap-000002" ]
 [ -d "$snapshot_root/snap-000004" ]
+grep -F 'released snapshot snap-000002 at ' "$TESLAUSB_TEST_RELEASE_LOG" > /dev/null
 
 # A failed releaser must stop rotation instead of selecting the same snapshot
 # forever while the low-space condition remains true.
@@ -506,8 +507,7 @@ grep -F 'snapshot release failed for' "$TESLAUSB_TEST_RELEASE_LOG" > /dev/null
 
 # The listing and FUSE viewer layers both enforce literal and resolved-path
 # exclusions; nginx independently blocks direct EncryptedClips URLs.
-grep -F 'resolved_path=$(realpath -e -- "/mutable/TeslaCam/$path"' \
-  "$REPO_ROOT/teslausb-www/html/cgi-bin/videolist.sh" > /dev/null
+python3 -B -m unittest discover -s "$REPO_ROOT/tests" -p 'test_video_list.py' -v
 grep -F 'is_encrypted_request_path(path)' \
   "$REPO_ROOT/teslausb-www/cttseraser.cpp" > /dev/null
 grep -F 'location ~* ^/TeslaCam/(?:.*/)?EncryptedClips(?:/|$)' \

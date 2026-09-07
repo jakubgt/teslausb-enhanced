@@ -80,7 +80,8 @@ fi
 
 log "releasing snapshot $SNAPSHOTS_ROOT/$NAME"
 IMAGE="$SNAPSHOTS_ROOT/$NAME/snap.bin"
-umount "$IMAGE" || true
+unmount_status=0
+umount "$IMAGE" || unmount_status=$?
 
 # Delete the snapshot folders, then unlink obsolete view entries in bounded
 # batches. Keep the directory lock through both operations.
@@ -97,4 +98,19 @@ then
   find "$MUTABLE_TESLACAM" -depth -mindepth 2 \
     ! -path '*/EncryptedClips' ! -path '*/EncryptedClips/*' \
     -type d -empty -delete || true
+fi
+
+# A pre-deletion "releasing" log line is only an attempt. Publish completion
+# only after required removals and confirmed absence of an image mount. Keep
+# logging best-effort; unavailable metadata must not change cleanup behavior.
+mount_status=0
+if [ "$unmount_status" -ne 0 ]
+then
+  "$SNAPSHOT_FINDMNT_COMMAND" --noheadings --source "$IMAGE" --output TARGET \
+    > /dev/null 2>&1 || mount_status=$?
+fi
+if [ "$unmount_status" -eq 0 ] || [ "$mount_status" -eq 1 ]
+then
+  released_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || released_at=
+  log "released snapshot $NAME${released_at:+ at $released_at}" || true
 fi

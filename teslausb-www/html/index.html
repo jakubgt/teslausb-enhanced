@@ -693,10 +693,6 @@ video {
 }
 
 @media(hover: none), (pointer: coarse) {
-  #videocontrols {
-    opacity: 0.72;
-  }
-
   .flatbutton {
     min-height: 52px;
     min-width: 52px;
@@ -733,6 +729,33 @@ video {
 #videocontrols.shown {
   opacity: 0.7;
   transition: opacity 0.5s;
+}
+
+/* Keep touch controls visible after the base opacity rule and hover timeout. */
+@media(hover: none), (pointer: coarse) {
+  #videocontrols { opacity: 0.72; }
+}
+
+.recording-library-tools {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: #eee;
+  background: #292929;
+}
+.recording-library-tools button, .recording-library-tools select {
+  min-height: 40px;
+  max-width: 100%;
+  font: inherit;
+}
+.recording-freshness {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .settingsbutton {
@@ -956,6 +979,8 @@ video {
   font-size: 0.9em;
   line-height: 1.5;
 }
+
+#maintenance-health-status { white-space: pre-line; line-height: 1.5; }
 
 .maintenance-fields {
   display: grid;
@@ -1229,6 +1254,8 @@ video {
         <summary>Advanced maintenance</summary>
         <div class="maintenance-content">
           <p class="maintenance-note">Read-only SSH information and diagnostic downloads. This panel does not open a browser shell, enable SSH, or change passwords or keys. Use it on a trusted home network.</p>
+          <h3>Storage and system health</h3>
+          <p id="maintenance-health-status" class="resource-status" role="status" aria-live="polite">Health has not been checked.</p>
           <h3>SSH access</h3>
           <p id="maintenance-ssh-status" class="resource-status" role="status" aria-live="polite">SSH status has not been checked.</p>
           <button type="button" id="maintenance-refresh" onclick="refreshMaintenanceStatus();">Refresh maintenance status</button>
@@ -1287,6 +1314,13 @@ video {
 
   <div class="tab content7">
     <div class="videoholderparent" style="width:100%;height:100%;background:#333;" onmousemove="showcontrols()">
+      <div class="recording-library-tools">
+        <label for="recording-day">Recording day</label>
+        <select id="recording-day" disabled onchange="loadRecordings(this.value);"><option value="latest">Latest available day</option></select>
+        <button type="button" id="recording-refresh" disabled onclick="loadRecordings();">Refresh recordings</button>
+        <div class="recording-freshness">Snapshot library, not the live camera disk. New recordings appear after a completed snapshot.</div>
+        <div id="recording-freshness" class="recording-freshness" role="status" aria-live="polite">Snapshot and recording freshness have not been checked.</div>
+      </div>
       <div id="viewerstatus" class="viewerstatus" role="status" aria-live="polite"></div>
       <div class="navbar">
         <div class="noclips">Loading...</div>
@@ -1596,7 +1630,7 @@ function download(filename, text) {
 }
 
 function cachebustingurl(url) {
-  return url + '?' + Math.random();
+  return url + (url.includes('?') ? '&' : '?') + '_=' + Math.random();
 }
 
 function isElementVisible(elem) {
@@ -1647,6 +1681,7 @@ function starttailing({url, pre, button, status, generation}) {
   request.setRequestHeader('Range', 'bytes=' + tailpos + '-' + (tailpos + 32768));
   request.onreadystatechange = function () {
     if (request.readyState !== 4 || completed || generation != pre.tailGeneration) return;
+    if (request.status === 0) return;
     if (request.status === 206) {
       completed = true;
       pre.tailRetryDelay = 500;
@@ -1669,6 +1704,9 @@ function starttailing({url, pre, button, status, generation}) {
   request.onerror = function () { retryTail("Network error while following log."); };
   request.onabort = function () { retryTail("Log request was cancelled."); };
   request.ontimeout = function () { retryTail("Log request timed out."); };
+  request.onloadend = function () {
+    if (request.status === 0) retryTail("Network request failed while following log.");
+  };
   request.send();
 }
 
@@ -1720,18 +1758,25 @@ function readfile({url, callback, callbackarg, pre, tail, button, status}) {
     if (callback != null) callback(value, callbackarg, error);
   }
 
-  request.open('GET', cachebustingurl(url));
+  // The day API has a strict query contract and sends no-store itself.
+  request.open('GET', /^\/api\/v1\/videos\?day=/.test(url) ? url : cachebustingurl(url));
   request.timeout = 30000;
   log("reading " + url);
   request.onreadystatechange = function () {
     log(`read ${url}, result: ${request.status}, state: ${readyState(request.readyState)}`);
     if (request.readyState !== 4) return;
+    // Failed requests reach DONE with status zero before their specific
+    // timeout, error, or abort event. Let that event report the actual cause.
+    if (request.status === 0) return;
     if (request.status >= 200 && request.status < 300) finish(request.responseText, null);
-    else finish(null, new Error(cgiRequestErrorMessage(request.status, request.statusText)));
+    else finish(null, cgiReadError(request, url));
   };
   request.onerror = function () { finish(null, new Error("Network error")); };
   request.onabort = function () { finish(null, new Error("Request cancelled")); };
   request.ontimeout = function () { finish(null, new Error("Request timed out")); };
+  request.onloadend = function () {
+    if (request.status === 0) finish(null, new Error("Network request failed"));
+  };
   request.send();
   return request;
 }
@@ -1792,6 +1837,23 @@ function cgiRequestError(request, message) {
   return error;
 }
 
+function cgiReadError(request, url) {
+  // Only our versioned API defines this error envelope. Never display an
+  // arbitrary HTML error page or parse an unexpectedly large response body.
+  if (/^\/api\/v1\//.test(url) && request.responseText.length <= 16384) {
+    try {
+      var payload = JSON.parse(request.responseText);
+      if (payload && payload.ok === false && typeof payload.error === "string") {
+        var message = payload.error.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 500);
+        if (message) return cgiRequestError(request, message + " (HTTP " + request.status + ")");
+      }
+    } catch (parseError) {
+      // Non-JSON and malformed API responses retain the HTTP status fallback.
+    }
+  }
+  return cgiRequestError(request);
+}
+
 function apiRequest(url, options) {
   options = options || {};
   var method = options.method || "GET";
@@ -1819,10 +1881,9 @@ function apiRequest(url, options) {
     }
     request.onreadystatechange = function () {
       if (request.readyState === 4) {
-        if (request.status === 0 && !request.responseText) {
-          finish(cgiRequestError(request));
-          return;
-        }
+        // DONE precedes the specific failure event, including for responses
+        // interrupted after some bytes arrived. Do not mislabel a timeout.
+        if (request.status === 0) return;
         var payload = request.responseText;
         if (expectJson) {
           try {
@@ -1853,6 +1914,9 @@ function apiRequest(url, options) {
     };
     request.ontimeout = function () {
       finish(cgiRequestError(request, "Request timed out"));
+    };
+    request.onloadend = function () {
+      if (request.status === 0) finish(cgiRequestError(request));
     };
     request.send(options.body || null);
   });
@@ -2496,10 +2560,26 @@ function renderEncryptedClipStatus(systemStatus) {
 }
 
 var statusvals;
+// Set before initialize() so its first showstatus() cannot compete with the
+// initial recording index scan on a small Pi.
+var initialVideoListLoading = true;
 var statusRequestInFlight = false;
+var statusPollTimer;
 const max_status_age = 4000;
 
+function scheduleStatusPoll(callback, delay) {
+  clearTimeout(statusPollTimer);
+  statusPollTimer = setTimeout(callback, delay);
+}
+
+function finishInitialVideoListLoad() {
+  if (!initialVideoListLoading) return;
+  initialVideoListLoading = false;
+  showstatus();
+}
+
 function updateuptimeonly() {
+  if (initialVideoListLoading) return;
   if (statusvals != undefined) {
     var status_age = (Date.now() - statusvals.retrieved);
     var uptime = Math.round(statusvals.uptime) + (status_age / 1000);
@@ -2507,18 +2587,29 @@ function updateuptimeonly() {
     uptimediv.innerText = "Uptime: " + uptimeString(uptime);
   }
   if (statusvals == undefined || status_age >= max_status_age) {
-    setTimeout(showstatus, 10);
+    scheduleStatusPoll(showstatus, 10);
   } else {
-    setTimeout(updateuptimeonly, 1000);
+    scheduleStatusPoll(updateuptimeonly, 1000);
   }
 }
 
 function showstatus() {
+  var refreshStatus = document.querySelector(".status_refresh");
+  if (initialVideoListLoading) {
+    refreshStatus.textContent = statusvals === undefined
+      ? "Status not checked yet: waiting for the recording list to finish loading."
+      : "Status updates paused while the recording list loads.";
+    refreshStatus.classList.remove("error");
+    document.querySelector(".status_drives").textContent = "Camera drive: status update pending";
+    return;
+  }
   var uptimediv = document.querySelector(".status_uptime");
   if ((isElementVisible(uptimediv) || uptimediv.clientHeight == 0) && !statusRequestInFlight) {
     statusRequestInFlight = true;
+    refreshStatus.textContent = "Updating status...";
     readfile({url:'/api/v1/status', callback:function(value, callbackarg, error) {
       statusRequestInFlight = false;
+      if (initialVideoListLoading) return;
       var refreshStatus = document.querySelector(".status_refresh");
       if (error) {
         refreshStatus.textContent = "Status refresh failed: " + error.message;
@@ -2681,7 +2772,7 @@ function showstatus() {
       renderEncryptedClipStatus(statusvals);
     }});
   }
-  setTimeout(updateuptimeonly, 1000);
+  scheduleStatusPoll(updateuptimeonly, 1000);
 }
 
 var config;
@@ -2752,6 +2843,63 @@ const maintenanceLogFiles = Object.freeze({
   maintenance: "teslausb-runtime-maintenance.log"
 });
 var maintenanceStatusGeneration = 0;
+var maintenanceReadPromise;
+
+function getMaintenanceStatus() {
+  if (!maintenanceReadPromise) {
+    maintenanceReadPromise = apiRequest("/api/v1/maintenance", {timeout:15000})
+      .finally(function() { maintenanceReadPromise = undefined; });
+  }
+  return maintenanceReadPromise;
+}
+
+function maintenanceEvidenceTime(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T.*(?:Z|\+00:00)$/.test(value) &&
+    Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() + " (your timezone)" : "unknown";
+}
+
+function maintenanceHealthText(payload) {
+  var health = payload && payload.health;
+  if (!health || health.schema_version !== 1) return "System health unavailable; refresh maintenance status to try again.";
+  var gib = value => typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? (value / 1024 ** 3).toFixed(1) + " GiB" : "unknown";
+  var storage = health.storage || {};
+  var backing = storage.backing || {};
+  var mutable = storage.mutable || {};
+  var lines = [backing.available === true
+    ? "Snapshot storage: " + gib(backing.free_bytes) + " free of " + gib(backing.total_bytes) +
+      ". Cleanup reserve: " + gib(backing.cleanup_reserve_bytes) +
+      (backing.below_cleanup_reserve === true ? " — below reserve." : backing.below_cleanup_reserve === false ? " — at or above reserve." : " — comparison unknown.")
+    : "Snapshot storage: unavailable."];
+  lines.push(mutable.available === true ? "Mutable/log storage: " + gib(mutable.free_bytes) + " free of " + gib(mutable.total_bytes) + "."
+    : "Mutable/log storage: unavailable.");
+  lines.push("Live camera filesystem: not inspected; snapshot storage free space is not its free space.");
+  var readonly = health.read_only || {};
+  var mode = value => value === true ? "read-only" : value === false ? "writable" : "unknown";
+  lines.push("System mounts: root " + mode(readonly.root) + "; boot " + mode(readonly.boot) + ".");
+  var snapshots = health.snapshots || {};
+  var latest = snapshots.last_completed;
+  lines.push(snapshots.available === true && snapshots.scan_complete === true && latest && /^snap-\d{6}$/.test(latest.name)
+    ? "Last completed snapshot: " + latest.name + ", " + maintenanceEvidenceTime(latest.completed_at_utc) + " (completion-manifest time)."
+    : "Last completed snapshot: unknown or unavailable.");
+  var cleanup = health.cleanup || {};
+  lines.push(cleanup.available === true && cleanup.evidence === "completed_release"
+    ? "Last logged snapshot release: " + maintenanceEvidenceTime(cleanup.last_released_at_utc) + ". This is evidence from the retained log tail."
+    : cleanup.available === true && cleanup.evidence === "release_attempt"
+      ? "Cleanup attempt found; completion is not confirmed in the retained log tail."
+      : "Cleanup completion: not established from the retained log tail.");
+  var clock = health.clock || {};
+  lines.push(clock.available === true && ["synchronized", "waiting_for_network_time"].includes(clock.state)
+    ? "Clock: " + (clock.state === "synchronized" ? "last reported synchronized" : "waiting for network time") +
+      "; last verified " + maintenanceEvidenceTime(clock.last_verified_utc) + "."
+    : "Clock verification: unavailable.");
+  var recovery = health.recovery || {};
+  lines.push(recovery.available === true && recovery.scan_complete === true && Array.isArray(recovery.items)
+    ? "Recovery backups: " + recovery.items.length + " bundles; " + gib(recovery.total_logical_bytes) +
+      " logical, " + gib(recovery.total_allocated_bytes) + " reported allocation. Shared reflink extents may be counted more than once; this is not reclaimable space."
+    : "Recovery-backup inventory: unavailable or incomplete; reclaimable space is unknown.");
+  return lines.join("\n");
+}
 
 function validatedMaintenanceHost(value) {
   var host = String(value || "").trim();
@@ -2895,16 +3043,20 @@ async function refreshMaintenanceStatus() {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
   setResourceStatus("maintenance-ssh-status", "SSH status unknown while refreshing...", false);
+  setResourceStatus("maintenance-health-status", "Checking storage and system health...", false);
   renderMaintenanceLogStatus(null);
   try {
-    var payload = await apiRequest("/api/v1/maintenance", {timeout:15000});
+    var payload = await getMaintenanceStatus();
     if (generation !== maintenanceStatusGeneration || !panel.open) return;
     var message = maintenanceSshStatusText(payload);
     setResourceStatus("maintenance-ssh-status", message + " Checked at " + new Date().toLocaleTimeString() + " (this browser).", false);
+    setResourceStatus("maintenance-health-status", maintenanceHealthText(payload) + "\nChecked at " + new Date().toLocaleTimeString() + " (this browser).", false);
+    if (typeof updateRecordingSnapshotEvidence === "function") updateRecordingSnapshotEvidence(payload);
     renderMaintenanceLogStatus(payload.logs);
   } catch (error) {
     if (generation !== maintenanceStatusGeneration || !panel.open) return;
     setResourceStatus("maintenance-ssh-status", "SSH status unknown: refresh failed. " + error.message, true);
+    setResourceStatus("maintenance-health-status", "Health unknown: refresh failed. " + error.message, true);
     renderMaintenanceLogStatus(null);
   } finally {
     if (generation === maintenanceStatusGeneration) {
@@ -2925,6 +3077,7 @@ function maintenancePanelToggled(panel) {
     button.disabled = false;
     button.removeAttribute("aria-busy");
     setResourceStatus("maintenance-ssh-status", "SSH status has not been checked for this opening.", false);
+    setResourceStatus("maintenance-health-status", "Health has not been checked for this opening.", false);
   }
 }
 
@@ -2948,6 +3101,7 @@ function requestMaintenanceLog(id) {
     request.setRequestHeader("Accept", "text/plain");
     request.onreadystatechange = function() {
       if (request.readyState !== 4 || completed) return;
+      if (request.status === 0) return;
       if (request.status !== 200) {
         var message = request.status === 404 ? "No saved log is available yet."
           : request.status === 401 || request.status === 403 ? "Sign in to the dashboard again to download this log."
@@ -2974,6 +3128,9 @@ function requestMaintenanceLog(id) {
     request.onerror = function() { finish(new Error("Network error while downloading the log.")); };
     request.onabort = function() { finish(new Error("Log download cancelled.")); };
     request.ontimeout = function() { finish(new Error("Log download timed out. Try again when the Pi is reachable.")); };
+    request.onloadend = function() {
+      if (request.status === 0) finish(new Error("Network request failed while downloading the log."));
+    };
     request.send();
   });
 }
@@ -3529,7 +3686,9 @@ class VideoSequence {
     this.segmentsbytime = {};
     this.sequencegroup = group;
     this.sequencename = name;
-    this.reset();
+    // Constructing a refreshed library must not alter the playing sequence.
+    this.currentsegmentidx = -1;
+    this.isplaying = false;
     this.jsonfile = [];
     this.jsonparsed = [];
     this.sentryeventrel = [];
@@ -4068,8 +4227,8 @@ function addToSentryDropdownItem(parent, group, sequence, selected) {
   }
 }
 
-function makeSentryDropdownItem(group, sequence, selected) {
-  var d = document.getElementById(group);
+function makeSentryDropdownItem(group, sequence, selected, container) {
+  var d = container || document.getElementById(group);
   var lastdropdownitem = d.lastChild;
   var date = sequence.substring(0,10);
   if (lastdropdownitem != null && lastdropdownitem.date == date) {
@@ -4081,11 +4240,11 @@ function makeSentryDropdownItem(group, sequence, selected) {
   return newitem;
 }
 
-function makeDropdownItem(group, sequence, selected) {
+function makeDropdownItem(group, sequence, selected, container) {
   if (group == "RecentClips") {
     return makeRecentsDropdownItem(group, sequence, selected);
   }
-  return makeSentryDropdownItem(group, sequence, selected);
+  return makeSentryDropdownItem(group, sequence, selected, container);
 }
 
 function flipdropdowns() {
@@ -4106,31 +4265,207 @@ function flipdropdownsfromclick() {
 readconfig();
 initialize();
 
+// Recording library helpers.
+var recordingLibrary = {inFlight:false, loaded:false, requestedDay:"latest", page:null,
+  refreshedAt:null, snapshot:null, snapshotChecked:false};
+
 function parseVideoListResponse(value) {
   var payload = JSON.parse(value);
   if (!payload || !Array.isArray(payload.videos) ||
       payload.videos.some(function(path) { return typeof path != "string"; })) {
     throw new Error("recording list has an unexpected format");
   }
-  return payload.videos;
+  return payload.videos.filter(function(path) {
+    var parts = path.split('/');
+    // The viewer renders these three categories, not flat Track Mode files
+    // or other index entries. Reject malformed paths before building any UI.
+    return parts.length === 3 &&
+      ["RecentClips", "SavedClips", "SentryClips"].includes(parts[0]) &&
+      /^\d{4}-\d{2}-\d{2}(_\d{2}-\d{2}-\d{2})?$/.test(parts[1]) &&
+      parts[2] !== "" && parts[2] !== "." && parts[2] !== "..";
+  });
 }
 
-readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
-  if (error) {
-    var loadIndicator = document.querySelector(".noclips");
-    loadIndicator.textContent = "Recordings unavailable";
-    setViewerStatus("The recording list could not be loaded: " + error.message, true);
-    return;
+function videoListErrorMessage(error) {
+  if (error.message === "Request timed out") {
+    return "The recording list took longer than 30 seconds to load. " +
+      "Wait a moment, then use Refresh recordings to retry.";
   }
-  var lines;
+  var guidance = ["Network error", "Network request failed"].includes(error.message)
+    ? "Check your connection to TeslaUSB, then use Refresh recordings to retry."
+    : "Wait a moment, then use Refresh recordings to retry.";
+  return "The recording list could not be loaded: " + error.message + ". " + guidance;
+}
+
+function validRecordingDay(day) {
+  return typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+    Number.isFinite(Date.parse(day + "T00:00:00Z")) &&
+    new Date(day + "T00:00:00Z").toISOString().slice(0, 10) === day;
+}
+
+function evidenceTime(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T.*(?:Z|\+00:00)$/.test(value) &&
+    Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() + " (your timezone)" : "unknown";
+}
+
+function parseRecordingPage(value) {
+  var payload = JSON.parse(value);
+  var lines = parseVideoListResponse(value);
+  if (!Array.isArray(payload.available_days) || payload.available_days.length > 10000 ||
+      payload.available_days.some(day => !validRecordingDay(day)) ||
+      !(payload.selected_day === null || validRecordingDay(payload.selected_day)) ||
+      (payload.selected_day === null && lines.length !== 0) ||
+      lines.some(path => path.split('/')[1].slice(0, 10) !== payload.selected_day) ||
+      evidenceTime(payload.generated_at) === "unknown" ||
+      !(payload.newest_recording === null || (typeof payload.newest_recording === "string" &&
+        /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/.test(payload.newest_recording)))) {
+    throw new Error("The day-scoped recording response was not recognized");
+  }
+  return {videos:lines, available_days:Array.from(new Set(payload.available_days)).sort().reverse(),
+    selected_day:payload.selected_day, generated_at:payload.generated_at,
+    newest_recording:payload.newest_recording};
+}
+
+function setRecordingControlsBusy(busy) {
+  document.getElementById("recording-refresh").disabled = busy;
+  document.getElementById("recording-refresh").setAttribute("aria-busy", String(busy));
+  document.getElementById("recording-day").disabled = busy;
+}
+
+function updateRecordingDays(page, requestedDay) {
+  var select = document.getElementById("recording-day");
+  var choices = ["latest", ...page.available_days];
+  if (requestedDay !== "latest" && !choices.includes(requestedDay)) choices.push(requestedDay);
+  var options = choices.map(function(day) {
+    var option = document.createElement("option");
+    option.value = day;
+    option.textContent = day === "latest" ? "Latest available day" : day;
+    return option;
+  });
+  select.replaceChildren(...options);
+  select.value = requestedDay;
+}
+
+function renderRecordingFreshness() {
+  var page = recordingLibrary.page;
+  var snapshot = recordingLibrary.snapshot;
+  var snapshotText = snapshot ? snapshot.name + ", " + evidenceTime(snapshot.completed_at_utc) :
+    recordingLibrary.snapshotChecked ? "unknown" : "checking";
+  var newest = page && page.newest_recording;
+  var newestText = newest ? newest.slice(0, 10) + " " + newest.slice(11).replaceAll("-", ":") +
+    " (camera filename time; timezone not supplied)" : "none in the selected day";
+  document.getElementById("recording-freshness").textContent =
+    "Last completed snapshot: " + snapshotText + ". Newest indexed recording in this day: " +
+    newestText + ". Library last refreshed: " + evidenceTime(recordingLibrary.refreshedAt) + ".";
+}
+
+function updateRecordingSnapshotEvidence(payload) {
+  var snapshots = payload && payload.health && payload.health.snapshots;
+  var latest = snapshots && snapshots.last_completed;
+  recordingLibrary.snapshot = snapshots && snapshots.available === true && snapshots.scan_complete === true &&
+    latest && /^snap-\d{6}$/.test(latest.name) && evidenceTime(latest.completed_at_utc) !== "unknown" ? latest : null;
+  recordingLibrary.snapshotChecked = true;
+  if (recordingLibrary.loaded) renderRecordingFreshness();
+}
+
+function loadRecordings(day) {
+  if (recordingLibrary.inFlight) return false;
+  var requestedDay = day === undefined ? recordingLibrary.requestedDay : day;
+  if (requestedDay !== "latest" && !validRecordingDay(requestedDay)) {
+    setViewerStatus("Choose a valid recording day.", true);
+    return false;
+  }
+  recordingLibrary.inFlight = true;
+  initialVideoListLoading = true;
+  clearTimeout(statusPollTimer);
+  setRecordingControlsBusy(true);
+  showstatus();
+  setViewerStatus("Loading recordings for " + (requestedDay === "latest" ? "the latest available day" : requestedDay) + "...", false);
+  var completed = false;
+  function finish(value, callbackarg, error) {
+    if (completed) return;
+    completed = true;
+    try {
+      if (error) throw error;
+      var page = parseRecordingPage(value);
+      renderVideoList(page.videos);
+      recordingLibrary.page = page;
+      recordingLibrary.requestedDay = requestedDay;
+      recordingLibrary.refreshedAt = new Date().toISOString();
+      recordingLibrary.loaded = true;
+      recordingLibrary.snapshot = null;
+      recordingLibrary.snapshotChecked = false;
+      updateRecordingDays(page, requestedDay);
+      renderRecordingFreshness();
+      setViewerStatus(page.videos.length ? "" : "No indexed recordings are available for this day.", false);
+      // Metadata only, after the video scan; never inspect the live camera.
+      getMaintenanceStatus().then(updateRecordingSnapshotEvidence, () => updateRecordingSnapshotEvidence(null));
+    } catch (failure) {
+      if (!recordingLibrary.loaded) document.querySelector(".noclips").textContent = "Recordings unavailable";
+      document.getElementById("recording-day").value = recordingLibrary.requestedDay;
+      setViewerStatus(videoListErrorMessage(failure) +
+        (recordingLibrary.loaded ? " The previous library is still shown; it was not refreshed." : ""), true);
+    } finally {
+      recordingLibrary.inFlight = false;
+      setRecordingControlsBusy(false);
+      finishInitialVideoListLoad();
+    }
+  }
+  var waitStarted = Date.now();
+  function startWhenStatusIdle() {
+    if (statusRequestInFlight) {
+      if (Date.now() - waitStarted >= 35000) {
+        finish(null, null, new Error("The status request has not finished; try refreshing again"));
+      } else {
+        setTimeout(startWhenStatusIdle, 100);
+      }
+      return;
+    }
+    try {
+      readfile({url:'/api/v1/videos?day=' + encodeURIComponent(requestedDay), callback:finish});
+    } catch (error) { finish(null, null, error); }
+  }
+  startWhenStatusIdle();
+  return true;
+}
+
+function sequenceVideoSignature(sequence) {
+  return JSON.stringify(sequence.segments.map(segment => [segment.datetime,
+    segment.front, segment.leftrepeater, segment.rightrepeater, segment.leftpillar, segment.rightpillar, segment.back])) +
+    JSON.stringify(sequence.jsonfile);
+}
+
+function clearRecordingPlayback() {
+  currentsequence = undefined;
+  for (var video of videoelems) {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.style.visibility = "hidden";
+  }
+  for (var canvas of canvaselems) canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById("sentrymap").removeAttribute("src");
+  document.getElementById("sequencelocation").textContent = "";
+  document.getElementById("segmentname").textContent = "";
+  document.getElementById("currenttime").textContent = "";
+  document.getElementById("totaltime").textContent = "";
+  document.getElementById("position").value = 0;
+  document.getElementById("position").max = 0;
+}
+
+function renderVideoList(lines) {
+  var previousLibrary = videos;
+  var previousSequence = currentsequence;
+  var previousSegment = previousSequence && previousSequence.getSegmentByIndex(previousSequence.currentSegmentIdx());
+  var previousPosition = Number(document.getElementById("position").value) || 0;
+  var wasPlaying = previousSequence && previousSequence.isPlaying();
+  var previousDropdowns = {};
+  for (var group of ["RecentClips", "SavedClips", "SentryClips"]) {
+    previousDropdowns[group] = Array.from(document.getElementById(group).childNodes);
+  }
+  var committed = false;
+  videos = {};
   try {
-    lines = parseVideoListResponse(value);
-  } catch (parseError) {
-    var loadIndicator = document.querySelector(".noclips");
-    loadIndicator.textContent = "Recordings unavailable";
-    setViewerStatus("The recording list response was invalid: " + parseError.message, true);
-    return;
-  }
   var newest="0-";
   var newestsequence;
   var haspillarviews = false;
@@ -4185,20 +4520,21 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
       }
     }
   }
-  if (haspillarviews) {
-    var pillarlayouts = document.querySelectorAll('.dropdownitem.pillar');
-    for (i of pillarlayouts) {
-      i.style.display = 'block';
+  var selectedSequence = newestsequence;
+  var replacement = previousSequence && videos[previousSequence.sequencegroup] &&
+    videos[previousSequence.sequencegroup][previousSequence.sequencename];
+  if (replacement && replacement.length() > 0) {
+    selectedSequence = replacement;
+    if (sequenceVideoSignature(replacement) === sequenceVideoSignature(previousSequence)) {
+      // Identical selected media can keep playing without a reload or seek.
+      videos[previousSequence.sequencegroup][previousSequence.sequencename] = previousSequence;
+      selectedSequence = previousSequence;
     }
   }
-
-  var nr = document.querySelector(".noclips");
-  if (WORK_AROUND_WEBKIT_QUIRKS) {
-    nr.style.display="none";
-    nr.style.display='';
-  }
+  var stagedDropdowns = {};
   for (i of ["RecentClips", "SavedClips", "SentryClips"]) {
-    var d=document.getElementById(i);
+    var d = document.createElement("div");
+    stagedDropdowns[i] = d;
     for (c in videos[i]) {
       // Regular expression to match the date format
       var datePattern = /^\d{4}-\d{2}-\d{2}(_\d{2}-\d{2}-\d{2})?$/;
@@ -4212,9 +4548,9 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
         log("skipping empty " + i + "/" + c);
         continue;
       }
-      videos[i][c].initialize();
+      if (videos[i][c] !== previousSequence) videos[i][c].initialize();
 
-      var newelem = makeDropdownItem(i, c, videos[i][c] == newestsequence);
+      var newelem = makeDropdownItem(i, c, videos[i][c] == selectedSequence, d);
       if (newelem != undefined) {
         d.appendChild(newelem);
       }
@@ -4223,7 +4559,14 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
       d.append(...Array.from(d.childNodes).reverse())
     }
 
-    /* set an appropriate size and position for the dropdown */
+  }
+  // All parsing and construction succeeded. Replace each category rather than
+  // appending a second library; errors before here leave the old DOM intact.
+  committed = true;
+  for (i of ["RecentClips", "SavedClips", "SentryClips"]) {
+    var d = document.getElementById(i);
+    d.replaceChildren(...stagedDropdowns[i].childNodes);
+    d.style.display = "";
     var cols = Math.trunc((document.body.clientWidth * 0.7 + 155) / 156);
     if ((d.childElementCount / cols) < 3) {
       cols = Math.ceil(d.childElementCount / 3);
@@ -4244,12 +4587,48 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
       ev.target.onclick = null;
     }
   }
-  if (newestsequence != undefined) {
-    newestsequence.select();
+  for (var pillar of document.querySelectorAll('.dropdownitem.pillar')) {
+    pillar.style.display = haspillarviews ? "block" : "none";
   }
-  nr.textContent = "No recordings";
+  if (selectedSequence !== previousSequence) {
+    if (previousSegment) previousSequence.pause();
+    if (selectedSequence) {
+      selectedSequence.select();
+      if (replacement === selectedSequence && previousSegment) {
+        var preservedIndex = selectedSequence.segments.findIndex(segment => segment.datetime === previousSegment.datetime);
+        if (preservedIndex >= 0) {
+          selectedSequence.seekTo(preservedIndex * 60000 + previousPosition % 60000);
+          if (wasPlaying) selectedSequence.play();
+        }
+      }
+    } else {
+      clearRecordingPlayback();
+    }
+  }
+  document.querySelector(".noclips").textContent = "No recordings";
+  } catch (error) {
+    videos = previousLibrary;
+    if (committed) {
+      for (var group of ["RecentClips", "SavedClips", "SentryClips"]) {
+        document.getElementById(group).replaceChildren(...previousDropdowns[group]);
+      }
+      if (currentsequence !== previousSequence && previousSegment) {
+        try {
+          previousSequence.select();
+          previousSequence.seekTo(previousPosition);
+          if (wasPlaying) previousSequence.play();
+        } catch (restoreError) {
+          log("Could not restore the previous playback position: " + restoreError.message);
+        }
+      }
+      currentsequence = previousSequence;
+    }
+    throw error;
+  }
 }
-});
+// End recording library helpers.
+
+loadRecordings("latest");
 
 function stringtoseconds(s) {
   var secs = (3600 * s.substring(0, 2)) +

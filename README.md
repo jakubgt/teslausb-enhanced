@@ -233,10 +233,25 @@ See [USB gadget repair](doc/USBGadgetRepair.md).
 
 ## Upgrading an existing installation
 
-For the cleanup-delay and independent-clock corrections, connection-status
-semantics, and a safe on-device test plan, see
+The September 2026 source updates add a day-scoped viewer, **Refresh recordings**,
+snapshot/library freshness labels, and storage/clock/recovery evidence in
+**Tools > Advanced maintenance**. Refresh reads the existing index; it does not
+force a snapshot, disconnect USB, or make still-live footage appear immediately.
+Failed refreshes retain the previous library and identify it as not refreshed.
+
+The health panel distinguishes backing-card free space from the car's virtual
+camera drive, which it does not inspect while recording. It shows the cleanup
+reserve, finalized snapshot metadata, and completed-release evidence when
+available. Recovery-backup allocation can include shared blocks: it is not a
+promise of reclaimable space, and the panel does not delete backups.
+
+For viewer controls, cleanup-delay and independent-clock corrections, logging
+and connection-status semantics, and a safe on-device test plan, see
 [runtime maintenance and verification](doc/RuntimeMaintenance.md). These changes
-extend the unpublished rc.5 candidate; they are not present in the rc.4 image.
+extend the unpublished rc.5 candidate; a source PR or merge is not an image
+release or an automatic update of an installed Pi. They are not present in the
+rc.4 image. A complete near-full-card rollover and the next-boot logging changes
+still require their own on-device verification.
 
 - Do **not** perform an in-place Bookworm-to-Trixie or 32-bit-to-64-bit OS
   upgrade. Back up the private configuration and keys, flash a clean arm64

@@ -37,7 +37,7 @@ function harness() {
   };
   const requests = [];
   class FakeRequest {
-    constructor() { this.headers = {}; this.responseHeaders = {}; requests.push(this); }
+    constructor() { this.headers = {}; this.responseHeaders = {}; this.status = 0; requests.push(this); }
     open(method, url) { this.method = method; this.url = url; }
     setRequestHeader(name, value) { this.headers[name] = value; }
     getResponseHeader(name) { return this.responseHeaders[name] || null; }
@@ -131,6 +131,29 @@ async function run() {
   assert.match(c.maintenanceSshStatusText({schema_version:1, ssh:{service_state:"<script>", enabled_state:"surprise"}}),
     /SSH service: unknown\. Startup: unknown/);
   assert.throws(() => c.maintenanceSshStatusText({schema_version:2, ssh:{}}), /not recognized/);
+  assert.match(c.maintenanceHealthText({}), /health unavailable/);
+  const health = {schema_version:1,
+    storage:{backing:{available:true, total_bytes:500 * 1024 ** 3, free_bytes:80 * 1024 ** 3,
+      cleanup_reserve_bytes:25 * 1024 ** 3, below_cleanup_reserve:false}, mutable:{available:false}},
+    read_only:{root:true, boot:null},
+    snapshots:{available:true, scan_complete:true, last_completed:{name:"snap-000164", completed_at_utc:"2026-09-07T15:00:00+00:00"}},
+    cleanup:{available:true, evidence:"release_attempt"},
+    clock:{available:true, state:"waiting_for_network_time", last_verified_utc:null},
+    recovery:{available:true, scan_complete:true, items:[{}], total_logical_bytes:400 * 1024 ** 3,
+      total_allocated_bytes:80 * 1024 ** 3}};
+  let healthText = c.maintenanceHealthText({health});
+  assert.match(healthText, /80.0 GiB free of 500.0 GiB.*reserve: 25.0 GiB.*above reserve/);
+  assert.match(healthText, /Live camera filesystem: not inspected/);
+  assert.match(healthText, /root read-only; boot unknown/);
+  assert.match(healthText, /snap-000164/);
+  assert.match(healthText, /Cleanup attempt found; completion is not confirmed/);
+  assert.match(healthText, /waiting for network time; last verified unknown/);
+  assert.match(healthText, /400.0 GiB logical, 80.0 GiB reported allocation.*not reclaimable space/);
+  health.snapshots.scan_complete = false;
+  health.recovery.scan_complete = false;
+  healthText = c.maintenanceHealthText({health});
+  assert.doesNotMatch(healthText, /snap-000164|400.0 GiB/);
+  assert.match(healthText, /inventory: unavailable or incomplete/);
 
   let apiCalls = 0;
   c.apiRequest = async (url, options) => {
@@ -147,11 +170,13 @@ async function run() {
   assert.match(d.getElementById("maintenance-ssh-status").textContent, /SSH service: active/);
   assert.match(d.getElementById("maintenance-log-diagnostics").textContent, /No saved file/);
   assert.match(d.getElementById("maintenance-log-setup").textContent, /latest 8 MiB/);
+  assert.match(d.getElementById("maintenance-health-status").textContent, /unavailable/);
   c.apiRequest = async () => { throw new Error("offline"); };
   await c.refreshMaintenanceStatus();
   assert.match(d.getElementById("maintenance-ssh-status").textContent, /SSH status unknown: refresh failed/);
   assert.doesNotMatch(d.getElementById("maintenance-ssh-status").textContent, /service: active/);
   assert.match(d.getElementById("maintenance-log-setup").textContent, /Availability unknown/);
+  assert.match(d.getElementById("maintenance-health-status").textContent, /Health unknown: refresh failed/);
   assert.equal(d.getElementById("maintenance-refresh").disabled, false);
 
   let resolveOld;
@@ -195,9 +220,16 @@ async function run() {
   request.onprogress({loaded:8 * 1024 * 1024 + 1});
   await assert.rejects(pending, /safe download limit/);
   assert.equal(request.aborted, true);
-  for (const [event, error] of [["ontimeout", /timed out/], ["onerror", /Network error/], ["onabort", /cancelled/]]) {
+  for (const [event, error] of [["ontimeout", /timed out/], ["onerror", /Network error/], ["onabort", /cancelled/], ["onloadend", /Network request failed/]]) {
     pending = c.requestMaintenanceLog("maintenance");
-    requests.at(-1)[event]();
+    request = requests.at(-1);
+    let settled = false;
+    pending.then(() => { settled = true; }, () => { settled = true; });
+    request.respond({status:0});
+    await Promise.resolve();
+    assert.equal(settled, false, "DONE/status zero must wait for the actual failure event");
+    request[event]();
+    request.onloadend();
     await assert.rejects(pending, error);
   }
 
