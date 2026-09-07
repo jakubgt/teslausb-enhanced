@@ -12,6 +12,12 @@ image does not contain these repairs.
 
 ### Viewer and runtime corrections added 2026-09-07
 
+- Temporarily suspend viewer media transfers during explicit list refresh/day
+  selection so six HTTP/1.x video requests cannot starve metadata requests.
+  Preserve per-camera position/audio/rate and playback intent, guard stale
+  callbacks, and make failed restoration bounded and retryable. Car recording
+  is not interrupted; slow Wi-Fi can still limit high-resolution playback.
+
 - Add day-scoped recording lists, a latest-available-day default, manual
   Refresh recordings, and separate snapshot/index/browser-refresh timestamps.
   Preserve the legacy complete-list API and its bounded numeric `_`

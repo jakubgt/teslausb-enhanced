@@ -1319,6 +1319,7 @@ video {
         <select id="recording-day" disabled onchange="loadRecordings(this.value);"><option value="latest">Latest available day</option></select>
         <button type="button" id="recording-refresh" disabled onclick="loadRecordings();">Refresh recordings</button>
         <div class="recording-freshness">Snapshot library, not the live camera disk. New recordings appear after a completed snapshot.</div>
+        <div class="recording-freshness">Refreshing briefly pauses viewer playback; car recording is unaffected.</div>
         <div id="recording-freshness" class="recording-freshness" role="status" aria-live="polite">Snapshot and recording freshness have not been checked.</div>
       </div>
       <div id="viewerstatus" class="viewerstatus" role="status" aria-live="polite"></div>
@@ -1606,15 +1607,18 @@ function cycleLayout() {
 setLayout(localStorageGet("layout"));
 
 function skipBack() {
+  if (recordingLibrary.inFlight || !currentsequence) return;
   var slider=document.getElementById('position');
   currentsequence.seekTo(parseInt(slider.value) - 10000);
 }
 
 function startPlaying() {
+  if (recordingLibrary.inFlight || !currentsequence) return;
   currentsequence.toggleplaypause();
 }
 
 function skipForward() {
+  if (recordingLibrary.inFlight || !currentsequence) return;
   var slider=document.getElementById('position');
   currentsequence.seekTo(parseInt(slider.value) + 30000);
 }
@@ -2862,7 +2866,7 @@ function maintenanceHealthText(payload) {
   var health = payload && payload.health;
   if (!health || health.schema_version !== 1) return "System health unavailable; refresh maintenance status to try again.";
   var gib = value => typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? (value / 1024 ** 3).toFixed(1) + " GiB" : "unknown";
+    ? value < 1024 ** 3 ? Math.round(value / 1024 ** 2) + " MiB" : (value / 1024 ** 3).toFixed(1) + " GiB" : "unknown";
   var storage = health.storage || {};
   var backing = storage.backing || {};
   var mutable = storage.mutable || {};
@@ -2895,7 +2899,7 @@ function maintenanceHealthText(payload) {
     : "Clock verification: unavailable.");
   var recovery = health.recovery || {};
   lines.push(recovery.available === true && recovery.scan_complete === true && Array.isArray(recovery.items)
-    ? "Recovery backups: " + recovery.items.length + " bundles; " + gib(recovery.total_logical_bytes) +
+    ? "Recovery backups: " + recovery.items.length + (recovery.items.length === 1 ? " bundle; " : " bundles; ") + gib(recovery.total_logical_bytes) +
       " logical, " + gib(recovery.total_allocated_bytes) + " reported allocation. Shared reflink extents may be counted more than once; this is not reclaimable space."
     : "Recovery-backup inventory: unavailable or incomplete; reclaimable space is unknown.");
   return lines.join("\n");
@@ -3368,19 +3372,45 @@ function setViewerStatus(message, isError) {
   status.classList.toggle("error", Boolean(isError));
 }
 
+// Every source assignment owns its callbacks. An old load must never advance
+// a newly selected recording or report an intentional refresh abort as failure.
+function releaseVideoSource(video, forLibrary) {
+  if (video.teslausbMediaOwner) {
+    video.teslausbMediaOwner.active = false;
+    if (forLibrary) video.teslausbMediaOwner.libraryAbort = true;
+  }
+  for (var name of ["ondurationchange", "onloadedmetadata", "ontimeupdate", "onended", "onerror"])
+    video[name] = null;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+}
+
+function ownVideoCallback(video, name, callback) {
+  var owner = video.teslausbMediaOwner;
+  video[name] = function(event) {
+    if (owner && owner.active && video.teslausbMediaOwner === owner) callback(event);
+  };
+}
+
 function playVideoSafely(video) {
+  var owner = video.teslausbMediaOwner;
+  function failed(error) {
+    if (owner && owner.libraryAbort && error.name === "AbortError") return;
+    log(error);
+    // A genuine error from a disposed source remains in the debug log, but
+    // cannot overwrite the status of the recording that replaced it.
+    if (owner && (!owner.active || video.teslausbMediaOwner !== owner)) return;
+    setViewerStatus("Playback could not start: " + error.message, true);
+  }
   try {
     var result = video.play();
     if (result && result.catch) {
-      result.catch(function(error) {
-        log(error);
-        setViewerStatus("Playback could not start: " + error.message, true);
-      });
+      result.catch(failed);
     }
     return result;
   } catch (error) {
-    log(error);
-    setViewerStatus("Playback could not start: " + error.message, true);
+    failed(error);
     return null;
   }
 }
@@ -3402,6 +3432,7 @@ class VideoSegment {
   readytoplay;
   autoplay;
   autoseek;
+  mediaRestore;
   timestampMs;
 
   constructor(group, sequence) {
@@ -3460,25 +3491,58 @@ class VideoSegment {
 
   onDurationChange(event) {
     var elem = event.target;
+    if (!Number.isFinite(elem.duration) || elem.duration <= 0 || this.activevideoelems.includes(elem)) return;
     this.activevideoelems = this.activevideoelems.concat(elem);
+    if (this.mediaRestore) {
+      var saved = this.mediaRestore.media.find(item => item.video === elem);
+      if (saved) {
+        elem.muted = saved.muted;
+        elem.volume = saved.volume;
+        elem.defaultPlaybackRate = saved.defaultPlaybackRate;
+        elem.playbackRate = saved.playbackRate;
+        elem.currentTime = Math.min(saved.currentTime, elem.duration);
+      }
+    }
     log(this.activevideoelems.length + "/" + this.numangles + " duration: " + elem.duration);
     if (this.longestvideoelem == undefined || elem.duration > this.longestvideoelem.duration) {
       this.longestvideoelem = elem;
     }
-    if (this.activevideoelems.length == this.numangles) {
+    this.finishLoading();
+  }
+
+  finishLoading() {
+    if (!this.readytoplay && this.numangles > 0 && this.activevideoelems.length == this.numangles) {
       log("all videos loaded. Longest: " + this.longestvideoelem.id + ": " + this.longestvideoelem.duration);
       this.readytoplay = true;
-      setViewerStatus("", false);
-      this.longestvideoelem.ontimeupdate = this.onTimeUpdate;
+      clearTimeout(this.mediaRestoreTimer);
+      if (!this.mediaRestore) setViewerStatus("", false);
+      ownVideoCallback(this.longestvideoelem, "ontimeupdate", this.onTimeUpdate);
       for (var vid of this.activevideoelems) {
-        vid.onended=this.onVideoEnded;
-        vid.onerror=this.onVideoError;
+        ownVideoCallback(vid, "onended", this.onVideoEnded);
+        ownVideoCallback(vid, "onerror", this.onVideoError);
       }
-      if (this.autoseek) {
+      if (!this.mediaRestore && this.autoseek >= 0) {
         this.seekTo(this.autoseek);
         this.autoseek = -1;
       }
       unfreezeVideoElems();
+      if (this.mediaRestore) {
+        var restored = this.mediaRestore;
+        this.mediaRestore = null;
+        document.getElementById("position").value = restored.position;
+        showCurrentTime(restored.position);
+        if (restored.wasPlaying) {
+          var resumed = false;
+          for (var saved of restored.media) {
+            if (!saved.paused && this.activevideoelems.includes(saved.video)) {
+              playVideoSafely(saved.video);
+              resumed = true;
+            }
+          }
+          if (!resumed) this.play();
+        }
+        return;
+      }
       if (this.autoplay) {
         log("autoplay was set");
         this.autoplay = false;
@@ -3493,14 +3557,32 @@ class VideoSegment {
     var elem = event.target;
     log("scan error on '" + elem.src + "': " + videoError(elem));
     this.numangles--;
+    if (elem.teslausbMediaOwner) elem.teslausbMediaOwner.active = false;
+    this.activevideoelems = this.activevideoelems.filter(video => video !== elem);
+    this.longestvideoelem = this.activevideoelems.reduce((longest, video) =>
+      !longest || video.duration > longest.duration ? video : longest, undefined);
     elem.onerror = undefined;
     elem.ondurationchange = undefined;
     elem.removeAttribute('src');
     if (this.numangles == 0) {
+      if (this.mediaRestore) { this.failMediaRestore(); return; }
       log("all videos failed to scan, moving to next");
       setViewerStatus("This recording could not be loaded. It may be incomplete or use an unsupported codec.", true);
       if (!currentsequence.next()) unfreezeVideoElems();
     }
+    this.finishLoading();
+  }
+
+  failMediaRestore() {
+    clearTimeout(this.mediaRestoreTimer);
+    if (!this.mediaRestore) return;
+    this.mediaRestore.stalled = true;
+    this.readytoplay = false;
+    currentsequence.pause();
+    for (var saved of this.mediaRestore.media) releaseVideoSource(saved.video, false);
+    unfreezeVideoElems();
+    setViewerStatus((this.mediaRestore.statusPrefix || "") +
+      " Viewer playback could not be restored in time. Press Play to retry, or choose a recording. Car recording is unaffected.", true);
   }
 
   onTimeUpdate(event) {
@@ -3547,10 +3629,19 @@ class VideoSegment {
     currentsequence.next();
   }
 
-  select() {
+  select(mediaRestore) {
     var prefix = "TeslaCam/" + this.group + "/" + this.sequence + "/";
     log("===== segment =====");
     freezeVideoElems();
+    this.initdefaults();
+    clearTimeout(this.mediaRestoreTimer);
+    this.mediaRestore = mediaRestore || null;
+    if (mediaRestore) mediaRestore.stalled = false;
+    for (var video of videoelems) {
+      releaseVideoSource(video, false);
+      video.teslausbMediaOwner = {active:true, libraryAbort:false};
+    }
+    if (!mediaRestore) {
     if (this.leftrepeater != undefined) {
       videoelems[0].src = cachebustingurl(prefix + this.leftrepeater);
     } else {
@@ -3581,6 +3672,13 @@ class VideoSegment {
     } else {
       videoelems[5].removeAttribute('src');
     }
+    }
+    if (mediaRestore) {
+      for (var saved of mediaRestore.media) {
+        if (saved.src !== null) saved.video.setAttribute("src", saved.src);
+        else saved.video.removeAttribute("src");
+      }
+    }
 
     this.numangles = 0;
     for (var i=0; i < 6;i++) {
@@ -3593,14 +3691,20 @@ class VideoSegment {
       log("videopath: " + v.src);
       if (v.src != undefined && v.src != '') {
         log("waiting for duration for " + v.src);
-        v.ondurationchange = this.onDurationChange;
-        v.onerror = this.onScanError;
+        ownVideoCallback(v, "ondurationchange", this.onDurationChange);
+        ownVideoCallback(v, "onerror", this.onScanError);
         this.numangles++;
       } else {
         log("source undefined for vid " + i);
       }
     }
     log("angles: " + this.numangles);
+    if (mediaRestore) {
+      this.mediaRestoreTimer = setTimeout(() => {
+        if (this.mediaRestore === mediaRestore && !this.readytoplay && currentsequence &&
+            currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) === this) this.failMediaRestore();
+      }, this.numangles === 0 ? 0 : 20000);
+    }
 
     for (var n of [this.leftrepeater,this.leftpillar, this.rightrepeater,this.rightpillar, this.front, this.back]) {
       if (n != undefined) {
@@ -3611,10 +3715,19 @@ class VideoSegment {
     var tt = document.getElementById('totaltime');
     tt.innerText = " / " + timeString(currentsequence.length() * 60000);
 
-    this.initdefaults();
   }
 
   seekTo(position) {
+    if (this.mediaRestore && this.mediaRestore.stalled) {
+      var retry = {...this.mediaRestore, position:Number(document.getElementById("position").value) || 0,
+        wasPlaying:currentsequence.isPlaying(),
+        media:this.mediaRestore.media.map(saved => ({...saved, currentTime:position, paused:true}))};
+      this.select(retry);
+      return;
+    }
+    // A new user seek supersedes an asynchronous refresh restoration.
+    this.mediaRestore = null;
+    clearTimeout(this.mediaRestoreTimer);
     if (this.readytoplay == true) {
       log("segment seekTo " + position);
       for (var vid of this.activevideoelems) {
@@ -3628,6 +3741,8 @@ class VideoSegment {
   }
 
   play() {
+    if (this.mediaRestore && this.mediaRestore.stalled) this.select(this.mediaRestore);
+    if (this.mediaRestore) this.mediaRestore.wasPlaying = true;
     if (this.readytoplay == true) {
       log("direct play");
       playVideoSafely(this.longestvideoelem);
@@ -3638,6 +3753,7 @@ class VideoSegment {
   }
 
   pause() {
+    if (this.mediaRestore) this.mediaRestore.wasPlaying = false;
     log("pause clearing autoplay");
     this.autoplay = false;
     for (var vid of this.activevideoelems) {
@@ -3713,6 +3829,7 @@ class VideoSequence {
     this.isplaying = false;
     var b = document.getElementById('playpause');
     b.classList.remove("pause");
+    b.setAttribute("aria-label", "Play recording");
     if (isFirefox || isWebkit) {
       b.firstElementChild.firstChild.setAttribute('d', 'M 8,30 30,18 8,6 z');
     }
@@ -3743,7 +3860,7 @@ class VideoSequence {
     return this.isplaying == true;
   }
 
-  select() {
+  select(position, mediaRestore) {
     this.reset();
     currentsequence=this;
     var slider = document.getElementById('position');
@@ -3751,7 +3868,7 @@ class VideoSequence {
     slider.oninput = this.onSeek.bind(this);
     slider.onmousedown = this.onSeekStart.bind(this);
     slider.onchange =  this.onSeekEnd.bind(this);
-    this.seekTo(0);
+    this.seekTo(position || 0, mediaRestore);
     this.onMapResize();
     this.onTickResize();
     this.showSentryLocation();
@@ -3961,6 +4078,7 @@ class VideoSequence {
   }
 
   onSeek(event) {
+    if (recordingLibrary.inFlight) return;
     this.seekTo(event.target.value);
   }
 
@@ -3968,7 +4086,7 @@ class VideoSequence {
     log("seek end");
   }
 
-  seekTo(seektime) {
+  seekTo(seektime, mediaRestore) {
     if (seektime < 0) {
       seektime = 0;
     }
@@ -3989,14 +4107,14 @@ class VideoSequence {
         oldsegment.pause();
       }
       log("selecting new segment " + index);
-      segment.select();
+      segment.select(mediaRestore);
       if (this.isplaying) {
         log("playing new segment");
         segment.play();
       }
       this.currentsegmentidx=index;
     }
-    segment.seekTo((seektime % 60000) / 1000);
+    if (!mediaRestore) segment.seekTo((seektime % 60000) / 1000);
     this.onMapResize();
     this.showSentryLocation();
   }
@@ -4074,7 +4192,9 @@ function freezeVideoElems() {
     c.width = v.clientWidth;
     c.height = v.clientHeight;
     var ctx = c.getContext("2d");
-    if (v.classList.contains("flipped")) {
+    if (v.readyState < 2 || !v.videoWidth) {
+      ctx.clearRect(0, 0, c.width, c.height);
+    } else if (v.classList.contains("flipped")) {
       ctx.scale(-1, 1);
       ctx.drawImage(v, 0, 0, -c.width, c.height);
     } else {
@@ -4114,6 +4234,7 @@ function setDropdownClick(group, item) {
   item.tabIndex = 0;
   item.setAttribute("role", "button");
   item.onclick=function(event) {
+    if (recordingLibrary.inFlight) { event.stopPropagation(); return; }
     /* unselect all the currently selected items */
     var previousselected = document.querySelectorAll('.selected:not(.layoutitem)');
     for (i of previousselected) {
@@ -4330,6 +4451,10 @@ function setRecordingControlsBusy(busy) {
   document.getElementById("recording-refresh").disabled = busy;
   document.getElementById("recording-refresh").setAttribute("aria-busy", String(busy));
   document.getElementById("recording-day").disabled = busy;
+  for (var id of ["position", "playpause", "skipback", "skipforward"])
+    document.getElementById(id).disabled = busy;
+  for (var group of ["RecentClips", "SavedClips", "SentryClips"])
+    document.getElementById(group).setAttribute("aria-disabled", String(busy));
 }
 
 function updateRecordingDays(page, requestedDay) {
@@ -4368,6 +4493,54 @@ function updateRecordingSnapshotEvidence(payload) {
   if (recordingLibrary.loaded) renderRecordingFreshness();
 }
 
+function suspendRecordingMedia() {
+  var sequence = currentsequence;
+  var segment = sequence && sequence.getSegmentByIndex(sequence.currentSegmentIdx());
+  var pending = segment && segment.mediaRestore;
+  var saved = {sequence, segment, position:pending ? pending.position : Number(document.getElementById("position").value) || 0,
+    wasPlaying:Boolean(sequence && sequence.isPlaying()), disposed:false, restored:false,
+    media:videoelems.map(video => {
+      var previous = pending && pending.media.find(item => item.video === video);
+      return previous ? {...previous, video} : {video, src:video.getAttribute("src"),
+      currentTime:Number.isFinite(video.currentTime) ? video.currentTime : 0,
+      paused:video.paused, muted:video.muted, volume:video.volume,
+      playbackRate:video.playbackRate, defaultPlaybackRate:video.defaultPlaybackRate};
+    })};
+  if (segment) clearTimeout(segment.mediaRestoreTimer);
+  for (var video of videoelems) releaseVideoSource(video, true);
+  return saved;
+}
+
+function sameSuspendedSegment(saved, segment) {
+  return saved && saved.segment && segment && ["group", "sequence", "datetime", "front",
+    "leftrepeater", "rightrepeater", "leftpillar", "rightpillar", "back"]
+    .every(key => saved.segment[key] === segment[key]);
+}
+
+function restoreRecordingMedia(saved) {
+  if (!saved || saved.disposed || saved.restored || currentsequence !== saved.sequence || !saved.segment) return;
+  if (currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) !== saved.segment) return;
+  saved.restored = true;
+  saved.segment.select(saved);
+}
+
+function recordingMetadataBeforePlayback() {
+  // The API has its own deadline; this local bound also covers a stuck/shared
+  // promise. Metadata is optional and must never strand suspended playback.
+  return new Promise(resolve => {
+    var finished = false;
+    var timer = setTimeout(() => finish(null), 16000);
+    function finish(payload) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(payload);
+    }
+    try { Promise.resolve(getMaintenanceStatus()).then(finish, () => finish(null)); }
+    catch (error) { finish(null); }
+  });
+}
+
 function loadRecordings(day) {
   if (recordingLibrary.inFlight) return false;
   var requestedDay = day === undefined ? recordingLibrary.requestedDay : day;
@@ -4379,16 +4552,19 @@ function loadRecordings(day) {
   initialVideoListLoading = true;
   clearTimeout(statusPollTimer);
   setRecordingControlsBusy(true);
+  var suspended = suspendRecordingMedia();
   showstatus();
-  setViewerStatus("Loading recordings for " + (requestedDay === "latest" ? "the latest available day" : requestedDay) + "...", false);
+  setViewerStatus("Loading recordings for " + (requestedDay === "latest" ? "the latest available day" : requestedDay) +
+    "... Viewer playback is briefly paused; car recording is unaffected.", false);
   var completed = false;
-  function finish(value, callbackarg, error) {
+  async function finish(value, callbackarg, error) {
     if (completed) return;
     completed = true;
     try {
       if (error) throw error;
       var page = parseRecordingPage(value);
-      renderVideoList(page.videos);
+      var metadata = await recordingMetadataBeforePlayback();
+      renderVideoList(page.videos, suspended);
       recordingLibrary.page = page;
       recordingLibrary.requestedDay = requestedDay;
       recordingLibrary.refreshedAt = new Date().toISOString();
@@ -4398,14 +4574,17 @@ function loadRecordings(day) {
       updateRecordingDays(page, requestedDay);
       renderRecordingFreshness();
       setViewerStatus(page.videos.length ? "" : "No indexed recordings are available for this day.", false);
-      // Metadata only, after the video scan; never inspect the live camera.
-      getMaintenanceStatus().then(updateRecordingSnapshotEvidence, () => updateRecordingSnapshotEvidence(null));
+      updateRecordingSnapshotEvidence(metadata);
     } catch (failure) {
       if (!recordingLibrary.loaded) document.querySelector(".noclips").textContent = "Recordings unavailable";
       document.getElementById("recording-day").value = recordingLibrary.requestedDay;
-      setViewerStatus(videoListErrorMessage(failure) +
-        (recordingLibrary.loaded ? " The previous library is still shown; it was not refreshed." : ""), true);
+      suspended.statusPrefix = videoListErrorMessage(failure) +
+        (recordingLibrary.loaded ? " The previous library is still shown; it was not refreshed." : "");
+      setViewerStatus(suspended.statusPrefix, true);
     } finally {
+      try { restoreRecordingMedia(suspended); }
+      catch (restoreError) { log("Could not restore viewer playback: " + restoreError.message); }
+      suspended.disposed = true;
       recordingLibrary.inFlight = false;
       setRecordingControlsBusy(false);
       finishInitialVideoListLoad();
@@ -4438,9 +4617,7 @@ function sequenceVideoSignature(sequence) {
 function clearRecordingPlayback() {
   currentsequence = undefined;
   for (var video of videoelems) {
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
+    releaseVideoSource(video, false);
     video.style.visibility = "hidden";
   }
   for (var canvas of canvaselems) canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
@@ -4453,7 +4630,7 @@ function clearRecordingPlayback() {
   document.getElementById("position").max = 0;
 }
 
-function renderVideoList(lines) {
+function renderVideoList(lines, suspended) {
   var previousLibrary = videos;
   var previousSequence = currentsequence;
   var previousSegment = previousSequence && previousSequence.getSegmentByIndex(previousSequence.currentSegmentIdx());
@@ -4526,7 +4703,7 @@ function renderVideoList(lines) {
   if (replacement && replacement.length() > 0) {
     selectedSequence = replacement;
     if (sequenceVideoSignature(replacement) === sequenceVideoSignature(previousSequence)) {
-      // Identical selected media can keep playing without a reload or seek.
+      // Reuse the selection; a refresh restores its suspended media separately.
       videos[previousSequence.sequencegroup][previousSequence.sequencename] = previousSequence;
       selectedSequence = previousSequence;
     }
@@ -4593,9 +4770,21 @@ function renderVideoList(lines) {
   if (selectedSequence !== previousSequence) {
     if (previousSegment) previousSequence.pause();
     if (selectedSequence) {
-      selectedSequence.select();
+      var preservedIndex = -1;
       if (replacement === selectedSequence && previousSegment) {
-        var preservedIndex = selectedSequence.segments.findIndex(segment => segment.datetime === previousSegment.datetime);
+        preservedIndex = selectedSequence.segments.findIndex(segment => segment.datetime === previousSegment.datetime);
+      }
+      if (preservedIndex >= 0 && sameSuspendedSegment(suspended, selectedSequence.getSegmentByIndex(preservedIndex))) {
+        var remappedRestore = {...suspended, position:preservedIndex * 60000 + previousPosition % 60000};
+        selectedSequence.select(remappedRestore.position, remappedRestore);
+        suspended.restored = true;
+        selectedSequence.isplaying = suspended.wasPlaying;
+        if (suspended.wasPlaying) {
+          document.getElementById("playpause").classList.add("pause");
+          document.getElementById("playpause").setAttribute("aria-label", "Pause recording");
+        }
+      } else {
+        selectedSequence.select();
         if (preservedIndex >= 0) {
           selectedSequence.seekTo(preservedIndex * 60000 + previousPosition % 60000);
           if (wasPlaying) selectedSequence.play();
@@ -4614,9 +4803,9 @@ function renderVideoList(lines) {
       }
       if (currentsequence !== previousSequence && previousSegment) {
         try {
-          previousSequence.select();
-          previousSequence.seekTo(previousPosition);
-          if (wasPlaying) previousSequence.play();
+          previousSequence.select(previousPosition, suspended);
+          previousSequence.isplaying = wasPlaying;
+          if (suspended) suspended.restored = true;
         } catch (restoreError) {
           log("Could not restore the previous playback position: " + restoreError.message);
         }

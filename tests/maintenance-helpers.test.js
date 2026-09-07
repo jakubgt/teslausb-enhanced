@@ -134,7 +134,8 @@ async function run() {
   assert.match(c.maintenanceHealthText({}), /health unavailable/);
   const health = {schema_version:1,
     storage:{backing:{available:true, total_bytes:500 * 1024 ** 3, free_bytes:80 * 1024 ** 3,
-      cleanup_reserve_bytes:25 * 1024 ** 3, below_cleanup_reserve:false}, mutable:{available:false}},
+      cleanup_reserve_bytes:25 * 1024 ** 3, below_cleanup_reserve:false},
+      mutable:{available:true, total_bytes:278 * 1024 ** 2, free_bytes:262 * 1024 ** 2}},
     read_only:{root:true, boot:null},
     snapshots:{available:true, scan_complete:true, last_completed:{name:"snap-000164", completed_at_utc:"2026-09-07T15:00:00+00:00"}},
     cleanup:{available:true, evidence:"release_attempt"},
@@ -143,6 +144,8 @@ async function run() {
       total_allocated_bytes:80 * 1024 ** 3}};
   let healthText = c.maintenanceHealthText({health});
   assert.match(healthText, /80.0 GiB free of 500.0 GiB.*reserve: 25.0 GiB.*above reserve/);
+  assert.match(healthText, /Mutable\/log storage: 262 MiB free of 278 MiB/);
+  assert.match(healthText, /Recovery backups: 1 bundle;/);
   assert.match(healthText, /Live camera filesystem: not inspected/);
   assert.match(healthText, /root read-only; boot unknown/);
   assert.match(healthText, /snap-000164/);

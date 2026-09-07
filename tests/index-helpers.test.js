@@ -343,7 +343,228 @@ function recordingPage(day = "2026-09-07", videos = []) {
     generated_at:"2026-09-07T15:00:00Z", newest_recording:videos.length ? day + "_09-00-00" : null});
 }
 
-function testInitialStatusGate() {
+function mediaHarness() {
+  const harness = recordingHarness();
+  const {gate, get} = harness;
+  Object.assign(gate, {isFirefox:false, isWebkit:false, timeString:String,
+    showCurrentSegment:() => {}, showCurrentTime:() => {}, showDebugInfo:() => {},
+    freezeVideoElems:() => {}, unfreezeVideoElems:() => {}, videoError:() => "fixture error",
+    cachebustingurl:url => url + "?stable-fixture", playErrors:[]});
+  gate.log = error => gate.playErrors.push(error);
+  vm.runInContext(extractBetween("// Every source assignment owns", "var ro = new ResizeObserver"), gate);
+  vm.runInContext(extractBetween("class VideoSequence", "var videos={};"), gate);
+  vm.runInContext("this.RealSequence = VideoSequence", gate);
+  for (const method of ["onMapResize", "onTickResize", "showSentryLocation"])
+    gate.RealSequence.prototype[method] = () => {};
+  gate.videoelems = Array.from({length:6}, (_, index) => {
+    const attributes = {};
+    return {id:"angle" + index, attributes, currentTime:0, duration:NaN, readyState:0,
+      muted:index % 2 === 0, volume:(index + 1) / 10, playbackRate:1.25, defaultPlaybackRate:1,
+      paused:true, ended:false, style:{}, loads:0, plays:0,
+      get src() { return attributes.src || ""; }, set src(value) { attributes.src = value; },
+      getAttribute(name) { return attributes[name] ?? null; },
+      setAttribute(name, value) { attributes[name] = String(value); },
+      removeAttribute(name) { delete attributes[name]; },
+      pause() { this.paused = true; },
+      play() { this.paused = false; this.plays++; return Promise.resolve(); },
+      load() { this.loads++; this.currentTime = 0; this.duration = NaN; this.readyState = 0; this.playbackRate = this.defaultPlaybackRate; },
+      metadata() { this.duration = 50 + index; this.readyState = 1; if (this.ondurationchange) this.ondurationchange({target:this}); }
+    };
+  });
+  const day = "2026-09-07";
+  const files = ["left_repeater", "left_pillar", "front", "right_repeater", "right_pillar", "back"]
+    .map(angle => `RecentClips/${day}/${day}_09-00-00-${angle}.mp4`);
+  harness.files = files;
+  harness.initialize = async () => {
+    gate.loadRecordings("latest");
+    await harness.requests[0].callback(recordingPage(day, files));
+    gate.videoelems.forEach(video => video.metadata());
+    gate.currentsequence.pause();
+    get("position").value = 23456;
+    gate.videoelems.forEach((video, index) => { video.currentTime = 7.123 + index / 10; video.playbackRate = 1.25; });
+    gate.statusRequestInFlight = false;
+  };
+  harness.state = () => gate.videoelems.map(video => ({src:video.getAttribute("src"), currentTime:video.currentTime,
+    muted:video.muted, volume:video.volume, playbackRate:video.playbackRate, defaultPlaybackRate:video.defaultPlaybackRate}));
+  return harness;
+}
+
+async function testMediaSuspension() {
+  for (const outcome of ["success", "timeout", "invalid JSON", "metadata timeout", "metadata rejection"]) {
+    const h = mediaHarness();
+    const {gate, get, requests, timers} = h;
+    await h.initialize();
+    const sequence = gate.currentsequence, original = h.state();
+    const oldCallbacks = gate.videoelems.map(video => [video.ondurationchange, video.onended, video.onerror]);
+    let resolveMetadata, rejectMetadata;
+    gate.getMaintenanceStatus = () => new Promise((resolve, reject) => { resolveMetadata = resolve; rejectMetadata = reject; });
+    gate.statusRequestInFlight = true;
+    const before = requests.length;
+    assert.equal(gate.loadRecordings(), true);
+    assert.match(get("viewerstatus").textContent, /car recording is unaffected/);
+    assert.equal(requests.length, before, "existing status request remains serialized");
+    assert.ok(gate.videoelems.every(video => !video.src && video.paused), "release media BEFORE waiting for status");
+    for (const id of ["position", "playpause", "skipback", "skipforward", "recording-day", "recording-refresh"])
+      assert.equal(get(id).disabled, true);
+    assert.equal(gate.loadRecordings(), false);
+    oldCallbacks.forEach((callbacks, index) => callbacks.forEach(callback => callback && callback({target:gate.videoelems[index]})));
+    assert.equal(gate.currentsequence, sequence, "disposed media events must not advance selection");
+    gate.statusRequestInFlight = false;
+    const [waitId, waitTimer] = [...timers].find(([, timer]) => timer.delay === 100);
+    timers.delete(waitId); waitTimer.callback();
+    const list = requests.at(-1);
+    const completion = list.callback(outcome === "invalid JSON" ? "invalid" : recordingPage("2026-09-07", h.files),
+      null, outcome === "timeout" ? new Error("Request timed out") : null);
+    await list.callback(null, null, new Error("duplicate callback"));
+    if (!["timeout", "invalid JSON"].includes(outcome)) {
+      assert.ok(gate.videoelems.every(video => !video.src), "metadata must finish BEFORE streams restart");
+      assert.equal(get("recording-refresh").disabled, true);
+      if (outcome === "metadata timeout") {
+        const [id, timer] = [...timers].find(([, entry]) => entry.delay === 16000);
+        timers.delete(id); timer.callback();
+      } else if (outcome === "metadata rejection") rejectMetadata(new Error("unavailable"));
+      else resolveMetadata({health:{snapshots:{available:false}}});
+    }
+    await completion;
+    assert.equal(gate.currentsequence, sequence);
+    assert.deepEqual(gate.videoelems.map(video => video.getAttribute("src")), original.map(item => item.src));
+    const statusBeforeMetadata = get("viewerstatus").textContent;
+    gate.videoelems.forEach(video => { video.metadata(); video.metadata(); });
+    assert.deepEqual(h.state(), original, outcome + ": exact positions/audio/rates survive source reload");
+    assert.ok(gate.videoelems.every(video => video.paused), "paused must not become autoplay");
+    assert.equal(sequence.getSegmentByIndex(0).activevideoelems.length, 6, "duplicate duration events are ignored");
+    assert.equal(get("position").value, 23456, "short-clip corrected timeline remains distinct from media seconds");
+    assert.equal(get("viewerstatus").textContent, statusBeforeMetadata, "media readiness must not hide a list error");
+    assert.equal(get("recording-refresh").disabled, false);
+    if (outcome === "metadata timeout") {
+      resolveMetadata({health:{snapshots:{available:true, scan_complete:true, last_completed:{name:"snap-000999"}}}});
+      await Promise.resolve();
+      assert.doesNotMatch(get("recording-freshness").textContent, /snap-000999/, "late metadata is disposed");
+    }
+  }
+}
+
+async function testMediaRestoreRaces() {
+  const h = mediaHarness();
+  const {gate, requests, get, timers} = h;
+  await h.initialize();
+  const original = h.state();
+  gate.currentsequence.play();
+  gate.videoelems.forEach(video => { video.paused = false; });
+  gate.loadRecordings();
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  const stale = gate.videoelems[0].ondurationchange;
+  gate.statusRequestInFlight = false;
+  gate.loadRecordings(); // first restoration has not received metadata yet
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  stale({target:gate.videoelems[0]});
+  gate.videoelems.forEach(video => video.metadata());
+  assert.deepEqual(h.state(), original, "second refresh inherits pending exact seek state, not reset zero");
+  assert.ok(gate.videoelems.every(video => !video.paused), "restore prior play intent and participating angles");
+
+  gate.statusRequestInFlight = false;
+  gate.loadRecordings();
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  gate.videoelems.slice(0, 5).forEach(video => video.metadata());
+  gate.videoelems[5].onerror({target:gate.videoelems[5]});
+  const segment = gate.currentsequence.getSegmentByIndex(0);
+  assert.equal(segment.readytoplay, true, "one unavailable angle must not strand five restored angles");
+  assert.equal(segment.activevideoelems.length, 5);
+
+  gate.statusRequestInFlight = false;
+  gate.loadRecordings();
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  const [id, timer] = [...timers].find(([, entry]) => entry.delay === 20000);
+  timers.delete(id); timer.callback();
+  assert.ok(gate.videoelems.every(video => !video.src), "failed bounded restore releases its downloads");
+  assert.match(get("viewerstatus").textContent, /Press Play to retry/);
+  assert.equal(segment.mediaRestore.stalled, true);
+  gate.currentsequence.play();
+  assert.ok(gate.videoelems.slice(0, 5).every(video => video.src), "Play directly retries saved sources");
+  gate.videoelems.slice(0, 5).forEach(video => video.metadata());
+  assert.deepEqual(h.state().slice(0, 5), original.slice(0, 5));
+  gate.statusRequestInFlight = false;
+  gate.loadRecordings();
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  const [retryId, retryTimer] = [...timers].find(([, entry]) => entry.delay === 20000);
+  timers.delete(retryId); retryTimer.callback();
+  gate.currentsequence.seekTo(19000);
+  gate.currentsequence.play();
+  assert.ok(gate.videoelems.slice(0, 5).every(video => video.src), "seek then Play retries sources after a bounded restore failure");
+  gate.videoelems.slice(0, 5).forEach(video => video.metadata());
+  assert.deepEqual(h.state().slice(0, 5), original.slice(0, 5).map(state => ({...state, currentTime:19})));
+
+  gate.statusRequestInFlight = false;
+  let finishMetadata;
+  gate.getMaintenanceStatus = () => new Promise(resolve => { finishMetadata = resolve; });
+  gate.loadRecordings("2026-09-06");
+  const older = h.files.map(file => file.replaceAll("2026-09-07", "2026-09-06"));
+  const completion = requests.at(-1).callback(recordingPage("2026-09-06", older));
+  assert.equal(gate.currentsequence.sequencename, "2026-09-07");
+  assert.ok(gate.videoelems.every(video => !video.src));
+  finishMetadata(null); await completion;
+  assert.equal(gate.currentsequence.sequencename, "2026-09-06");
+  assert.ok(gate.videoelems.every(video => video.src.includes("2026-09-06")));
+  gate.videoelems.forEach(video => video.metadata());
+  gate.statusRequestInFlight = false;
+  gate.getMaintenanceStatus = () => Promise.resolve(null);
+  gate.loadRecordings("2026-09-06");
+  await requests.at(-1).callback(recordingPage("2026-09-06", []));
+  assert.equal(gate.currentsequence, undefined);
+  assert.ok(gate.videoelems.every(video => !video.src), "empty successful day must not restore obsolete media");
+}
+
+async function testMediaPlayPromiseOwnership() {
+  const h = mediaHarness();
+  await h.initialize();
+  const {gate, get} = h, video = gate.videoelems[0];
+  for (const [name, disposed, expected] of [["AbortError", true, false], ["NotAllowedError", true, false],
+    ["AbortError", false, true], ["NotAllowedError", false, true]]) {
+    let reject;
+    video.teslausbMediaOwner = {active:true, libraryAbort:false};
+    video.play = () => new Promise((resolve, failed) => { reject = failed; });
+    get("viewerstatus").textContent = "newer status";
+    gate.playVideoSafely(video);
+    if (disposed) gate.releaseVideoSource(video, true);
+    reject(Object.assign(new Error("fixture failure"), {name}));
+    await Promise.resolve();
+    assert.equal(get("viewerstatus").textContent.includes("Playback could not start"), expected,
+      "only current-source errors may change the viewer status");
+  }
+}
+
+async function testMediaRestoreRemapsAndUserSeek() {
+  const h = mediaHarness();
+  const {gate, get, requests} = h;
+  const previousFiles = h.files.map(file => file.replaceAll("09-00-00", "08-00-00"));
+  gate.loadRecordings("latest");
+  await requests[0].callback(recordingPage("2026-09-07", [...previousFiles, ...h.files]));
+  gate.videoelems.forEach(video => video.metadata());
+  gate.currentsequence.seekTo(83456);
+  gate.videoelems.forEach(video => video.metadata());
+  get("position").value = 83456;
+  gate.videoelems.forEach((video, index) => { video.currentTime = 7.125 + index / 10; });
+  const original = h.state();
+  gate.statusRequestInFlight = false;
+  gate.loadRecordings();
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  gate.videoelems.forEach(video => video.metadata());
+  assert.equal(gate.currentsequence.currentSegmentIdx(), 0);
+  assert.equal(get("position").value, 23456, "retired earlier clips remap the timeline without changing camera seconds");
+  assert.deepEqual(h.state(), original);
+  gate.statusRequestInFlight = false;
+  gate.loadRecordings();
+  await requests.at(-1).callback(recordingPage("2026-09-07", h.files));
+  gate.currentsequence.seekTo(31000); // user input after list completion but before media readiness
+  gate.videoelems.forEach(video => video.metadata());
+  assert.ok(gate.videoelems.every(video => video.currentTime === 31), "a newer user seek wins over pending restore positions");
+  const staleRestore = gate.suspendRecordingMedia();
+  staleRestore.disposed = true;
+  gate.restoreRecordingMedia(staleRestore);
+  assert.ok(gate.videoelems.every(video => !video.src), "disposed transaction must not restore sources");
+}
+
+async function testInitialStatusGate() {
   const gateOffset = inlineScript.indexOf("var initialVideoListLoading = true;");
   const initializationOffset = inlineScript.search(/readconfig\(\);\s*initialize\(\);/);
   assert.ok(gateOffset >= 0 && initializationOffset > gateOffset,
@@ -368,7 +589,7 @@ function testInitialStatusGate() {
     assert.equal(gate.loadRecordings("2026-09-06"), false, "overlapping scans must be refused");
     assert.deepEqual(requests.map((request) => request.url), ["/api/v1/videos?day=latest"]);
     if (scenario.renderFailure) gate.renderVideoList = () => { throw new Error("render failure"); };
-    requests[0].callback(scenario.value, undefined, scenario.error);
+    await requests[0].callback(scenario.value, undefined, scenario.error);
     assert.equal(gate.initialVideoListLoading, false, scenario.name + ": release the gate");
     assert.deepEqual(requests.map((request) => request.url), ["/api/v1/videos?day=latest", "/api/v1/status"]);
     assert.equal(timers.size, 1, scenario.name + ": resume exactly one polling chain");
@@ -383,12 +604,12 @@ function testInitialStatusGate() {
   }
 }
 
-function testRecordingRefresh() {
+async function testRecordingRefresh() {
   const {gate, requests, timers, get} = recordingHarness();
   const today = "RecentClips/2026-09-07/2026-09-07_09-00-00-front.mp4";
   const yesterday = "RecentClips/2026-09-06/2026-09-06_09-00-00-front.mp4";
   gate.loadRecordings("latest");
-  requests[0].callback(recordingPage("2026-09-07", [today]));
+  await requests[0].callback(recordingPage("2026-09-07", [today]));
   assert.equal(gate.recordingLibrary.loaded, true);
   assert.equal(get("RecentClips").childElementCount, 1);
   const selected = gate.currentsequence;
@@ -396,7 +617,7 @@ function testRecordingRefresh() {
   gate.statusRequestInFlight = false;
   gate.loadRecordings();
   const refresh = requests.at(-1);
-  refresh.callback(recordingPage("2026-09-07", [today]));
+  await refresh.callback(recordingPage("2026-09-07", [today]));
   assert.equal(gate.currentsequence, selected, "unchanged selected media keeps playing without a reload");
   assert.equal(selected.isPlaying(), true);
   assert.equal(get("position").value, 12345);
@@ -407,7 +628,7 @@ function testRecordingRefresh() {
   const oldNode = get("RecentClips").lastChild;
   gate.statusRequestInFlight = false;
   gate.loadRecordings("2026-09-06");
-  requests.at(-1).callback(null, null, new Error("busy (HTTP 503)"));
+  await requests.at(-1).callback(null, null, new Error("busy (HTTP 503)"));
   assert.equal(gate.videos, oldLibrary);
   assert.equal(get("RecentClips").lastChild, oldNode);
   assert.equal(gate.currentsequence, selected);
@@ -417,7 +638,7 @@ function testRecordingRefresh() {
   const makeDropdown = gate.makeDropdownItem;
   gate.makeDropdownItem = () => { throw new Error("fixture dropdown construction failed"); };
   gate.loadRecordings("2026-09-06");
-  requests.at(-1).callback(recordingPage("2026-09-06", [yesterday]));
+  await requests.at(-1).callback(recordingPage("2026-09-06", [yesterday]));
   gate.makeDropdownItem = makeDropdown;
   assert.equal(gate.videos, oldLibrary, "failed construction restores the prior library");
   assert.equal(get("RecentClips").lastChild, oldNode, "staged build failure does not replace working controls");
@@ -425,7 +646,7 @@ function testRecordingRefresh() {
   gate.statusRequestInFlight = false;
   gate.loadRecordings("2026-09-06");
   assert.equal(requests.at(-1).url, "/api/v1/videos?day=2026-09-06");
-  requests.at(-1).callback(recordingPage("2026-09-06", [yesterday]));
+  await requests.at(-1).callback(recordingPage("2026-09-06", [yesterday]));
   assert.equal(gate.currentsequence.sequencename, "2026-09-06");
   assert.equal(get("RecentClips").childElementCount, 1);
   assert.equal(gate.recordingLibrary.requestedDay, "2026-09-06");
@@ -440,7 +661,7 @@ function testRecordingRefresh() {
   assert.match(get("recording-freshness").textContent, /Last completed snapshot: unknown/);
   gate.statusRequestInFlight = false;
   gate.loadRecordings("2026-09-06");
-  requests.at(-1).callback(recordingPage("2026-09-06", []));
+  await requests.at(-1).callback(recordingPage("2026-09-06", []));
   assert.equal(get("RecentClips").childElementCount, 0, "successful empty response removes obsolete entries");
   assert.equal(gate.currentsequence, undefined);
 }
@@ -469,7 +690,7 @@ function testLogTailFailures() {
   }
 }
 
-function testRecordingWaitsForStatus() {
+async function testRecordingWaitsForStatus() {
   const {gate, requests, timers} = recordingHarness();
   gate.statusRequestInFlight = true;
   gate.loadRecordings("latest");
@@ -481,18 +702,22 @@ function testRecordingWaitsForStatus() {
   timers.delete(id);
   timer.callback();
   assert.equal(requests[0].url, "/api/v1/videos?day=latest");
-  requests[0].callback(recordingPage());
-  requests[0].callback(null, null, new Error("late duplicate notification"));
+  await requests[0].callback(recordingPage());
+  await requests[0].callback(null, null, new Error("late duplicate notification"));
   assert.equal(gate.recordingLibrary.loaded, true);
   assert.equal(requests.length, 2, "one scan completion resumes one status request");
   assert.equal(timers.size, 1);
 }
 
 async function run() {
-  testInitialStatusGate();
-  testRecordingRefresh();
+  await testInitialStatusGate();
+  await testRecordingRefresh();
   testLogTailFailures();
-  testRecordingWaitsForStatus();
+  await testRecordingWaitsForStatus();
+  await testMediaSuspension();
+  await testMediaRestoreRaces();
+  await testMediaPlayPromiseOwnership();
+  await testMediaRestoreRemapsAndUserSeek();
   const normalCachebusting = context.cachebustingurl;
   context.cachebustingurl = url => url + "&_=unexpected";
   for (const day of ["latest", "2026-09-07"]) {

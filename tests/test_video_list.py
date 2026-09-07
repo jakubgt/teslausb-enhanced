@@ -379,6 +379,33 @@ class DayQueryTests(unittest.TestCase):
             with self.subTest(query=query), self.assertRaises(backend.BadQuery):
                 backend.parse_day_query(query)
 
+    def test_actual_legacy_random_queries_preserve_full_or_selected_scope(self):
+        for random_value in ("0", "0.12345678901234567", "0." + "9" * 20,
+                             "1e-7", "1.1102230246251565e-16", "9.9e-99"):
+            for query, expected in ((random_value, None), ("_=" + random_value, None),
+                                    ("day=latest&_=" + random_value, "latest"),
+                                    ("_=" + random_value + "&day=2026-09-07", "2026-09-07")):
+                with self.subTest(query=query):
+                    self.assertEqual(expected, backend.parse_day_query(query))
+
+    def test_random_cache_compatibility_does_not_accept_arbitrary_queries_or_floats(self):
+        invalid_values = ("1", "0.", ".5", "00.5", "+0.5", "-0.5", "0.5 ", "0.5\n",
+                          "0." + "9" * 21, "NaN", "Infinity", "1e0", "1e+3", "1e-0",
+                          "10e-1", "0.1e-2", "-1e-7", "1E-7", "1e-0007", "1e-100", "1e-1000",
+                          "1." + "9" * 20 + "e-7", "0.5&day=latest", "0.5&_=0.4",
+                          "0.5=anything", "0.5%00", "0.5;day=latest")
+        for value in invalid_values:
+            with self.subTest(query=value), self.assertRaises(backend.BadQuery):
+                backend.parse_day_query(value)
+            # These become valid timestamp/day combinations only when named.
+            if value not in ("1", "0.5&day=latest"):
+                with self.subTest(query="_=" + value), self.assertRaises(backend.BadQuery):
+                    backend.parse_day_query("_=" + value)
+        for query in ("_=0.5&_=0.4", "_=0.5&%5f=0.4", "_=0.5&day=latest&x=1",
+                      "_=0.5&day=", "_=0.5&day=2026-02-30"):
+            with self.subTest(query=query), self.assertRaises(backend.BadQuery):
+                backend.parse_day_query(query)
+
     def test_newest_recording_is_valid_filename_time_without_timezone_claim(self):
         paths = ["SavedClips/2026-09-07_12-00-00/2026-09-07_11-59-00-front.mp4",
                  "RecentClips/2026-09-07/2026-09-07_12-01-00-é camera.mp4",
@@ -464,9 +491,11 @@ class MainResponseTests(unittest.TestCase):
     def test_cache_buster_only_keeps_exact_legacy_json_and_text_responses(self):
         paths = ["RecentClips/2026-09-07/clip.mp4", "SavedClips/older.mp4"]
         for mode in ("json", "text"):
-            with self.subTest(mode=mode):
-                self.assertEqual(self.invoke(mode, paths=paths),
-                                 self.invoke(mode, paths=paths, query="_=1788800400000"))
+            for query in ("_=1788800400000", "0", "0.12345678901234567",
+                          "_=0.12345678901234567", "1.1102230246251565e-16", "_=1e-7"):
+                with self.subTest(mode=mode, query=query):
+                    self.assertEqual(self.invoke(mode, paths=paths),
+                                     self.invoke(mode, paths=paths, query=query))
 
     def test_scan_failures_have_nonzero_status_and_no_partial_body(self):
         for error, expected in ((backend.ScanExpired(), 75), (backend.IndexTooLarge(), 76),

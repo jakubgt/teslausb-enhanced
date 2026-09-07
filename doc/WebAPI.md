@@ -88,8 +88,14 @@ diagnostics; use the existing protected POST action when a fresh report is neede
 
 `GET /api/v1/videos` retains the legacy JSON shape `{"videos":[...]}` and
 complete-index scope. The legacy CGI route remains line-oriented text. A
-numeric `_` cache-buster is accepted for older clients: one to twenty ASCII
-digits, at most once, with no effect on scope. New clients should use:
+numeric `_` cache-buster is accepted at most once with no effect on scope:
+one to twenty ASCII timestamp digits, or the older random-number format
+`0.[1–20 ASCII digits]` (including zero). A sole bare random value, such as
+`?0.123456789`, also retains the legacy full-list response. Bounded scientific
+random values below one are accepted as well: a nonzero single-digit mantissa
+with up to nineteen fractional digits and a negative one-to-two-digit
+exponent, such as `1.1102230246251565e-16`. Leading signs, nonfinite values, arbitrary
+floating-point syntax, and mixed bare/named arguments are rejected. New clients should use:
 
 ```text
 /api/v1/videos?day=latest
@@ -97,7 +103,7 @@ digits, at most once, with no effect on scope. New clients should use:
 /api/v1/videos?day=2026-09-07&_=1788782400000
 ```
 
-Only `day` and `_` are accepted, at most once each; malformed escapes, unknown
+For named parameters, only `day` and `_` are accepted, at most once each; malformed escapes, unknown
 parameters, non-calendar dates, and nonnumeric cache-busters return `400`.
 The total query is bounded to 128 ASCII characters. A day request returns:
 

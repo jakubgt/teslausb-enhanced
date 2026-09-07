@@ -90,6 +90,14 @@ use the bundled interface (`/?ui=legacy`) to access this panel.
 
 ## Viewer refresh and what its times mean
 
+An explicit list refresh/day change briefly suspends the viewer's video transfers
+before requesting metadata, then restores the selected recording and playback
+position when it is still available. This prevents six camera streams from
+occupying the browser's HTTP/1.x connections while a small control request waits.
+It affects browser playback only, not the car's recording. Camera restoration is
+bounded and retryable on a slow/offline connection. This does not create extra
+Wi-Fi bandwidth: large high-resolution recordings can still buffer on a slow link.
+
 The bundled viewer opens the latest available recording day and provides a day
 selector and **Refresh recordings** button. Each request rebuilds the selected
 day from current index metadata; it is not a stale persistent listing cache.

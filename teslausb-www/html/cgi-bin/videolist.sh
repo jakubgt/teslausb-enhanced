@@ -83,12 +83,21 @@ def scan_lock():
         os.close(descriptor)
 
 
+def legacy_random_cache(value):
+    # Math.random() was the entire query in older viewers, and later the _
+    # value. Accept bounded decimal/scientific forms strictly below one, or
+    # zero, without evaluating the token or using it as a path or command.
+    return bool(re.fullmatch(r"(?:0(?:\.[0-9]{1,20})?|[1-9](?:\.[0-9]{1,19})?e-[1-9][0-9]?)", value))
+
+
 def parse_day_query(query):
     if not query:
         return None
     if (len(query) > 128 or not query.isascii() or
             re.search(r"%(?![0-9a-fA-F]{2})", query)):
         raise BadQuery()
+    if legacy_random_cache(query):
+        return None
     try:
         fields = parse_qsl(query, keep_blank_values=True, strict_parsing=True,
                            encoding="utf-8", errors="strict", max_num_fields=2)
@@ -99,9 +108,9 @@ def parse_day_query(query):
             if name not in ("day", "_") or name in values:
                 raise BadQuery()
             values[name] = value
-        # Older viewers append a millisecond timestamp for cache busting.
-        # Accept only bounded ASCII digits; it never changes listing scope.
-        if "_" in values and not re.fullmatch(r"[0-9]{1,20}", values["_"]):
+        # Timestamp and legacy random cache-busters never change listing scope.
+        if ("_" in values and not re.fullmatch(r"[0-9]{1,20}", values["_"]) and
+                not legacy_random_cache(values["_"])):
             raise BadQuery()
         selected = values.get("day")
         if selected is None:
