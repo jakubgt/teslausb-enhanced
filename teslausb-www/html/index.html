@@ -693,10 +693,6 @@ video {
 }
 
 @media(hover: none), (pointer: coarse) {
-  #videocontrols {
-    opacity: 0.72;
-  }
-
   .flatbutton {
     min-height: 52px;
     min-width: 52px;
@@ -733,6 +729,33 @@ video {
 #videocontrols.shown {
   opacity: 0.7;
   transition: opacity 0.5s;
+}
+
+/* Keep touch controls visible after the base opacity rule and hover timeout. */
+@media(hover: none), (pointer: coarse) {
+  #videocontrols { opacity: 0.72; }
+}
+
+.recording-library-tools {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: #eee;
+  background: #292929;
+}
+.recording-library-tools button, .recording-library-tools select {
+  min-height: 40px;
+  max-width: 100%;
+  font: inherit;
+}
+.recording-freshness {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .settingsbutton {
@@ -923,6 +946,98 @@ video {
 .status_encrypted_message {
   display: block;
   margin-top: 2px;
+}
+
+.content4 {
+  overflow-y: auto;
+}
+
+.maintenance-panel {
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  margin: 20px 0 12px;
+  max-width: 850px;
+  overflow-wrap: anywhere;
+}
+
+.maintenance-panel summary {
+  cursor: pointer;
+  font-weight: bold;
+  padding: 14px;
+}
+
+.maintenance-content {
+  padding: 0 14px 14px;
+}
+
+.maintenance-panel h3 {
+  margin: 18px 0 8px;
+}
+
+.maintenance-note {
+  color: #444;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+#maintenance-health-status { white-space: pre-line; line-height: 1.5; }
+
+.maintenance-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
+.maintenance-fields label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.maintenance-fields input,
+.maintenance-command {
+  box-sizing: border-box;
+  font-size: 1em;
+  min-height: 44px;
+  padding: 8px;
+  width: 100%;
+}
+
+.maintenance-wide {
+  grid-column: 1 / -1;
+}
+
+.maintenance-command {
+  font-family: monospace;
+  margin: 5px 0;
+  resize: vertical;
+}
+
+.maintenance-panel button {
+  min-height: 44px;
+}
+
+.maintenance-panel :focus-visible {
+  outline: 3px solid #1769aa;
+  outline-offset: 2px;
+}
+
+.maintenance-logs {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+}
+
+.maintenance-logs li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.maintenance-logs button {
+  text-align: left;
+  width: min(100%, 225px);
 }
 
 @media screen and (max-width: 824px) {
@@ -1135,6 +1250,54 @@ video {
         </div>
       <p>
       <button class="group2" id="rebootbutton" onclick="rebootfunc(this);">Restart Raspberry Pi</button><span id="reboottext" role="status" aria-live="polite" style="padding-left:20px;"></span>
+      <details class="maintenance-panel" id="maintenance-panel" ontoggle="maintenancePanelToggled(this);">
+        <summary>Advanced maintenance</summary>
+        <div class="maintenance-content">
+          <p class="maintenance-note">Read-only SSH information and diagnostic downloads. This panel does not open a browser shell, enable SSH, or change passwords or keys. Use it on a trusted home network.</p>
+          <h3>Storage and system health</h3>
+          <p id="maintenance-health-status" class="resource-status" role="status" aria-live="polite">Health has not been checked.</p>
+          <h3>SSH access</h3>
+          <p id="maintenance-ssh-status" class="resource-status" role="status" aria-live="polite">SSH status has not been checked.</p>
+          <button type="button" id="maintenance-refresh" onclick="refreshMaintenanceStatus();">Refresh maintenance status</button>
+          <p class="maintenance-note">An active SSH service does not confirm that a port is reachable or that your account and key can sign in. The command below is a template, not a tested login.</p>
+          <div class="maintenance-fields">
+            <div>
+              <label for="maintenance-ssh-user">SSH username</label>
+              <input id="maintenance-ssh-user" value="root" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="updateMaintenanceCommand();" aria-describedby="maintenance-user-help">
+            </div>
+            <div>
+              <label for="maintenance-ssh-host">Pi hostname or IP address</label>
+              <input id="maintenance-ssh-host" maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="updateMaintenanceCommand();">
+            </div>
+            <div>
+              <label for="maintenance-ssh-port">SSH port (verify if customized)</label>
+              <input id="maintenance-ssh-port" value="22" inputmode="numeric" maxlength="5" autocomplete="off" oninput="updateMaintenanceCommand();" aria-describedby="maintenance-port-help">
+            </div>
+            <div class="maintenance-wide">
+              <label for="maintenance-ssh-key">Private-key path on this computer (optional)</label>
+              <input id="maintenance-ssh-key" maxlength="1024" placeholder="Absolute path to your existing key; leave blank for your SSH client defaults" autocomplete="off" autocapitalize="none" spellcheck="false" oninput="updateMaintenanceCommand();" aria-describedby="maintenance-key-help">
+            </div>
+          </div>
+          <p id="maintenance-user-help" class="maintenance-note">The dedicated maintenance key uses <code>root</code>; choose your actual SSH account if different. This default does not mean root login is enabled. No default password is provided.</p>
+          <p id="maintenance-port-help" class="maintenance-note">22 is the standard default, not a verified listening port.</p>
+          <p id="maintenance-key-help" class="maintenance-note">For a nondefault dedicated key, enter its full local path, including the filename. Otherwise your SSH client uses its existing configuration and agent. The key stays on your computer: enter only its path, never the key contents. These fields are not saved or sent to the Pi.</p>
+          <label for="maintenance-ssh-command">Connection command for PowerShell, macOS Terminal, or a Linux shell</label>
+          <textarea id="maintenance-ssh-command" class="maintenance-command" rows="3" readonly spellcheck="false" aria-describedby="maintenance-command-help maintenance-command-status"></textarea>
+          <button type="button" id="maintenance-copy" onclick="copyMaintenanceCommand();">Copy SSH command</button>
+          <p id="maintenance-command-status" class="resource-status" role="status" aria-live="polite"></p>
+          <p id="maintenance-command-help" class="maintenance-note">Run this on your computer, not in the browser or Windows Command Prompt. Verify the Pi's host-key fingerprint before accepting a first connection; do not bypass a changed-host-key warning.</p>
+          <h3>Download support logs</h3>
+          <p class="maintenance-note">Downloads read existing files only; they do not generate diagnostics. Large logs contain only the latest 8 MiB and are marked as truncated. Logs may include network names, IP addresses, and other private details; review them before sharing.</p>
+          <ul class="maintenance-logs">
+            <li><button type="button" id="maintenance-download-diagnostics" onclick="downloadMaintenanceLog('diagnostics', this);">Download saved diagnostics</button><span id="maintenance-log-diagnostics" class="resource-status">Not checked</span></li>
+            <li><button type="button" id="maintenance-download-archiveloop" onclick="downloadMaintenanceLog('archiveloop', this);">Download archiveloop log</button><span id="maintenance-log-archiveloop" class="resource-status">Not checked</span></li>
+            <li><button type="button" id="maintenance-download-setup" onclick="downloadMaintenanceLog('setup', this);">Download setup log</button><span id="maintenance-log-setup" class="resource-status">Not checked</span></li>
+            <li><button type="button" id="maintenance-download-maintenance" onclick="downloadMaintenanceLog('maintenance', this);">Download card-update log</button><span id="maintenance-log-maintenance" class="resource-status">Not checked</span></li>
+          </ul>
+          <button type="button" id="maintenance-generate" onclick="generateMaintenanceDiagnostics(this);">Generate fresh diagnostics</button>
+          <p id="maintenance-download-status" class="resource-status" role="status" aria-live="polite"></p>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -1151,6 +1314,15 @@ video {
 
   <div class="tab content7">
     <div class="videoholderparent" style="width:100%;height:100%;background:#333;" onmousemove="showcontrols()">
+      <div class="recording-library-tools">
+        <label for="recording-day">Recording day</label>
+        <select id="recording-day" disabled onchange="loadRecordings(this.value);"><option value="latest">Latest available day</option></select>
+        <button type="button" id="recording-refresh" disabled onclick="loadRecordings();">Refresh recordings</button>
+        <div class="recording-freshness">Snapshot library, not the live camera disk. New recordings appear after a completed snapshot.</div>
+        <div class="recording-freshness">Refreshing briefly pauses viewer playback; car recording is unaffected.</div>
+        <div class="recording-freshness">Leaving Viewer releases its video downloads. Returning restores the selected clip and playback state.</div>
+        <div id="recording-freshness" class="recording-freshness" role="status" aria-live="polite">Snapshot and recording freshness have not been checked.</div>
+      </div>
       <div id="viewerstatus" class="viewerstatus" role="status" aria-live="polite"></div>
       <div class="navbar">
         <div class="noclips">Loading...</div>
@@ -1436,15 +1608,18 @@ function cycleLayout() {
 setLayout(localStorageGet("layout"));
 
 function skipBack() {
+  if (recordingLibrary.inFlight || !currentsequence) return;
   var slider=document.getElementById('position');
   currentsequence.seekTo(parseInt(slider.value) - 10000);
 }
 
 function startPlaying() {
+  if (recordingLibrary.inFlight || !currentsequence) return;
   currentsequence.toggleplaypause();
 }
 
 function skipForward() {
+  if (recordingLibrary.inFlight || !currentsequence) return;
   var slider=document.getElementById('position');
   currentsequence.seekTo(parseInt(slider.value) + 30000);
 }
@@ -1460,7 +1635,7 @@ function download(filename, text) {
 }
 
 function cachebustingurl(url) {
-  return url + '?' + Math.random();
+  return url + (url.includes('?') ? '&' : '?') + '_=' + Math.random();
 }
 
 function isElementVisible(elem) {
@@ -1511,6 +1686,7 @@ function starttailing({url, pre, button, status, generation}) {
   request.setRequestHeader('Range', 'bytes=' + tailpos + '-' + (tailpos + 32768));
   request.onreadystatechange = function () {
     if (request.readyState !== 4 || completed || generation != pre.tailGeneration) return;
+    if (request.status === 0) return;
     if (request.status === 206) {
       completed = true;
       pre.tailRetryDelay = 500;
@@ -1533,6 +1709,9 @@ function starttailing({url, pre, button, status, generation}) {
   request.onerror = function () { retryTail("Network error while following log."); };
   request.onabort = function () { retryTail("Log request was cancelled."); };
   request.ontimeout = function () { retryTail("Log request timed out."); };
+  request.onloadend = function () {
+    if (request.status === 0) retryTail("Network request failed while following log.");
+  };
   request.send();
 }
 
@@ -1584,18 +1763,25 @@ function readfile({url, callback, callbackarg, pre, tail, button, status}) {
     if (callback != null) callback(value, callbackarg, error);
   }
 
-  request.open('GET', cachebustingurl(url));
+  // The day API has a strict query contract and sends no-store itself.
+  request.open('GET', /^\/api\/v1\/videos\?day=/.test(url) ? url : cachebustingurl(url));
   request.timeout = 30000;
   log("reading " + url);
   request.onreadystatechange = function () {
     log(`read ${url}, result: ${request.status}, state: ${readyState(request.readyState)}`);
     if (request.readyState !== 4) return;
+    // Failed requests reach DONE with status zero before their specific
+    // timeout, error, or abort event. Let that event report the actual cause.
+    if (request.status === 0) return;
     if (request.status >= 200 && request.status < 300) finish(request.responseText, null);
-    else finish(null, new Error(cgiRequestErrorMessage(request.status, request.statusText)));
+    else finish(null, cgiReadError(request, url));
   };
   request.onerror = function () { finish(null, new Error("Network error")); };
   request.onabort = function () { finish(null, new Error("Request cancelled")); };
   request.ontimeout = function () { finish(null, new Error("Request timed out")); };
+  request.onloadend = function () {
+    if (request.status === 0) finish(null, new Error("Network request failed"));
+  };
   request.send();
   return request;
 }
@@ -1656,6 +1842,23 @@ function cgiRequestError(request, message) {
   return error;
 }
 
+function cgiReadError(request, url) {
+  // Only our versioned API defines this error envelope. Never display an
+  // arbitrary HTML error page or parse an unexpectedly large response body.
+  if (/^\/api\/v1\//.test(url) && request.responseText.length <= 16384) {
+    try {
+      var payload = JSON.parse(request.responseText);
+      if (payload && payload.ok === false && typeof payload.error === "string") {
+        var message = payload.error.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 500);
+        if (message) return cgiRequestError(request, message + " (HTTP " + request.status + ")");
+      }
+    } catch (parseError) {
+      // Non-JSON and malformed API responses retain the HTTP status fallback.
+    }
+  }
+  return cgiRequestError(request);
+}
+
 function apiRequest(url, options) {
   options = options || {};
   var method = options.method || "GET";
@@ -1683,10 +1886,9 @@ function apiRequest(url, options) {
     }
     request.onreadystatechange = function () {
       if (request.readyState === 4) {
-        if (request.status === 0 && !request.responseText) {
-          finish(cgiRequestError(request));
-          return;
-        }
+        // DONE precedes the specific failure event, including for responses
+        // interrupted after some bytes arrived. Do not mislabel a timeout.
+        if (request.status === 0) return;
         var payload = request.responseText;
         if (expectJson) {
           try {
@@ -1717,6 +1919,9 @@ function apiRequest(url, options) {
     };
     request.ontimeout = function () {
       finish(cgiRequestError(request, "Request timed out"));
+    };
+    request.onloadend = function () {
+      if (request.status === 0) finish(cgiRequestError(request));
     };
     request.send(options.body || null);
   });
@@ -2056,6 +2261,7 @@ function rebootfunc (button) {
 
 async function refreshdiagnostics() {
   var btn1=document.getElementById('diagrefreshbtn');
+  if (btn1.getAttribute("aria-busy") === "true") return false;
   var btn2=document.getElementById('diagdwnbtn');
   var pre=document.getElementById('diagnosticspre');
   btn1.disabled=true;
@@ -2069,9 +2275,11 @@ async function refreshdiagnostics() {
     pre.textContent = report;
     btn2.disabled = false;
     setResourceStatus("diagnosticsstatus", "Diagnostics refreshed", false);
+    return true;
   } catch (error) {
     pre.textContent = "Could not generate diagnostics. " + error.message;
     setResourceStatus("diagnosticsstatus", "Diagnostics failed: " + error.message, true);
+    return false;
   } finally {
     btn1.disabled=false;
     btn1.removeAttribute("aria-busy");
@@ -2097,11 +2305,11 @@ function uptimeString(secs) {
 
 function spaceString(bytes) {
   if (bytes > 1024 * 1024 * 1024) {
-    return (bytes / (1024 * 1024 * 1024)).toFixed(0) + "G";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(0) + " GiB";
   } else if (bytes > 100 * 1024 * 1024) {
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + "G";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GiB";
   } else {
-    return (bytes / (1024 * 1024)).toFixed(0) + "M";
+    return (bytes / (1024 * 1024)).toFixed(0) + " MiB";
   }
 }
 
@@ -2147,6 +2355,24 @@ function parseWifiStrength(value) {
   return Math.min(1, Math.max(0, strength));
 }
 
+function cameraDriveStatusText(status) {
+  var labels = {
+    disabled: "Camera drive: USB disabled",
+    prepared: "Camera drive: prepared, not connected",
+    paused: "Camera drive: paused; camera image detached",
+    unavailable: "Camera drive: no camera image attached",
+    connected: "Camera drive: connected to host",
+    suspended: "Camera drive: host suspended USB",
+    disconnected: "Camera drive: waiting for a USB host",
+    connecting: "Camera drive: USB connection in progress",
+    unknown: "Camera drive: connection status unavailable"
+  };
+  var state = status && status.camera_drive_state;
+  return Object.prototype.hasOwnProperty.call(labels, state)
+    ? labels[state]
+    : labels.unknown;
+}
+
 async function toggledrivesfunc(button) {
   button=button || document.getElementById('toggledrives');
   var msg=document.getElementById('drivestext');
@@ -2160,10 +2386,10 @@ async function toggledrivesfunc(button) {
     await callcgi('/api/v1/actions/drives/toggle');
     if (originalState == "yes") {
       button.drives_active="no";
-      button.textContent="Connect drives to host";
+      button.textContent="Enable USB drives";
     } else if (originalState == "no") {
       button.drives_active="yes";
-      button.textContent="Disconnect drives from host";
+      button.textContent="Disable USB drives";
     } else {
       button.textContent=originalText;
     }
@@ -2339,10 +2565,26 @@ function renderEncryptedClipStatus(systemStatus) {
 }
 
 var statusvals;
+// Set before initialize() so its first showstatus() cannot compete with the
+// initial recording index scan on a small Pi.
+var initialVideoListLoading = true;
 var statusRequestInFlight = false;
+var statusPollTimer;
 const max_status_age = 4000;
 
+function scheduleStatusPoll(callback, delay) {
+  clearTimeout(statusPollTimer);
+  statusPollTimer = setTimeout(callback, delay);
+}
+
+function finishInitialVideoListLoad() {
+  if (!initialVideoListLoading) return;
+  initialVideoListLoading = false;
+  showstatus();
+}
+
 function updateuptimeonly() {
+  if (initialVideoListLoading) return;
   if (statusvals != undefined) {
     var status_age = (Date.now() - statusvals.retrieved);
     var uptime = Math.round(statusvals.uptime) + (status_age / 1000);
@@ -2350,18 +2592,29 @@ function updateuptimeonly() {
     uptimediv.innerText = "Uptime: " + uptimeString(uptime);
   }
   if (statusvals == undefined || status_age >= max_status_age) {
-    setTimeout(showstatus, 10);
+    scheduleStatusPoll(showstatus, 10);
   } else {
-    setTimeout(updateuptimeonly, 1000);
+    scheduleStatusPoll(updateuptimeonly, 1000);
   }
 }
 
 function showstatus() {
+  var refreshStatus = document.querySelector(".status_refresh");
+  if (initialVideoListLoading) {
+    refreshStatus.textContent = statusvals === undefined
+      ? "Status not checked yet: waiting for the recording list to finish loading."
+      : "Status updates paused while the recording list loads.";
+    refreshStatus.classList.remove("error");
+    document.querySelector(".status_drives").textContent = "Camera drive: status update pending";
+    return;
+  }
   var uptimediv = document.querySelector(".status_uptime");
   if ((isElementVisible(uptimediv) || uptimediv.clientHeight == 0) && !statusRequestInFlight) {
     statusRequestInFlight = true;
+    refreshStatus.textContent = "Updating status...";
     readfile({url:'/api/v1/status', callback:function(value, callbackarg, error) {
       statusRequestInFlight = false;
+      if (initialVideoListLoading) return;
       var refreshStatus = document.querySelector(".status_refresh");
       if (error) {
         refreshStatus.textContent = "Status refresh failed: " + error.message;
@@ -2447,13 +2700,12 @@ function showstatus() {
 
       var drivesdiv = document.querySelector(".status_drives");
       var togglebutton = document.getElementById("toggledrives");
+      drivesdiv.innerText = cameraDriveStatusText(statusvals);
       if (statusvals.drives_active != togglebutton.drives_active) {
         if (statusvals.drives_active == "yes") {
-          drivesdiv.innerText = "Drives: visible to host";
-          togglebutton.innerText = "Disconnect drives from host";
+          togglebutton.innerText = "Disable USB drives";
         } else {
-          drivesdiv.innerText = "Drives: not visible to host";
-          togglebutton.innerText = "Connect drives to host";
+          togglebutton.innerText = "Enable USB drives";
         }
         togglebutton.drives_active = statusvals.drives_active;
       }
@@ -2525,7 +2777,7 @@ function showstatus() {
       renderEncryptedClipStatus(statusvals);
     }});
   }
-  setTimeout(updateuptimeonly, 1000);
+  scheduleStatusPoll(updateuptimeonly, 1000);
 }
 
 var config;
@@ -2578,6 +2830,7 @@ function readconfig() {
       const toolsbtn = document.querySelector("#tab4");
       toolsbtn.checked = true;
     }
+    updateTabAccessibility();
     const blebtn = document.getElementById("pairingdiv");
     if (config.uses_ble == "yes") {
       blebtn.style.display = "block";
@@ -2588,15 +2841,383 @@ function readconfig() {
   }});
 }
 
+// Advanced maintenance helpers: no polling, shell execution, or key-file access.
+const maintenanceLogFiles = Object.freeze({
+  diagnostics: "diagnostics.txt",
+  archiveloop: "archiveloop.log",
+  setup: "teslausb-headless-setup.log",
+  maintenance: "teslausb-runtime-maintenance.log"
+});
+var maintenanceStatusGeneration = 0;
+var maintenanceReadPromise;
+
+function getMaintenanceStatus() {
+  if (!maintenanceReadPromise) {
+    maintenanceReadPromise = apiRequest("/api/v1/maintenance", {timeout:15000})
+      .finally(function() { maintenanceReadPromise = undefined; });
+  }
+  return maintenanceReadPromise;
+}
+
+function maintenanceEvidenceTime(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T.*(?:Z|\+00:00)$/.test(value) &&
+    Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() + " (your timezone)" : "unknown";
+}
+
+function maintenanceHealthText(payload) {
+  var health = payload && payload.health;
+  if (!health || health.schema_version !== 1) return "System health unavailable; refresh maintenance status to try again.";
+  var gib = value => typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value < 1024 ** 3 ? Math.round(value / 1024 ** 2) + " MiB" : (value / 1024 ** 3).toFixed(1) + " GiB" : "unknown";
+  var storage = health.storage || {};
+  var backing = storage.backing || {};
+  var mutable = storage.mutable || {};
+  var lines = [backing.available === true
+    ? "Snapshot storage: " + gib(backing.free_bytes) + " free of " + gib(backing.total_bytes) +
+      ". Cleanup reserve: " + gib(backing.cleanup_reserve_bytes) +
+      (backing.below_cleanup_reserve === true ? " — below reserve." : backing.below_cleanup_reserve === false ? " — at or above reserve." : " — comparison unknown.")
+    : "Snapshot storage: unavailable."];
+  lines.push(mutable.available === true ? "Mutable/log storage: " + gib(mutable.free_bytes) + " free of " + gib(mutable.total_bytes) + "."
+    : "Mutable/log storage: unavailable.");
+  lines.push("Live camera filesystem: not inspected; snapshot storage free space is not its free space.");
+  var readonly = health.read_only || {};
+  var mode = value => value === true ? "read-only" : value === false ? "writable" : "unknown";
+  lines.push("System mounts: root " + mode(readonly.root) + "; boot " + mode(readonly.boot) + ".");
+  var snapshots = health.snapshots || {};
+  var latest = snapshots.last_completed;
+  lines.push(snapshots.available === true && snapshots.scan_complete === true && latest && /^snap-\d{6}$/.test(latest.name)
+    ? "Last completed snapshot: " + latest.name + ", " + maintenanceEvidenceTime(latest.completed_at_utc) + " (completion-manifest time)."
+    : "Last completed snapshot: unknown or unavailable.");
+  var cleanup = health.cleanup || {};
+  lines.push(cleanup.available === true && cleanup.evidence === "completed_release"
+    ? "Last logged snapshot release: " + maintenanceEvidenceTime(cleanup.last_released_at_utc) + ". This is evidence from the retained log tail."
+    : cleanup.available === true && cleanup.evidence === "release_attempt"
+      ? "Cleanup attempt found; completion is not confirmed in the retained log tail."
+      : "Cleanup completion: not established from the retained log tail.");
+  var clock = health.clock || {};
+  lines.push(clock.available === true && ["synchronized", "waiting_for_network_time"].includes(clock.state)
+    ? "Clock: " + (clock.state === "synchronized" ? "last reported synchronized" : "waiting for network time") +
+      "; last verified " + maintenanceEvidenceTime(clock.last_verified_utc) + "."
+    : "Clock verification: unavailable.");
+  var recovery = health.recovery || {};
+  lines.push(recovery.available === true && recovery.scan_complete === true && Array.isArray(recovery.items)
+    ? "Recovery backups: " + recovery.items.length + (recovery.items.length === 1 ? " bundle; " : " bundles; ") + gib(recovery.total_logical_bytes) +
+      " logical, " + gib(recovery.total_allocated_bytes) + " reported allocation. Shared reflink extents may be counted more than once; this is not reclaimable space."
+    : "Recovery-backup inventory: unavailable or incomplete; reclaimable space is unknown.");
+  return lines.join("\n");
+}
+
+function validatedMaintenanceHost(value) {
+  var host = String(value || "").trim();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (host.includes(":")) {
+    if (!/^[0-9a-fA-F:]+$/.test(host) || !host.includes("::") && host.split(":").length !== 8) {
+      throw new Error("Enter a hostname, IPv4 address, or IPv6 address without a zone suffix.");
+    }
+    try {
+      return new URL("http://[" + host + "]/").hostname.slice(1, -1);
+    } catch (error) {
+      throw new Error("Enter a valid IPv6 address.");
+    }
+  }
+  if (host.length > 253 || !host || !host.split(".").every(function(label) {
+    return /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label);
+  })) {
+    throw new Error("Enter only the Pi hostname or IP address, without a URL or port.");
+  }
+  if (/^[0-9.]+$/.test(host) && (host.split(".").length !== 4 || !host.split(".").every(function(part) {
+    return /^(0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255;
+  }))) {
+    throw new Error("Enter a valid IPv4 address.");
+  }
+  return host.toLowerCase();
+}
+
+function buildMaintenanceCommand(username, hostname, port, keyPath) {
+  var user = String(username || "").trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/.test(user)) {
+    throw new Error("Enter an SSH username using letters, digits, underscores, or hyphens.");
+  }
+  var host = validatedMaintenanceHost(hostname);
+  var portText = String(port || "").trim();
+  if (!/^[1-9][0-9]{0,4}$/.test(portText) || Number(portText) > 65535) {
+    throw new Error("Enter an SSH port from 1 to 65535.");
+  }
+  var key = String(keyPath || "");
+  // PowerShell also recognizes typographic quotes as quote delimiters. An
+  // ASCII allowlist avoids those and Unicode separators across both shells.
+  if (/[^a-zA-Z0-9 _./\\:()+,@\[\]-]/.test(key)) {
+    throw new Error("Use an absolute local key path with ASCII letters, digits, spaces, and ordinary path punctuation; quotes and shell symbols are not supported.");
+  }
+  key = key.trim();
+  var identity = "";
+  if (key) {
+    // Single-quoted, allowlisted paths work in PowerShell and POSIX shells.
+    if (key.length > 1024 || !(/^[a-zA-Z]:[\\/]/.test(key) || /^\/(?!\/)/.test(key))) {
+      throw new Error("Use an absolute local key path without quotes, control characters, or shell symbols. Spaces are allowed.");
+    }
+    identity = " -o IdentitiesOnly=yes -i '" + key + "'";
+  }
+  return "ssh -p " + portText + identity + " " + user + "@" + host;
+}
+
+function updateMaintenanceCommand() {
+  var command = document.getElementById("maintenance-ssh-command");
+  var button = document.getElementById("maintenance-copy");
+  try {
+    command.value = buildMaintenanceCommand(
+      document.getElementById("maintenance-ssh-user").value,
+      document.getElementById("maintenance-ssh-host").value,
+      document.getElementById("maintenance-ssh-port").value,
+      document.getElementById("maintenance-ssh-key").value);
+    button.disabled = false;
+    setResourceStatus("maintenance-command-status", "Ready to copy. This command has not been tested.", false);
+    return command.value;
+  } catch (error) {
+    command.value = "";
+    button.disabled = true;
+    setResourceStatus("maintenance-command-status", error.message, true);
+    return "";
+  }
+}
+
+async function copyMaintenanceCommand() {
+  var text = updateMaintenanceCommand();
+  if (!text) return false;
+  var field = document.getElementById("maintenance-ssh-command");
+  var previousFocus = document.activeElement;
+  var copied = false;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    }
+  } catch (error) {
+    // HTTP and browser permissions may block the modern clipboard API.
+  }
+  if (!copied) {
+    field.focus();
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    try {
+      copied = Boolean(document.execCommand && document.execCommand("copy"));
+    } catch (error) {
+      copied = false;
+    }
+  }
+  if (copied && previousFocus && typeof previousFocus.focus === "function") previousFocus.focus();
+  setResourceStatus("maintenance-command-status", copied
+    ? "SSH command copied. Run it in your computer's terminal."
+    : "Automatic copy was blocked. The command is selected; press Ctrl+C or Command+C, or use your device's Copy action.", !copied);
+  return copied;
+}
+
+function maintenanceSshStatusText(payload) {
+  if (!payload || payload.schema_version !== 1 || !payload.ssh) {
+    throw new Error("The maintenance status response was not recognized.");
+  }
+  var ssh = payload.ssh;
+  var states = ["active", "inactive", "failed", "unknown", "not-installed"];
+  var startupStates = ["enabled", "disabled", "static", "indirect", "masked", "generated", "transient", "linked", "alias", "unknown", "enabled-runtime", "masked-runtime", "linked-runtime"];
+  var state = states.includes(ssh.service_state) ? ssh.service_state : "unknown";
+  var startup = startupStates.includes(ssh.enabled_state) ? ssh.enabled_state : "unknown";
+  return "SSH service: " + state + ". Startup: " + startup + ". Login and port reachability are not verified.";
+}
+
+function renderMaintenanceLogStatus(logs) {
+  Object.keys(maintenanceLogFiles).forEach(function(id) {
+    var info = logs && Object.prototype.hasOwnProperty.call(logs, id) ? logs[id] : null;
+    var message = "Availability unknown; try downloading or refresh status.";
+    if (info && info.available === true) {
+      message = "Existing file available";
+      if (Number.isSafeInteger(info.size_bytes) && info.size_bytes >= 0) {
+        message += " (" + (info.size_bytes / 1024).toFixed(1) + " KiB)";
+      }
+      message += info.truncated === true ? "; download includes only the latest 8 MiB." : ".";
+    } else if (info && info.available === false) {
+      message = info.reason === "missing" ? "No saved file yet." : "File currently unavailable.";
+    }
+    setResourceStatus("maintenance-log-" + id, message, false);
+  });
+}
+
+async function refreshMaintenanceStatus() {
+  var panel = document.getElementById("maintenance-panel");
+  if (!panel.open) return;
+  var generation = ++maintenanceStatusGeneration;
+  var button = document.getElementById("maintenance-refresh");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setResourceStatus("maintenance-ssh-status", "SSH status unknown while refreshing...", false);
+  setResourceStatus("maintenance-health-status", "Checking storage and system health...", false);
+  renderMaintenanceLogStatus(null);
+  try {
+    var payload = await getMaintenanceStatus();
+    if (generation !== maintenanceStatusGeneration || !panel.open) return;
+    var message = maintenanceSshStatusText(payload);
+    setResourceStatus("maintenance-ssh-status", message + " Checked at " + new Date().toLocaleTimeString() + " (this browser).", false);
+    setResourceStatus("maintenance-health-status", maintenanceHealthText(payload) + "\nChecked at " + new Date().toLocaleTimeString() + " (this browser).", false);
+    if (typeof updateRecordingSnapshotEvidence === "function") updateRecordingSnapshotEvidence(payload);
+    renderMaintenanceLogStatus(payload.logs);
+  } catch (error) {
+    if (generation !== maintenanceStatusGeneration || !panel.open) return;
+    setResourceStatus("maintenance-ssh-status", "SSH status unknown: refresh failed. " + error.message, true);
+    setResourceStatus("maintenance-health-status", "Health unknown: refresh failed. " + error.message, true);
+    renderMaintenanceLogStatus(null);
+  } finally {
+    if (generation === maintenanceStatusGeneration) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function maintenancePanelToggled(panel) {
+  if (panel.open) {
+    refreshMaintenanceStatus();
+  } else {
+    // Ignore a late response from a previous opening; never keep stale active
+    // status visible after a failed refresh or schedule background polling.
+    maintenanceStatusGeneration++;
+    var button = document.getElementById("maintenance-refresh");
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    setResourceStatus("maintenance-ssh-status", "SSH status has not been checked for this opening.", false);
+    setResourceStatus("maintenance-health-status", "Health has not been checked for this opening.", false);
+  }
+}
+
+function requestMaintenanceLog(id) {
+  if (!Object.prototype.hasOwnProperty.call(maintenanceLogFiles, id)) {
+    return Promise.reject(new Error("Unknown support log."));
+  }
+  return new Promise(function(resolve, reject) {
+    var request = new XMLHttpRequest();
+    var completed = false;
+    var limit = 8 * 1024 * 1024;
+    function finish(error, value) {
+      if (completed) return;
+      completed = true;
+      if (error) reject(error);
+      else resolve(value);
+    }
+    request.open("GET", "/api/v1/maintenance/logs/" + id);
+    request.timeout = 15000;
+    request.responseType = "blob";
+    request.setRequestHeader("Accept", "text/plain");
+    request.onreadystatechange = function() {
+      if (request.readyState !== 4 || completed) return;
+      if (request.status === 0) return;
+      if (request.status !== 200) {
+        var message = request.status === 404 ? "No saved log is available yet."
+          : request.status === 401 || request.status === 403 ? "Sign in to the dashboard again to download this log."
+          : "Log download failed (HTTP " + request.status + ").";
+        finish(new Error(message));
+        return;
+      }
+      var type = (request.getResponseHeader("Content-Type") || "").split(";")[0].trim().toLowerCase();
+      var truncated = request.getResponseHeader("X-TeslaUSB-Truncated");
+      if (type !== "text/plain" || !["true", "false"].includes(truncated)) {
+        finish(new Error("The server returned an unexpected response; no log was downloaded."));
+      } else if (!request.response || !Number.isSafeInteger(request.response.size) || request.response.size > limit) {
+        finish(new Error("The log exceeded the safe download limit; no file was saved."));
+      } else {
+        finish(null, {blob:request.response, truncated:truncated === "true"});
+      }
+    };
+    request.onprogress = function(event) {
+      if (event.loaded > limit) {
+        finish(new Error("The log exceeded the safe download limit; no file was saved."));
+        request.abort();
+      }
+    };
+    request.onerror = function() { finish(new Error("Network error while downloading the log.")); };
+    request.onabort = function() { finish(new Error("Log download cancelled.")); };
+    request.ontimeout = function() { finish(new Error("Log download timed out. Try again when the Pi is reachable.")); };
+    request.onloadend = function() {
+      if (request.status === 0) finish(new Error("Network request failed while downloading the log."));
+    };
+    request.send();
+  });
+}
+
+function saveMaintenanceLog(filename, blob) {
+  var url = URL.createObjectURL(blob);
+  var anchor = document.createElement("a");
+  try {
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+  }
+}
+
+async function downloadMaintenanceLog(id, button) {
+  if (!Object.prototype.hasOwnProperty.call(maintenanceLogFiles, id) || button.disabled) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setResourceStatus("maintenance-download-status", "Fetching " + maintenanceLogFiles[id] + "...", false);
+  try {
+    var result = await requestMaintenanceLog(id);
+    saveMaintenanceLog(maintenanceLogFiles[id], result.blob);
+    var message = "Download started: " + maintenanceLogFiles[id] + ".";
+    message += result.truncated ? " Truncated: only the latest 8 MiB are included; the first line may be partial." : " Complete saved file.";
+    setResourceStatus("maintenance-download-status", message, false);
+  } catch (error) {
+    setResourceStatus("maintenance-download-status", "Could not download " + maintenanceLogFiles[id] + ": " + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
+async function generateMaintenanceDiagnostics(button) {
+  if (button.disabled) return;
+  if (document.getElementById("diagrefreshbtn").getAttribute("aria-busy") === "true") {
+    setResourceStatus("maintenance-download-status", "Diagnostics are already being generated. Check the Diagnostics tab.", false);
+    return;
+  }
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  setResourceStatus("maintenance-download-status", "Generating fresh diagnostics; this may take up to two minutes...", false);
+  try {
+    var success = await refreshdiagnostics();
+    setResourceStatus("maintenance-download-status", success
+      ? "Fresh diagnostics generated. Use Download saved diagnostics to save them."
+      : "Diagnostics generation failed. See the Diagnostics tab for details.", !success);
+    if (success) await refreshMaintenanceStatus();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
+function initializeMaintenance() {
+  var hostField = document.getElementById("maintenance-ssh-host");
+  try {
+    hostField.value = validatedMaintenanceHost(window.location.hostname);
+  } catch (error) {
+    hostField.value = "";
+  }
+  updateMaintenanceCommand();
+}
+// End advanced maintenance helpers.
+
 function initialize() {
   setbuttonsdisabled('group1', true);
   setbuttonsdisabled('group2', false);
   reloadLog('archivelooppre', 'archiveloop.log', 'aldwnbtn', 'archiveloopstatus');
   reloadLog('setuplogpre', 'teslausb-headless-setup.log', 'sudwnbtn', 'setuplogstatus');
   showstatus();
-  refreshdiagnostics();
+  readfile({url:'diagnostics.txt', pre:'diagnosticspre', button:'diagdwnbtn', status:'diagnosticsstatus'});
+  document.getElementById('diagrefreshbtn').disabled = false;
   restoreLogWrapSettings();
   initializeAccessibility();
+  initializeMaintenance();
 
   var settingsbtn = document.querySelector('.settingsbuttondiv');
   settingsbtn.onclick = showsettings;
@@ -2615,6 +3236,7 @@ function updateTabAccessibility() {
     var input = document.getElementById(label.htmlFor);
     label.setAttribute("aria-selected", input && input.checked ? "true" : "false");
   }
+  synchronizeViewerTab();
 }
 
 function initializeAccessibility() {
@@ -2753,19 +3375,45 @@ function setViewerStatus(message, isError) {
   status.classList.toggle("error", Boolean(isError));
 }
 
+// Every source assignment owns its callbacks. An old load must never advance
+// a newly selected recording or report an intentional refresh abort as failure.
+function releaseVideoSource(video, forLibrary) {
+  if (video.teslausbMediaOwner) {
+    video.teslausbMediaOwner.active = false;
+    if (forLibrary) video.teslausbMediaOwner.libraryAbort = true;
+  }
+  for (var name of ["ondurationchange", "onloadedmetadata", "ontimeupdate", "onended", "onerror"])
+    video[name] = null;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+}
+
+function ownVideoCallback(video, name, callback) {
+  var owner = video.teslausbMediaOwner;
+  video[name] = function(event) {
+    if (owner && owner.active && video.teslausbMediaOwner === owner) callback(event);
+  };
+}
+
 function playVideoSafely(video) {
+  var owner = video.teslausbMediaOwner;
+  function failed(error) {
+    if (owner && owner.libraryAbort && error.name === "AbortError") return;
+    log(error);
+    // A genuine error from a disposed source remains in the debug log, but
+    // cannot overwrite the status of the recording that replaced it.
+    if (owner && (!owner.active || video.teslausbMediaOwner !== owner)) return;
+    setViewerStatus("Playback could not start: " + error.message, true);
+  }
   try {
     var result = video.play();
     if (result && result.catch) {
-      result.catch(function(error) {
-        log(error);
-        setViewerStatus("Playback could not start: " + error.message, true);
-      });
+      result.catch(failed);
     }
     return result;
   } catch (error) {
-    log(error);
-    setViewerStatus("Playback could not start: " + error.message, true);
+    failed(error);
     return null;
   }
 }
@@ -2787,6 +3435,7 @@ class VideoSegment {
   readytoplay;
   autoplay;
   autoseek;
+  mediaRestore;
   timestampMs;
 
   constructor(group, sequence) {
@@ -2845,25 +3494,58 @@ class VideoSegment {
 
   onDurationChange(event) {
     var elem = event.target;
+    if (!Number.isFinite(elem.duration) || elem.duration <= 0 || this.activevideoelems.includes(elem)) return;
     this.activevideoelems = this.activevideoelems.concat(elem);
+    if (this.mediaRestore) {
+      var saved = this.mediaRestore.media.find(item => item.video === elem);
+      if (saved) {
+        elem.muted = saved.muted;
+        elem.volume = saved.volume;
+        elem.defaultPlaybackRate = saved.defaultPlaybackRate;
+        elem.playbackRate = saved.playbackRate;
+        elem.currentTime = Math.min(saved.currentTime, elem.duration);
+      }
+    }
     log(this.activevideoelems.length + "/" + this.numangles + " duration: " + elem.duration);
     if (this.longestvideoelem == undefined || elem.duration > this.longestvideoelem.duration) {
       this.longestvideoelem = elem;
     }
-    if (this.activevideoelems.length == this.numangles) {
+    this.finishLoading();
+  }
+
+  finishLoading() {
+    if (!this.readytoplay && this.numangles > 0 && this.activevideoelems.length == this.numangles) {
       log("all videos loaded. Longest: " + this.longestvideoelem.id + ": " + this.longestvideoelem.duration);
       this.readytoplay = true;
-      setViewerStatus("", false);
-      this.longestvideoelem.ontimeupdate = this.onTimeUpdate;
+      clearTimeout(this.mediaRestoreTimer);
+      if (!this.mediaRestore) setViewerStatus("", false);
+      ownVideoCallback(this.longestvideoelem, "ontimeupdate", this.onTimeUpdate);
       for (var vid of this.activevideoelems) {
-        vid.onended=this.onVideoEnded;
-        vid.onerror=this.onVideoError;
+        ownVideoCallback(vid, "onended", this.onVideoEnded);
+        ownVideoCallback(vid, "onerror", this.onVideoError);
       }
-      if (this.autoseek) {
+      if (!this.mediaRestore && this.autoseek >= 0) {
         this.seekTo(this.autoseek);
         this.autoseek = -1;
       }
       unfreezeVideoElems();
+      if (this.mediaRestore) {
+        var restored = this.mediaRestore;
+        this.mediaRestore = null;
+        document.getElementById("position").value = restored.position;
+        showCurrentTime(restored.position);
+        if (restored.wasPlaying) {
+          var resumed = false;
+          for (var saved of restored.media) {
+            if (!saved.paused && this.activevideoelems.includes(saved.video)) {
+              playVideoSafely(saved.video);
+              resumed = true;
+            }
+          }
+          if (!resumed) this.play();
+        }
+        return;
+      }
       if (this.autoplay) {
         log("autoplay was set");
         this.autoplay = false;
@@ -2878,14 +3560,32 @@ class VideoSegment {
     var elem = event.target;
     log("scan error on '" + elem.src + "': " + videoError(elem));
     this.numangles--;
+    if (elem.teslausbMediaOwner) elem.teslausbMediaOwner.active = false;
+    this.activevideoelems = this.activevideoelems.filter(video => video !== elem);
+    this.longestvideoelem = this.activevideoelems.reduce((longest, video) =>
+      !longest || video.duration > longest.duration ? video : longest, undefined);
     elem.onerror = undefined;
     elem.ondurationchange = undefined;
     elem.removeAttribute('src');
     if (this.numangles == 0) {
+      if (this.mediaRestore) { this.failMediaRestore(); return; }
       log("all videos failed to scan, moving to next");
       setViewerStatus("This recording could not be loaded. It may be incomplete or use an unsupported codec.", true);
       if (!currentsequence.next()) unfreezeVideoElems();
     }
+    this.finishLoading();
+  }
+
+  failMediaRestore() {
+    clearTimeout(this.mediaRestoreTimer);
+    if (!this.mediaRestore) return;
+    this.mediaRestore.stalled = true;
+    this.readytoplay = false;
+    currentsequence.pause();
+    for (var saved of this.mediaRestore.media) releaseVideoSource(saved.video, false);
+    unfreezeVideoElems();
+    setViewerStatus((this.mediaRestore.statusPrefix || "") +
+      " Viewer playback could not be restored in time. Press Play to retry, or choose a recording. Car recording is unaffected.", true);
   }
 
   onTimeUpdate(event) {
@@ -2932,10 +3632,26 @@ class VideoSegment {
     currentsequence.next();
   }
 
-  select() {
+  select(mediaRestore) {
+    if (!viewerTabIsActive()) {
+      clearTimeout(this.mediaRestoreTimer);
+      this.initdefaults();
+      this.mediaRestore = mediaRestore || null;
+      viewerDeferredSelection = {sequence:currentsequence, segment:this, mediaRestore};
+      return;
+    }
     var prefix = "TeslaCam/" + this.group + "/" + this.sequence + "/";
     log("===== segment =====");
     freezeVideoElems();
+    this.initdefaults();
+    clearTimeout(this.mediaRestoreTimer);
+    this.mediaRestore = mediaRestore || null;
+    if (mediaRestore) mediaRestore.stalled = false;
+    for (var video of videoelems) {
+      releaseVideoSource(video, false);
+      video.teslausbMediaOwner = {active:true, libraryAbort:false};
+    }
+    if (!mediaRestore) {
     if (this.leftrepeater != undefined) {
       videoelems[0].src = cachebustingurl(prefix + this.leftrepeater);
     } else {
@@ -2966,6 +3682,13 @@ class VideoSegment {
     } else {
       videoelems[5].removeAttribute('src');
     }
+    }
+    if (mediaRestore) {
+      for (var saved of mediaRestore.media) {
+        if (saved.src !== null) saved.video.setAttribute("src", saved.src);
+        else saved.video.removeAttribute("src");
+      }
+    }
 
     this.numangles = 0;
     for (var i=0; i < 6;i++) {
@@ -2978,14 +3701,20 @@ class VideoSegment {
       log("videopath: " + v.src);
       if (v.src != undefined && v.src != '') {
         log("waiting for duration for " + v.src);
-        v.ondurationchange = this.onDurationChange;
-        v.onerror = this.onScanError;
+        ownVideoCallback(v, "ondurationchange", this.onDurationChange);
+        ownVideoCallback(v, "onerror", this.onScanError);
         this.numangles++;
       } else {
         log("source undefined for vid " + i);
       }
     }
     log("angles: " + this.numangles);
+    if (mediaRestore) {
+      this.mediaRestoreTimer = setTimeout(() => {
+        if (this.mediaRestore === mediaRestore && !this.readytoplay && currentsequence &&
+            currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) === this) this.failMediaRestore();
+      }, this.numangles === 0 ? 0 : 20000);
+    }
 
     for (var n of [this.leftrepeater,this.leftpillar, this.rightrepeater,this.rightpillar, this.front, this.back]) {
       if (n != undefined) {
@@ -2996,10 +3725,19 @@ class VideoSegment {
     var tt = document.getElementById('totaltime');
     tt.innerText = " / " + timeString(currentsequence.length() * 60000);
 
-    this.initdefaults();
   }
 
   seekTo(position) {
+    if (this.mediaRestore && this.mediaRestore.stalled) {
+      var retry = {...this.mediaRestore, position:Number(document.getElementById("position").value) || 0,
+        wasPlaying:currentsequence.isPlaying(),
+        media:this.mediaRestore.media.map(saved => ({...saved, currentTime:position, paused:true}))};
+      this.select(retry);
+      return;
+    }
+    // A new user seek supersedes an asynchronous refresh restoration.
+    this.mediaRestore = null;
+    clearTimeout(this.mediaRestoreTimer);
     if (this.readytoplay == true) {
       log("segment seekTo " + position);
       for (var vid of this.activevideoelems) {
@@ -3013,6 +3751,8 @@ class VideoSegment {
   }
 
   play() {
+    if (this.mediaRestore && this.mediaRestore.stalled) this.select(this.mediaRestore);
+    if (this.mediaRestore) this.mediaRestore.wasPlaying = true;
     if (this.readytoplay == true) {
       log("direct play");
       playVideoSafely(this.longestvideoelem);
@@ -3023,6 +3763,7 @@ class VideoSegment {
   }
 
   pause() {
+    if (this.mediaRestore) this.mediaRestore.wasPlaying = false;
     log("pause clearing autoplay");
     this.autoplay = false;
     for (var vid of this.activevideoelems) {
@@ -3071,7 +3812,9 @@ class VideoSequence {
     this.segmentsbytime = {};
     this.sequencegroup = group;
     this.sequencename = name;
-    this.reset();
+    // Constructing a refreshed library must not alter the playing sequence.
+    this.currentsegmentidx = -1;
+    this.isplaying = false;
     this.jsonfile = [];
     this.jsonparsed = [];
     this.sentryeventrel = [];
@@ -3096,6 +3839,7 @@ class VideoSequence {
     this.isplaying = false;
     var b = document.getElementById('playpause');
     b.classList.remove("pause");
+    b.setAttribute("aria-label", "Play recording");
     if (isFirefox || isWebkit) {
       b.firstElementChild.firstChild.setAttribute('d', 'M 8,30 30,18 8,6 z');
     }
@@ -3126,7 +3870,7 @@ class VideoSequence {
     return this.isplaying == true;
   }
 
-  select() {
+  select(position, mediaRestore) {
     this.reset();
     currentsequence=this;
     var slider = document.getElementById('position');
@@ -3134,7 +3878,7 @@ class VideoSequence {
     slider.oninput = this.onSeek.bind(this);
     slider.onmousedown = this.onSeekStart.bind(this);
     slider.onchange =  this.onSeekEnd.bind(this);
-    this.seekTo(0);
+    this.seekTo(position || 0, mediaRestore);
     this.onMapResize();
     this.onTickResize();
     this.showSentryLocation();
@@ -3344,6 +4088,7 @@ class VideoSequence {
   }
 
   onSeek(event) {
+    if (recordingLibrary.inFlight) return;
     this.seekTo(event.target.value);
   }
 
@@ -3351,7 +4096,7 @@ class VideoSequence {
     log("seek end");
   }
 
-  seekTo(seektime) {
+  seekTo(seektime, mediaRestore) {
     if (seektime < 0) {
       seektime = 0;
     }
@@ -3372,14 +4117,14 @@ class VideoSequence {
         oldsegment.pause();
       }
       log("selecting new segment " + index);
-      segment.select();
+      segment.select(mediaRestore);
       if (this.isplaying) {
         log("playing new segment");
         segment.play();
       }
       this.currentsegmentidx=index;
     }
-    segment.seekTo((seektime % 60000) / 1000);
+    if (!mediaRestore) segment.seekTo((seektime % 60000) / 1000);
     this.onMapResize();
     this.showSentryLocation();
   }
@@ -3457,7 +4202,9 @@ function freezeVideoElems() {
     c.width = v.clientWidth;
     c.height = v.clientHeight;
     var ctx = c.getContext("2d");
-    if (v.classList.contains("flipped")) {
+    if (v.readyState < 2 || !v.videoWidth) {
+      ctx.clearRect(0, 0, c.width, c.height);
+    } else if (v.classList.contains("flipped")) {
       ctx.scale(-1, 1);
       ctx.drawImage(v, 0, 0, -c.width, c.height);
     } else {
@@ -3497,6 +4244,7 @@ function setDropdownClick(group, item) {
   item.tabIndex = 0;
   item.setAttribute("role", "button");
   item.onclick=function(event) {
+    if (recordingLibrary.inFlight) { event.stopPropagation(); return; }
     /* unselect all the currently selected items */
     var previousselected = document.querySelectorAll('.selected:not(.layoutitem)');
     for (i of previousselected) {
@@ -3610,8 +4358,8 @@ function addToSentryDropdownItem(parent, group, sequence, selected) {
   }
 }
 
-function makeSentryDropdownItem(group, sequence, selected) {
-  var d = document.getElementById(group);
+function makeSentryDropdownItem(group, sequence, selected, container) {
+  var d = container || document.getElementById(group);
   var lastdropdownitem = d.lastChild;
   var date = sequence.substring(0,10);
   if (lastdropdownitem != null && lastdropdownitem.date == date) {
@@ -3623,11 +4371,11 @@ function makeSentryDropdownItem(group, sequence, selected) {
   return newitem;
 }
 
-function makeDropdownItem(group, sequence, selected) {
+function makeDropdownItem(group, sequence, selected, container) {
   if (group == "RecentClips") {
     return makeRecentsDropdownItem(group, sequence, selected);
   }
-  return makeSentryDropdownItem(group, sequence, selected);
+  return makeSentryDropdownItem(group, sequence, selected, container);
 }
 
 function flipdropdowns() {
@@ -3648,31 +4396,316 @@ function flipdropdownsfromclick() {
 readconfig();
 initialize();
 
+// Recording library helpers.
+var viewerTabSuspension;
+var viewerDeferredSelection;
+
+function viewerTabIsActive() {
+  return document.getElementById("tab7").checked === true;
+}
+
+function synchronizeViewerTab() {
+  // initializeAccessibility() runs before recordingLibrary is initialized.
+  // The list transaction owns suspension until its callback settles.
+  if (!recordingLibrary || recordingLibrary.inFlight) return;
+  if (!viewerTabIsActive()) {
+    if (!viewerTabSuspension && !viewerDeferredSelection) viewerTabSuspension = suspendRecordingMedia();
+    return;
+  }
+  var deferred = viewerDeferredSelection;
+  var saved = viewerTabSuspension;
+  viewerDeferredSelection = undefined;
+  viewerTabSuspension = undefined;
+  if (deferred) {
+    if (!currentsequence || currentsequence !== deferred.sequence ||
+        currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) !== deferred.segment) return;
+    var seek = deferred.segment.autoseek;
+    var playing = currentsequence.isPlaying();
+    deferred.segment.select(deferred.mediaRestore);
+    if (!deferred.mediaRestore) {
+      if (seek >= 0) deferred.segment.seekTo(seek);
+      if (playing) deferred.segment.play();
+    }
+  } else if (saved) {
+    restoreRecordingMedia(saved);
+    saved.disposed = true;
+  }
+}
+
+var recordingLibrary = {inFlight:false, loaded:false, requestedDay:"latest", page:null,
+  refreshedAt:null, snapshot:null, snapshotChecked:false};
+
 function parseVideoListResponse(value) {
   var payload = JSON.parse(value);
   if (!payload || !Array.isArray(payload.videos) ||
       payload.videos.some(function(path) { return typeof path != "string"; })) {
     throw new Error("recording list has an unexpected format");
   }
-  return payload.videos;
+  return payload.videos.filter(function(path) {
+    var parts = path.split('/');
+    // The viewer renders these three categories, not flat Track Mode files
+    // or other index entries. Reject malformed paths before building any UI.
+    return parts.length === 3 &&
+      ["RecentClips", "SavedClips", "SentryClips"].includes(parts[0]) &&
+      /^\d{4}-\d{2}-\d{2}(_\d{2}-\d{2}-\d{2})?$/.test(parts[1]) &&
+      parts[2] !== "" && parts[2] !== "." && parts[2] !== "..";
+  });
 }
 
-readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
-  if (error) {
-    var loadIndicator = document.querySelector(".noclips");
-    loadIndicator.textContent = "Recordings unavailable";
-    setViewerStatus("The recording list could not be loaded: " + error.message, true);
+function videoListErrorMessage(error) {
+  if (error.message === "Request timed out") {
+    return "The recording list took longer than 30 seconds to load. " +
+      "Wait a moment, then use Refresh recordings to retry.";
+  }
+  var guidance = ["Network error", "Network request failed"].includes(error.message)
+    ? "Check your connection to TeslaUSB, then use Refresh recordings to retry."
+    : "Wait a moment, then use Refresh recordings to retry.";
+  return "The recording list could not be loaded: " + error.message + ". " + guidance;
+}
+
+function validRecordingDay(day) {
+  return typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+    Number.isFinite(Date.parse(day + "T00:00:00Z")) &&
+    new Date(day + "T00:00:00Z").toISOString().slice(0, 10) === day;
+}
+
+function evidenceTime(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T.*(?:Z|\+00:00)$/.test(value) &&
+    Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() + " (your timezone)" : "unknown";
+}
+
+function parseRecordingPage(value) {
+  var payload = JSON.parse(value);
+  var lines = parseVideoListResponse(value);
+  if (!Array.isArray(payload.available_days) || payload.available_days.length > 10000 ||
+      payload.available_days.some(day => !validRecordingDay(day)) ||
+      !(payload.selected_day === null || validRecordingDay(payload.selected_day)) ||
+      (payload.selected_day === null && lines.length !== 0) ||
+      lines.some(path => path.split('/')[1].slice(0, 10) !== payload.selected_day) ||
+      evidenceTime(payload.generated_at) === "unknown" ||
+      !(payload.newest_recording === null || (typeof payload.newest_recording === "string" &&
+        /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/.test(payload.newest_recording)))) {
+    throw new Error("The day-scoped recording response was not recognized");
+  }
+  return {videos:lines, available_days:Array.from(new Set(payload.available_days)).sort().reverse(),
+    selected_day:payload.selected_day, generated_at:payload.generated_at,
+    newest_recording:payload.newest_recording};
+}
+
+function setRecordingControlsBusy(busy) {
+  document.getElementById("recording-refresh").disabled = busy;
+  document.getElementById("recording-refresh").setAttribute("aria-busy", String(busy));
+  document.getElementById("recording-day").disabled = busy;
+  for (var id of ["position", "playpause", "skipback", "skipforward"])
+    document.getElementById(id).disabled = busy;
+  for (var group of ["RecentClips", "SavedClips", "SentryClips"])
+    document.getElementById(group).setAttribute("aria-disabled", String(busy));
+}
+
+function updateRecordingDays(page, requestedDay) {
+  var select = document.getElementById("recording-day");
+  var choices = ["latest", ...page.available_days];
+  if (requestedDay !== "latest" && !choices.includes(requestedDay)) choices.push(requestedDay);
+  var options = choices.map(function(day) {
+    var option = document.createElement("option");
+    option.value = day;
+    option.textContent = day === "latest" ? "Latest available day" : day;
+    return option;
+  });
+  select.replaceChildren(...options);
+  select.value = requestedDay;
+}
+
+function renderRecordingFreshness() {
+  var page = recordingLibrary.page;
+  var snapshot = recordingLibrary.snapshot;
+  var snapshotText = snapshot ? snapshot.name + ", " + evidenceTime(snapshot.completed_at_utc) :
+    recordingLibrary.snapshotChecked ? "unknown" : "checking";
+  var newest = page && page.newest_recording;
+  var newestText = newest ? newest.slice(0, 10) + " " + newest.slice(11).replaceAll("-", ":") +
+    " (camera filename time; timezone not supplied)" : "none in the selected day";
+  document.getElementById("recording-freshness").textContent =
+    "Last completed snapshot: " + snapshotText + ". Newest indexed recording in this day: " +
+    newestText + ". Library last refreshed: " + evidenceTime(recordingLibrary.refreshedAt) + ".";
+}
+
+function updateRecordingSnapshotEvidence(payload) {
+  var snapshots = payload && payload.health && payload.health.snapshots;
+  var latest = snapshots && snapshots.last_completed;
+  recordingLibrary.snapshot = snapshots && snapshots.available === true && snapshots.scan_complete === true &&
+    latest && /^snap-\d{6}$/.test(latest.name) && evidenceTime(latest.completed_at_utc) !== "unknown" ? latest : null;
+  recordingLibrary.snapshotChecked = true;
+  if (recordingLibrary.loaded) renderRecordingFreshness();
+}
+
+function suspendRecordingMedia() {
+  var sequence = currentsequence;
+  var segment = sequence && sequence.getSegmentByIndex(sequence.currentSegmentIdx());
+  var pending = segment && segment.mediaRestore;
+  var saved = {sequence, segment, position:pending ? pending.position : Number(document.getElementById("position").value) || 0,
+    wasPlaying:Boolean(sequence && sequence.isPlaying()), disposed:false, restored:false,
+    media:videoelems.map(video => {
+      var previous = pending && pending.media.find(item => item.video === video);
+      return previous ? {...previous, video} : {video, src:video.getAttribute("src"),
+      currentTime:Number.isFinite(video.currentTime) ? video.currentTime : 0,
+      paused:video.paused, muted:video.muted, volume:video.volume,
+      playbackRate:video.playbackRate, defaultPlaybackRate:video.defaultPlaybackRate};
+    })};
+  if (segment) clearTimeout(segment.mediaRestoreTimer);
+  for (var video of videoelems) releaseVideoSource(video, true);
+  return saved;
+}
+
+function sameSuspendedSegment(saved, segment) {
+  return saved && saved.segment && segment && ["group", "sequence", "datetime", "front",
+    "leftrepeater", "rightrepeater", "leftpillar", "rightpillar", "back"]
+    .every(key => saved.segment[key] === segment[key]);
+}
+
+function restoreRecordingMedia(saved) {
+  if (!saved || saved.disposed || saved.restored || currentsequence !== saved.sequence || !saved.segment) return;
+  if (currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) !== saved.segment) return;
+  if (!viewerTabIsActive()) {
+    // Keep an independent owner; the list transaction disposes its own copy.
+    viewerTabSuspension = {...saved, disposed:false, restored:false};
     return;
   }
-  var lines;
+  saved.restored = true;
+  saved.segment.select(saved);
+}
+
+function recordingMetadataBeforePlayback() {
+  // The API has its own deadline; this local bound also covers a stuck/shared
+  // promise. Metadata is optional and must never strand suspended playback.
+  return new Promise(resolve => {
+    var finished = false;
+    var timer = setTimeout(() => finish(null), 16000);
+    function finish(payload) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(payload);
+    }
+    try { Promise.resolve(getMaintenanceStatus()).then(finish, () => finish(null)); }
+    catch (error) { finish(null); }
+  });
+}
+
+function loadRecordings(day) {
+  if (recordingLibrary.inFlight) return false;
+  var requestedDay = day === undefined ? recordingLibrary.requestedDay : day;
+  if (requestedDay !== "latest" && !validRecordingDay(requestedDay)) {
+    setViewerStatus("Choose a valid recording day.", true);
+    return false;
+  }
+  recordingLibrary.inFlight = true;
+  initialVideoListLoading = true;
+  clearTimeout(statusPollTimer);
+  setRecordingControlsBusy(true);
+  var deferredBeforeLoad = viewerDeferredSelection;
+  var suspended = viewerTabSuspension || suspendRecordingMedia();
+  viewerTabSuspension = undefined;
+  viewerDeferredSelection = undefined;
+  showstatus();
+  setViewerStatus("Loading recordings for " + (requestedDay === "latest" ? "the latest available day" : requestedDay) +
+    "... Viewer playback is briefly paused; car recording is unaffected.", false);
+  var completed = false;
+  async function finish(value, callbackarg, error) {
+    if (completed) return;
+    completed = true;
+    try {
+      if (error) throw error;
+      var page = parseRecordingPage(value);
+      var metadata = await recordingMetadataBeforePlayback();
+      renderVideoList(page.videos, suspended);
+      recordingLibrary.page = page;
+      recordingLibrary.requestedDay = requestedDay;
+      recordingLibrary.refreshedAt = new Date().toISOString();
+      recordingLibrary.loaded = true;
+      recordingLibrary.snapshot = null;
+      recordingLibrary.snapshotChecked = false;
+      updateRecordingDays(page, requestedDay);
+      renderRecordingFreshness();
+      setViewerStatus(page.videos.length ? "" : "No indexed recordings are available for this day.", false);
+      updateRecordingSnapshotEvidence(metadata);
+    } catch (failure) {
+      if (!recordingLibrary.loaded) document.querySelector(".noclips").textContent = "Recordings unavailable";
+      document.getElementById("recording-day").value = recordingLibrary.requestedDay;
+      suspended.statusPrefix = videoListErrorMessage(failure) +
+        (recordingLibrary.loaded ? " The previous library is still shown; it was not refreshed." : "");
+      setViewerStatus(suspended.statusPrefix, true);
+    } finally {
+      try {
+        if (deferredBeforeLoad && !suspended.restored && currentsequence && currentsequence === deferredBeforeLoad.sequence &&
+            currentsequence.getSegmentByIndex(currentsequence.currentSegmentIdx()) === deferredBeforeLoad.segment) {
+          viewerDeferredSelection = deferredBeforeLoad;
+        } else {
+          restoreRecordingMedia(suspended);
+        }
+      }
+      catch (restoreError) { log("Could not restore viewer playback: " + restoreError.message); }
+      suspended.disposed = true;
+      recordingLibrary.inFlight = false;
+      setRecordingControlsBusy(false);
+      synchronizeViewerTab();
+      finishInitialVideoListLoad();
+    }
+  }
+  var waitStarted = Date.now();
+  function startWhenStatusIdle() {
+    if (statusRequestInFlight) {
+      if (Date.now() - waitStarted >= 35000) {
+        finish(null, null, new Error("The status request has not finished; try refreshing again"));
+      } else {
+        setTimeout(startWhenStatusIdle, 100);
+      }
+      return;
+    }
+    try {
+      readfile({url:'/api/v1/videos?day=' + encodeURIComponent(requestedDay), callback:finish});
+    } catch (error) { finish(null, null, error); }
+  }
+  startWhenStatusIdle();
+  return true;
+}
+
+function sequenceVideoSignature(sequence) {
+  return JSON.stringify(sequence.segments.map(segment => [segment.datetime,
+    segment.front, segment.leftrepeater, segment.rightrepeater, segment.leftpillar, segment.rightpillar, segment.back])) +
+    JSON.stringify(sequence.jsonfile);
+}
+
+function clearRecordingPlayback() {
+  viewerTabSuspension = undefined;
+  viewerDeferredSelection = undefined;
+  currentsequence = undefined;
+  for (var video of videoelems) {
+    releaseVideoSource(video, false);
+    video.style.visibility = "hidden";
+  }
+  for (var canvas of canvaselems) canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById("sentrymap").removeAttribute("src");
+  document.getElementById("sequencelocation").textContent = "";
+  document.getElementById("segmentname").textContent = "";
+  document.getElementById("currenttime").textContent = "";
+  document.getElementById("totaltime").textContent = "";
+  document.getElementById("position").value = 0;
+  document.getElementById("position").max = 0;
+}
+
+function renderVideoList(lines, suspended) {
+  var previousLibrary = videos;
+  var previousSequence = currentsequence;
+  var previousSegment = previousSequence && previousSequence.getSegmentByIndex(previousSequence.currentSegmentIdx());
+  var previousPosition = Number(document.getElementById("position").value) || 0;
+  var wasPlaying = previousSequence && previousSequence.isPlaying();
+  var previousDropdowns = {};
+  for (var group of ["RecentClips", "SavedClips", "SentryClips"]) {
+    previousDropdowns[group] = Array.from(document.getElementById(group).childNodes);
+  }
+  var committed = false;
+  videos = {};
   try {
-    lines = parseVideoListResponse(value);
-  } catch (parseError) {
-    var loadIndicator = document.querySelector(".noclips");
-    loadIndicator.textContent = "Recordings unavailable";
-    setViewerStatus("The recording list response was invalid: " + parseError.message, true);
-    return;
-  }
   var newest="0-";
   var newestsequence;
   var haspillarviews = false;
@@ -3727,20 +4760,21 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
       }
     }
   }
-  if (haspillarviews) {
-    var pillarlayouts = document.querySelectorAll('.dropdownitem.pillar');
-    for (i of pillarlayouts) {
-      i.style.display = 'block';
+  var selectedSequence = newestsequence;
+  var replacement = previousSequence && videos[previousSequence.sequencegroup] &&
+    videos[previousSequence.sequencegroup][previousSequence.sequencename];
+  if (replacement && replacement.length() > 0) {
+    selectedSequence = replacement;
+    if (sequenceVideoSignature(replacement) === sequenceVideoSignature(previousSequence)) {
+      // Reuse the selection; a refresh restores its suspended media separately.
+      videos[previousSequence.sequencegroup][previousSequence.sequencename] = previousSequence;
+      selectedSequence = previousSequence;
     }
   }
-
-  var nr = document.querySelector(".noclips");
-  if (WORK_AROUND_WEBKIT_QUIRKS) {
-    nr.style.display="none";
-    nr.style.display='';
-  }
+  var stagedDropdowns = {};
   for (i of ["RecentClips", "SavedClips", "SentryClips"]) {
-    var d=document.getElementById(i);
+    var d = document.createElement("div");
+    stagedDropdowns[i] = d;
     for (c in videos[i]) {
       // Regular expression to match the date format
       var datePattern = /^\d{4}-\d{2}-\d{2}(_\d{2}-\d{2}-\d{2})?$/;
@@ -3754,9 +4788,9 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
         log("skipping empty " + i + "/" + c);
         continue;
       }
-      videos[i][c].initialize();
+      if (videos[i][c] !== previousSequence) videos[i][c].initialize();
 
-      var newelem = makeDropdownItem(i, c, videos[i][c] == newestsequence);
+      var newelem = makeDropdownItem(i, c, videos[i][c] == selectedSequence, d);
       if (newelem != undefined) {
         d.appendChild(newelem);
       }
@@ -3765,7 +4799,14 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
       d.append(...Array.from(d.childNodes).reverse())
     }
 
-    /* set an appropriate size and position for the dropdown */
+  }
+  // All parsing and construction succeeded. Replace each category rather than
+  // appending a second library; errors before here leave the old DOM intact.
+  committed = true;
+  for (i of ["RecentClips", "SavedClips", "SentryClips"]) {
+    var d = document.getElementById(i);
+    d.replaceChildren(...stagedDropdowns[i].childNodes);
+    d.style.display = "";
     var cols = Math.trunc((document.body.clientWidth * 0.7 + 155) / 156);
     if ((d.childElementCount / cols) < 3) {
       cols = Math.ceil(d.childElementCount / 3);
@@ -3786,12 +4827,60 @@ readfile({url:'/api/v1/videos', callback:function(value, callbackarg, error) {
       ev.target.onclick = null;
     }
   }
-  if (newestsequence != undefined) {
-    newestsequence.select();
+  for (var pillar of document.querySelectorAll('.dropdownitem.pillar')) {
+    pillar.style.display = haspillarviews ? "block" : "none";
   }
-  nr.textContent = "No recordings";
+  if (selectedSequence !== previousSequence) {
+    if (previousSegment) previousSequence.pause();
+    if (selectedSequence) {
+      var preservedIndex = -1;
+      if (replacement === selectedSequence && previousSegment) {
+        preservedIndex = selectedSequence.segments.findIndex(segment => segment.datetime === previousSegment.datetime);
+      }
+      if (preservedIndex >= 0 && sameSuspendedSegment(suspended, selectedSequence.getSegmentByIndex(preservedIndex))) {
+        var remappedRestore = {...suspended, position:preservedIndex * 60000 + previousPosition % 60000};
+        selectedSequence.select(remappedRestore.position, remappedRestore);
+        suspended.restored = true;
+        selectedSequence.isplaying = suspended.wasPlaying;
+        if (suspended.wasPlaying) {
+          document.getElementById("playpause").classList.add("pause");
+          document.getElementById("playpause").setAttribute("aria-label", "Pause recording");
+        }
+      } else {
+        selectedSequence.select();
+        if (preservedIndex >= 0) {
+          selectedSequence.seekTo(preservedIndex * 60000 + previousPosition % 60000);
+          if (wasPlaying) selectedSequence.play();
+        }
+      }
+    } else {
+      clearRecordingPlayback();
+    }
+  }
+  document.querySelector(".noclips").textContent = "No recordings";
+  } catch (error) {
+    videos = previousLibrary;
+    if (committed) {
+      for (var group of ["RecentClips", "SavedClips", "SentryClips"]) {
+        document.getElementById(group).replaceChildren(...previousDropdowns[group]);
+      }
+      if (currentsequence !== previousSequence && previousSegment) {
+        try {
+          previousSequence.select(previousPosition, suspended);
+          previousSequence.isplaying = wasPlaying;
+          if (suspended) suspended.restored = true;
+        } catch (restoreError) {
+          log("Could not restore the previous playback position: " + restoreError.message);
+        }
+      }
+      currentsequence = previousSequence;
+    }
+    throw error;
+  }
 }
-});
+// End recording library helpers.
+
+loadRecordings("latest");
 
 function stringtoseconds(s) {
   var secs = (3600 * s.substring(0, 2)) +

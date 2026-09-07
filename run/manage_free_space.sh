@@ -15,21 +15,10 @@ RELEASE_SNAPSHOT="${RELEASE_SNAPSHOT:-/root/bin/release_snapshot.sh}"
 readonly BACKINGFILES_ROOT SNAPSHOTS_ROOT SNAPSHOT_MOUNT_ROOT
 readonly SNAPSHOT_FINDMNT_COMMAND SNAPSHOT_POLICY_HELPER RELEASE_SNAPSHOT
 
-if [ "${FLOCKED:-}" != "$0" ]
-then
-  mkdir -p "$SNAPSHOTS_ROOT"
-  if FLOCKED="$0" flock -E 99 "$SNAPSHOTS_ROOT" "$0" "$@" || case "$?" in
-  99) echo "failed to lock snapshots dir"
-      exit 99
-      ;;
-  *)  exit $?
-      ;;
-  esac
-  then
-    # success
-    exit 0
-  fi
-fi
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=run/snapshot_lock.sh
+source "$script_dir/snapshot_lock.sh"
+acquire_snapshot_lock || exit "$?"
 
 function manage_free_space {
   # Try to make free space equal to 10 GB plus three percent of the total

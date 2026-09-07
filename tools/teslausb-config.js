@@ -41,6 +41,9 @@ const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const MAX_STRING_BYTES = 16 * 1024;
 const MAX_ARRAY_ITEMS = 128;
+const MIN_CAM_SIZE_GIB = 20;
+const MAX_CAM_SIZE_GIB = 1780;
+const MAX_STORAGE_SIZE_KIB = BigInt(MAX_CAM_SIZE_GIB) * 1024n * 1024n;
 const ARCHIVE_SYSTEMS = new Set(["cifs", "nfs", "rsync", "rclone", "none"]);
 const DECLARATIVE_BOOLEAN_NAMES = new Set([
   "ARCHIVE_RECENTCLIPS", "ARCHIVE_SAVEDCLIPS", "ARCHIVE_SENTRYCLIPS", "ARCHIVE_TRACKMODECLIPS",
@@ -142,6 +145,42 @@ const CANONICAL_ORDER = [
 ];
 
 const SENSITIVE_NAME = /(?:(?:^|_)SSID$|WIFIPASS|PASS(?:WORD)?|TOKEN|SECRET|(?:^|_)KEY(?:_|$)|WEBHOOK_URL|SIGNAL_URL|NTFY_URL|SSH_ROOT_PUBLIC_KEY|(?:^|_)VIN$|ARCHIVE_SERVER|RSYNC_SERVER|SHARE_NAME|SHARE_USER|RSYNC_USER|MATRIX_(?:USERNAME|ROOM)|TELEGRAM_CHAT_ID|TESLAUSB_HOSTNAME|WEB_ALLOWED_HOSTS|NOTIFICATION_COMMAND)/;
+
+function normalizeCameraSize(value) {
+  const match = /^([1-9][0-9]*)(?:G|GiB)$/.exec(String(value));
+  if (!match) {
+    throw new Error("CAM_SIZE must use an explicit G or GiB suffix, such as 40G");
+  }
+  if (match[1].length > 4) {
+    throw new Error(
+      `CAM_SIZE must be between ${MIN_CAM_SIZE_GIB}G and ${MAX_CAM_SIZE_GIB}G; 40G is recommended`
+    );
+  }
+  const sizeGiB = Number(match[1]);
+  if (!Number.isSafeInteger(sizeGiB) || sizeGiB < MIN_CAM_SIZE_GIB || sizeGiB > MAX_CAM_SIZE_GIB) {
+    throw new Error(
+      `CAM_SIZE must be between ${MIN_CAM_SIZE_GIB}G and ${MAX_CAM_SIZE_GIB}G; 40G is recommended`
+    );
+  }
+  return `${sizeGiB}G`;
+}
+
+function validateOptionalStorageSize(name, value) {
+  if (value === "" || value === "0") return;
+  const match = /^([1-9][0-9]*)([KMG])$/.exec(String(value));
+  if (!match) {
+    throw new Error(
+      `${name} must use an explicit K, M, or G suffix, such as 512M or 4G`
+    );
+  }
+  if (match[1].length > 10) {
+    throw new Error(`${name} must not exceed ${MAX_CAM_SIZE_GIB}G`);
+  }
+  const multiplier = {K: 1n, M: 1024n, G: 1024n * 1024n}[match[2]];
+  if (BigInt(match[1]) * multiplier > MAX_STORAGE_SIZE_KIB) {
+    throw new Error(`${name} must not exceed ${MAX_CAM_SIZE_GIB}G`);
+  }
+}
 
 function bashQuote(value) {
   const input = String(value);
@@ -524,9 +563,20 @@ function preflightConfig(text) {
   }
 
   requireValue("CAM_SIZE");
-  for (const name of ["CAM_SIZE", "MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE", "INCREASE_ROOT_SIZE"]) {
-    if (present(name) && !/^[1-9][0-9]*(?:[KMGTP])?$/i.test(value(name))) {
-      add("error", `${name} must be a positive size such as 40G or 512M`, name);
+  if (present("CAM_SIZE")) {
+    try {
+      normalizeCameraSize(value("CAM_SIZE"));
+    } catch (error) {
+      add("error", error.message, "CAM_SIZE");
+    }
+  }
+  for (const name of ["MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE", "INCREASE_ROOT_SIZE"]) {
+    if (present(name)) {
+      try {
+        validateOptionalStorageSize(name, value(name));
+      } catch (error) {
+        add("error", error.message, name);
+      }
     }
   }
 
@@ -722,7 +772,7 @@ function generateConfig(input) {
     ""
   ];
   for (const name of names) {
-    const candidate = variables[name];
+    const candidate = name === "CAM_SIZE" ? normalizeCameraSize(variables[name]) : variables[name];
     if (Array.isArray(candidate)) {
       output.push(`export ${name}=(${candidate.map(bashQuote).join(" ")})`);
     } else {
@@ -788,7 +838,8 @@ function migrateConfig(text) {
         }
       }
     } else {
-      variables[name] = String(assignment.value);
+      variables[name] = name === "CAM_SIZE" ?
+        normalizeCameraSize(assignment.value) : String(assignment.value);
     }
   }
 
@@ -894,6 +945,7 @@ module.exports = {
   decodeLiteral,
   generateConfig,
   migrateConfig,
+  normalizeCameraSize,
   parseConfig,
   preflightConfig,
   sanitizeConfig

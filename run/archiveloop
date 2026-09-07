@@ -98,12 +98,31 @@ function timestamp () {
 
 function fix_errors_in_image () {
   local image="$1"
-  log "Running fsck on $image..."
-  loopback=$(losetup_find_show -P "$image")
-  # Use -p repair arg. It works with vfat and exfat.
-  /sbin/fsck "${loopback}p1" -- -p |& timestamp '| ' >> "$LOG_FILE" || echo ""
-  losetup -d "$loopback"
-  log "Finished fsck on $image."
+  local loopback
+  local detach_status=0
+  local -a check_status
+  log "Checking filesystem on $image..."
+  if ! loopback=$(losetup_find_show -P "$image") || [ -z "$loopback" ]
+  then
+    log "STOP: could not attach $image for a verified filesystem check; manual attention required"
+    return 78
+  fi
+  # An if condition suppresses errexit for this pipeline, including pipefail.
+  # Capture both statuses immediately: the logger must never hide a failed
+  # check, and a logging failure must not be reported as successful checking.
+  if python3 /root/bin/check-filesystem.py "${loopback}p1" |& timestamp '| ' >> "$LOG_FILE"
+  then
+    check_status=("${PIPESTATUS[@]}")
+  else
+    check_status=("${PIPESTATUS[@]}")
+  fi
+  losetup -d "$loopback" || detach_status=$?
+  if [ "${check_status[0]}" -ne 0 ] || [ "${check_status[1]}" -ne 0 ] || [ "$detach_status" -ne 0 ]
+  then
+    log "STOP: filesystem check or loop cleanup failed for $image (check=${check_status[0]}, log=${check_status[1]}, detach=$detach_status); USB export and cleanup blocked; manual attention required"
+    return 78
+  fi
+  log "Finished verified filesystem check on $image."
 }
 
 function archive_is_reachable () {
@@ -204,14 +223,16 @@ function update_encrypted_clip_status () {
 }
 
 # Return 75 when an encrypted-clip directory intentionally blocks snapshot
-# creation or another gadget operation owns the lock. Other non-zero statuses
+# creation, and 99 when a busy operation defers it without disconnecting USB.
+# Other non-zero statuses
 # are operational failures. The external helper owns the shared gadget lock
 # across disconnect, the live directory-entry check, unmount verification, and
 # the raw block-level snapshot.
 function prepare_camera_snapshot () {
   local snapshot_mode="${1:-}"
+  local usb_mode="${2:---leave-disconnected}"
   local snapshot_status=0
-  local -a snapshot_args=(--leave-disconnected)
+  local -a snapshot_args=("$usb_mode")
 
   if [ -n "$snapshot_mode" ]
   then
@@ -225,10 +246,14 @@ function prepare_camera_snapshot () {
     75)
       if [ "$encrypted_warning_logged" = false ]
       then
-        log "WARNING: Tesla EncryptedClips may be present or another gadget operation is active; camera snapshot and camera-clip archiving skipped"
+        log "WARNING: Tesla EncryptedClips may be present; camera snapshot and camera-clip archiving skipped"
         encrypted_warning_logged=true
       fi
       return 75
+      ;;
+    99)
+      log "Camera snapshot deferred while another storage or USB operation finishes"
+      return 99
       ;;
     *)
       log "Guarded camera snapshot failed; camera-clip archiving skipped"
@@ -351,22 +376,137 @@ function trim_free_space() {
 }
 
 function fix_errors_in_images () {
-  for i in cam music boombox lightshow
-  do
-    img="/backingfiles/${i}_disk.bin"
-    if [ -e "$img" ]
+  # A subshell owns the lock descriptors/claim for exactly this operation. It
+  # cannot leak the gadget-lock flag or held descriptors into later workers.
+  (
+    local check_mode="${1:-always}" i img mounted_targets target configfs_root udc udc_value
+    local disable_status=0
+    local lock_status=0
+    local gadget_lock_dir=/run/teslausb
+    local gadget_lock_file="$gadget_lock_dir/gadget-operation.lock"
+    local udc_class=/sys/class/udc
+    local controller_seen=false
+    SNAPSHOTS_ROOT=/backingfiles/snapshots
+    # Use the same lock order as guarded_snapshot: snapshots, then gadget.
+    # Never disconnect USB while waiting for another snapshot/cleanup operation.
+    # shellcheck source=run/snapshot_lock.sh
+    source /root/bin/snapshot_lock.sh || exit 78
+    acquire_snapshot_lock || lock_status=$?
+    case "$lock_status" in
+      0) ;;
+      99)
+        log "Filesystem check deferred: snapshot/cleanup operation is busy; USB connection unchanged"
+        exit 75
+        ;;
+      *)
+        log "STOP: cannot validate the snapshot lock for filesystem checking"
+        exit 78
+        ;;
+    esac
+    if [[ -L "$gadget_lock_dir" || -L "$gadget_lock_file" ||
+          ( -e "$gadget_lock_file" && ! -f "$gadget_lock_file" ) ]]
     then
-      fix_errors_in_image "$img"
+      log "STOP: unsafe USB gadget lock path"
+      exit 78
     fi
-  done
+    mkdir -p -- "$gadget_lock_dir" || exit 78
+    chmod 0700 -- "$gadget_lock_dir" || exit 78
+    exec 9> "$gadget_lock_file" || exit 78
+    chmod 0600 -- "$gadget_lock_file" || exit 78
+    lock_status=0
+    flock -E 75 -w 30 9 || lock_status=$?
+    case "$lock_status" in
+      0) ;;
+      75)
+        log "Filesystem check deferred: USB gadget operation is busy; USB connection unchanged"
+        exit 75
+        ;;
+      *)
+        log "STOP: cannot validate the USB gadget lock for filesystem checking"
+        exit 78
+        ;;
+    esac
+    export TESLAUSB_GADGET_LOCK_HELD=1
+    if ! configfs_root=$(findmnt -o TARGET -n configfs) ||
+       [[ -z "$configfs_root" || "$configfs_root" == *$'\n'* || ! -d "$configfs_root" ]]
+    then
+      log "STOP: cannot verify configfs before filesystem checking"
+      exit 78
+    fi
+    /root/bin/disable_gadget.sh || disable_status=$?
+    if [ "$disable_status" -ne 0 ] && [ "$disable_status" -ne 2 ]
+    then
+      log "STOP: USB disconnect failed before filesystem checking"
+      exit 78
+    fi
+    for udc in "$configfs_root"/usb_gadget/*/UDC
+    do
+      if [ -e "$udc" ]
+      then
+        if ! udc_value=$(cat -- "$udc") || [ -n "$udc_value" ]
+        then
+          log "STOP: a USB gadget remains bound or unreadable; filesystem checking refused"
+          exit 78
+        fi
+      fi
+    done
+    # usb_gadget/ may not exist before libcomposite loads on a fresh boot.
+    # Controller bindings also catch legacy gadgets outside configfs.
+    for udc in "$udc_class"/*/function
+    do
+      if [ -e "$udc" ]
+      then
+        controller_seen=true
+        if ! udc_value=$(cat -- "$udc") || [ -n "$udc_value" ]
+        then
+          log "STOP: a USB controller remains bound or unreadable; filesystem checking refused"
+          exit 78
+        fi
+      fi
+    done
+    if [ "$controller_seen" != true ]
+    then
+      log "STOP: cannot verify an unbound USB controller before filesystem checking"
+      exit 78
+    fi
+    # Subsequent archive mount calls already have USB disconnected and may
+    # legitimately have another image mounted. Preserve the existing no-recheck
+    # behavior, but only after positively verifying the disconnected state.
+    if [ "$check_mode" = if-disconnected ] && [ "$disable_status" -eq 2 ]
+    then
+      exit 0
+    fi
+    if ! mounted_targets=$(findmnt --kernel --raw --noheadings --output TARGET) ||
+       [ -z "$mounted_targets" ]
+    then
+      log "STOP: cannot inspect live image mounts before filesystem checking"
+      exit 78
+    fi
+    while IFS= read -r target
+    do
+      case "$target" in
+        /mnt/cam|/mnt/cam/*|/mnt/music|/mnt/music/*|/mnt/lightshow|/mnt/lightshow/*|/mnt/boombox|/mnt/boombox/*)
+          log "STOP: $target is still mounted; filesystem checking refused"
+          exit 78
+          ;;
+      esac
+    done <<< "$mounted_targets"
+    for i in cam music boombox lightshow
+    do
+      img="/backingfiles/${i}_disk.bin"
+      if [ -e "$img" ]
+      then
+        fix_errors_in_image "$img" || exit 78
+      fi
+    done
+  )
 }
 
 function disconnect_usb_drives_from_host () {
   log "Disconnecting usb from host..."
-  if /root/bin/disable_gadget.sh
-  then
-    fix_errors_in_images
-  fi
+  # Exit explicitly even when an archive caller runs inside an if/retry context
+  # that disables errexit. The guarded checker performs the disconnect itself.
+  fix_errors_in_images if-disconnected || exit "$?"
   log "Disconnected usb from host."
 }
 
@@ -929,38 +1069,28 @@ function doubleblink () {
   echo 0 > "$STATUSLED/invert"
 }
 
-function set_time () {
-  log "Trying to set time..."
-  local -r uptime_start=$(awk '{print $1}' /proc/uptime)
-  local -r clocktime_start=$(date +%s.%N)
-  for _ in {1..5}
-  do
-    if sntp -S time.google.com || ntpdig -S time.google.com || sntp -S 129.6.15.28 || ntpdig -S 129.6.15.28 #(time-a-g.nist.gov)
-    then
-      local -r uptime_end=$(awk '{print $1}' /proc/uptime)
-      local -r clocktime_end=$(date +%s.%N)
-      log "$(awk "BEGIN {printf \"Time adjusted by %f seconds after %f seconds\", $clocktime_end-$clocktime_start, $uptime_end-$uptime_start}")"
-      return
-    fi
-    log "ntpdig failed, retrying..."
-    sleep 2
-  done
-  log "Failed to set time"
-}
-
 function snapshotloop {
   echo -n snapshotloop > /proc/self/comm
+  local next_snapshot_delay="${SNAPSHOT_INTERVAL:-3480}"
   while true
   do
-    sleep "${SNAPSHOT_INTERVAL:-3480}"
+    sleep "$next_snapshot_delay"
     /root/bin/waitforidle || true
     local snapshot_status=0
-    prepare_camera_snapshot || snapshot_status=$?
-    if [ "$snapshot_status" -ne 0 ] && [ "$snapshot_status" -ne 75 ]
+    prepare_camera_snapshot '' --connect-after-copy || snapshot_status=$?
+    if [ "$snapshot_status" -ne 0 ] && [ "$snapshot_status" -ne 75 ] && [ "$snapshot_status" -ne 99 ]
     then
       log "Background camera snapshot failed with status $snapshot_status"
     fi
-    connect_usb_drives_to_host || log "Failed to reconnect USB drives after background snapshot check"
+    if [ "$snapshot_status" -eq 99 ]
+    then
+      next_snapshot_delay=60
+    else
+      next_snapshot_delay="${SNAPSHOT_INTERVAL:-3480}"
+    fi
+    # The guard restores USB immediately after the immutable copy, or during
+    # its error cleanup. A busy result leaves the current gadget untouched.
+    # Do not override its refusal to reconnect a still-mounted live image.
   done
 }
 
@@ -1062,30 +1192,41 @@ log "Starting archiveloop at $(awk '{print $1}' /proc/uptime) seconds uptime..."
 archive_status_write idle '' "$(archive_timestamp)" 0 0 0 0 \
   'Archive service started' || log 'Failed to initialize archive status'
 
+# No archive destination (or an unreachable one) must not disable time sync.
+# The worker owns its lock and deadlines; network retries never delay USB.
+/usr/bin/python3 /root/bin/sync-time.py 2>&1 |
+  while IFS= read -r clock_line
+  do
+    log "$clock_line"
+  done &
+
 set_sys_param /proc/sys/vm/dirty_background_bytes DIRTY_BACKGROUND_BYTES 65536
 set_sys_param /proc/sys/vm/dirty_ratio DIRTY_RATIO 80
 set_sys_param /sys/devices/system/cpu/cpufreq/policy0/scaling_governor CPU_GOVERNOR conservative
 
 /root/bin/temperature_monitor &
 
+logrotator &
+wifichecker &
+
+fix_errors_in_images || exit "$?"
+# always remove files that fsck recoverd
+clean_cam_mount boot
+
+# Retention and snapshot workers must not start before the live image checks
+# succeed. Exit 78 is terminal until an operator investigates and restarts.
 if has_cam_disk
 then
   snapshotloop &
   freespacemanager &
 fi
-logrotator &
-wifichecker &
-
-fix_errors_in_images
-# always remove files that fsck recoverd
-clean_cam_mount boot
 
 camera_archive_allowed=true
 if has_cam_disk
 then
   # don't need another fsck because fix_errors_in_images already did that
   snapshot_status=0
-  prepare_camera_snapshot nofsck || snapshot_status=$?
+  prepare_camera_snapshot nofsck --connect-after-copy || snapshot_status=$?
   if [ "$snapshot_status" -ne 0 ]
   then
     camera_archive_allowed=false
@@ -1097,8 +1238,6 @@ connect_usb_drives_to_host
 if archive_is_reachable
 then
   fastblink
-
-  set_time
 
   /root/bin/awake_start || true
 
@@ -1120,8 +1259,6 @@ do
   wait_for_archive_to_be_reachable
 
   fastblink
-
-  set_time
 
   /root/bin/awake_start || true
 

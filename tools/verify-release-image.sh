@@ -67,6 +67,88 @@ find_enabled_systemd_unit() {
     -print -quit
 }
 
+verify_boot_cmdline() {
+  local cmdline_file="$1"
+  local expected_root_token="$2"
+  local existing_module
+  local module
+  local module_list
+  local modules_load_count=0
+  local root_token_count=0
+  local rootwait_count=0
+  local token
+  local -a cmdline_lines=()
+  local -a cmdline_tokens=()
+  local -a modules=()
+  local -a seen_modules=()
+
+  if [ ! -f "$cmdline_file" ] || [ -L "$cmdline_file" ]
+  then
+    fail "boot cmdline.txt is missing or symbolic"
+  fi
+  mapfile -t cmdline_lines < "$cmdline_file"
+  if [ "${#cmdline_lines[@]}" -ne 1 ] ||
+     [[ "${cmdline_lines[0]}" == *$'\r'* ]]
+  then
+    fail "boot cmdline.txt must contain exactly one Unix-format line"
+  fi
+  read -r -a cmdline_tokens <<< "${cmdline_lines[0]}"
+  [ "${#cmdline_tokens[@]}" -gt 0 ] || fail "boot cmdline.txt is empty"
+
+  for token in "${cmdline_tokens[@]}"
+  do
+    case "$token" in
+      resize)
+        fail "automatic root resize token remains in boot cmdline.txt"
+        ;;
+      rootwait)
+        rootwait_count=$((rootwait_count + 1))
+        ;;
+      root=*)
+        root_token_count=$((root_token_count + 1))
+        [ "$token" = "$expected_root_token" ] ||
+          fail "boot cmdline.txt root token does not match the verified root partition"
+        ;;
+      modules.load=*)
+        fail "legacy modules.load token remains in boot cmdline.txt"
+        ;;
+      modules-load=*)
+        modules_load_count=$((modules_load_count + 1))
+        module_list=${token#modules-load=}
+        if [[ "$module_list" == ,* || "$module_list" == *, ||
+              "$module_list" == *,,* ]]
+        then
+          fail "boot modules-load token contains an empty module name"
+        fi
+        IFS=, read -r -a modules <<< "$module_list"
+        if [ "${#modules[@]}" -lt 2 ] ||
+           [ "${modules[0]}" != dwc2 ] || [ "${modules[1]}" != g_ether ]
+        then
+          fail "boot modules-load token must start with dwc2,g_ether"
+        fi
+        seen_modules=()
+        for module in "${modules[@]}"
+        do
+          [ -n "$module" ] ||
+            fail "boot modules-load token contains an empty module name"
+          for existing_module in "${seen_modules[@]}"
+          do
+            [ "$existing_module" != "$module" ] ||
+              fail "boot modules-load token contains a duplicate module: $module"
+          done
+          seen_modules+=("$module")
+        done
+        ;;
+    esac
+  done
+  [ "$rootwait_count" -eq 1 ] ||
+    fail "boot cmdline.txt must contain exactly one rootwait token"
+  [ "$root_token_count" -eq 1 ] ||
+    fail "boot cmdline.txt must contain exactly one root token"
+  [ "$modules_load_count" -eq 1 ] ||
+    fail "boot cmdline.txt must contain exactly one modules-load token"
+}
+
 [ "$#" -eq 6 ] || usage
 
 readonly IMAGE_INPUT=$1
@@ -192,8 +274,11 @@ readonly ROOT_PARTITION=${partitions[1]}
 
 boot_filesystem=$(sudo -n blkid -p -s TYPE -o value -- "$BOOT_PARTITION")
 root_filesystem=$(sudo -n blkid -p -s TYPE -o value -- "$ROOT_PARTITION")
+root_partuuid=$(sudo -n blkid -p -s PART_ENTRY_UUID -o value -- "$ROOT_PARTITION")
 [ "$boot_filesystem" = vfat ] || fail "boot partition must use FAT/vfat"
 [ "$root_filesystem" = ext4 ] || fail "root partition must use ext4"
+[[ "$root_partuuid" =~ ^[0-9A-Fa-f]{8}-[0-9]{2}$ ]] ||
+  fail "root partition has an invalid PARTUUID"
 sudo -n fsck.vfat -n -- "$BOOT_PARTITION" > /dev/null
 sudo -n e2fsck -fn -- "$ROOT_PARTITION" > /dev/null
 
@@ -206,6 +291,7 @@ sudo -n mount -o ro,noload -- "$ROOT_PARTITION" "$ROOT_MOUNT"
 [ -f "$BOOT_MOUNT/config.txt" ] || fail "boot config.txt is missing"
 grep -Eq '^[[:space:]]*dtoverlay=dwc2([[:space:]]|$)' "$BOOT_MOUNT/config.txt" ||
   fail "dwc2 USB OTG overlay is missing from boot config"
+verify_boot_cmdline "$BOOT_MOUNT/cmdline.txt" "root=PARTUUID=$root_partuuid"
 if [ ! -f "$BOOT_MOUNT/ssh" ] || [ -L "$BOOT_MOUNT/ssh" ]
 then
   fail "first-boot SSH marker is missing or symbolic on the boot partition"

@@ -6,8 +6,9 @@ body:
       value: |
         **Is this the right place for my bug report?**
         If you simply have a question, please check the [FAQ](/marcone/teslausb/wiki/FAQ) first, and/or check the [troubleshooting steps](/marcone/teslausb/wiki/Troubleshooting). If those do not answer your question use [Discord](https://discord.gg/b4MHf2x).
-        If you you are reporting a problem with teslausb itself, this is the right place.
+        If you are reporting a problem with teslausb itself, this is the right place.
         If the problem is a more general Linux or Raspberry Pi OS problem, then [the Raspberry Pi forums](https://www.raspberrypi.org/forums) may offer some help
+        **This issue and its attachments may be public.** Report suspected security vulnerabilities through the [security and privacy reporting guidance](https://github.com/jakubgt/teslausb-enhanced/security/policy), not by publishing exploit details or credentials here.
 
   - type: textarea
     id: description
@@ -79,8 +80,18 @@ body:
     attributes:
       label: Logs
       description: |
-        If the web interface is working, use it to download diagnostics and copy/paste or attach them here.
-        If the web interface is not working but you can ssh in to the Pi, run `sudo /root/bin/setup-teslausb diagnose` on the Pi to obtain diagnostics and attach them here.
+        If the web interface is working, download diagnostics, review a local copy, and attach only a sanitized excerpt needed to reproduce the problem.
+        If SSH is available instead, `sudo /root/bin/setup-teslausb diagnose` generates a report; review and redact it locally before sharing.
+        Remove passwords, access/refresh tokens, private keys, VINs, Wi-Fi SSIDs, private IP addresses, personal filesystem paths, account names, and archive-server details. Logs are not guaranteed to be anonymous, even when credential fields are redacted.
+        Never upload a real teslausb_setup.json, teslausb_setup_variables.conf, SSH/private-key file, raw card image, or unsanitized diagnostic bundle. Do not attach recordings or screenshots containing private locations, faces, plates, or account data.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I reviewed every field and attachment and removed credentials and identifying device/network information; I did not attach real setup files or private keys.
+          required: true
 
   - type: textarea
     id: additional

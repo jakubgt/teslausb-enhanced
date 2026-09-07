@@ -1,8 +1,145 @@
 # Changelog
 
-All notable changes to this private TeslaUSB distribution are documented here.
+All notable changes to this TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
+
+## [1.2.0-rc.5] - 2026-08-18
+
+Fifth release candidate for the downloadable Raspberry Pi Zero 2 W image. This
+candidate must be built from the rc.5 source; the previously published rc.4
+image does not contain these repairs.
+
+### Viewer and runtime corrections added 2026-09-07
+
+- Temporarily suspend viewer media transfers during explicit list refresh/day
+  selection so six HTTP/1.x video requests cannot starve metadata requests.
+  Preserve per-camera position/audio/rate and playback intent, guard stale
+  callbacks, and make failed restoration bounded and retryable. Car recording
+  is not interrupted; slow Wi-Fi can still limit high-resolution playback.
+- Release browser video downloads, including paused streams, when leaving the
+  dashboard Viewer so Tools/health requests have available connections. Restore
+  saved playback state for the current selection on return, after any pending
+  refresh/day change; do not start media while away. This is browser-only
+  dashboard navigation, with no USB/service or background-tab behavior change.
+
+- Add day-scoped recording lists, a latest-available-day default, manual
+  Refresh recordings, and separate snapshot/index/browser-refresh timestamps.
+  Preserve the legacy complete-list API and its bounded numeric `_`
+  cache-buster. Reject malformed or unknown query parameters.
+- Replace per-link subprocess/character-by-character listing overhead with
+  bounded metadata scans grouped by target directory. Prevent overlapping scans
+  per web-worker UID, defer browser status polling during list loading, and
+  fail explicitly on timeout or unreadable/oversized indexes. Failed refreshes
+  retain the previous library; successful refreshes do not duplicate entries
+  and preserve the selected media where possible. Correct timeout/network
+  event ordering in viewer, API, maintenance download, and log-tail requests.
+- Extend Advanced maintenance with actual backing/mutable space, the exact
+  cleanup reserve, read-only mount status, finalized snapshot metadata, aged
+  clock evidence, and bounded recovery-backup allocation summaries. Unknown
+  values remain unknown; shared allocations are not reclaimable-space claims.
+  Add only the fixed read-only `maintenance-health` privileged action, with
+  protected helper paths, bounded output, and no shell or arbitrary-path
+  authority. This is an explicit addition to the September 4 privilege scope.
+- Log completed snapshot releases separately from pre-deletion attempts, with
+  explicit UTC and verified unmount/no-mount evidence. Do not alter deletion
+  policy or remove retained recovery backups. Full near-capacity rollover
+  remains unverified until observed during normal recording.
+- Configure BusyBox system logging to use a bounded volatile RAM ring without
+  file-rule precedence opening root log files. Fix exact fstab mountpoint
+  detection so `/var/log/nginx` cannot masquerade as `/var/log`; add a 32 MiB
+  parent tmpfs when absent, with next-boot verification still required.
+- Document the supported next-boot cloud-init disable marker only for the
+  diagnosed, already-provisioned legacy read-only-filesystem failure. Do not
+  generically disable undiagnosed services, purge cloud-init, clear its state,
+  or reprovision. New image builds already disable cloud-init in their recipe.
+- These are source-candidate/PR changes, not a newly published image or an
+  automatic update to installed cards. Live metadata/UI checks do not replace
+  reboot, vehicle recording, or complete rollover validation.
+
+### Runtime corrections added 2026-09-04
+
+- Read the complete NTP daemon status instead of requesting variables that
+  suppress its synchronization header, including correct binary leap flags.
+  Accept NTPsec's exact clock-step diagnostics alongside its JSON result, and
+  step using a fresh sample from the validated responding numeric address.
+  This avoids stale multi-address replies without disabling IPv6. Keep bounded
+  retries, request spacing, service restoration, and actual clock verification.
+- Correct the incompatible `findmnt --list --raw` mount check and exercise the
+  real util-linux parser in regression tests.
+- Check unmounted FAT/exFAT images read-only first, require clean verification
+  after repairs, and provide bounded temporary compressed-RAM swap on small
+  boards without creating SD-card swap files. Owned temporary devices tolerate
+  brief cleanup contention without ever resetting active or unrelated swap.
+- Preserve filesystem-check exit statuses, serialize live checks with USB and
+  snapshot operations, and block cleanup/export after failed checks. Terminal
+  filesystem failures require attention; ordinary lock contention remains
+  retryable. Linux process-group interruption and real-lock tests cover these
+  boundaries. Windows checkouts preserve Linux line endings.
+- The bundled dashboard has a collapsible Advanced maintenance panel with
+  read-only SSH status, a validated copyable connection command, and bounded
+  downloads of saved diagnostics and maintenance logs. It adds no browser
+  shell, SSH configuration mutations, or extra sudo privileges. Diagnostic
+  generation now requires an explicit action instead of running on page load.
+- Periodic snapshots acquire the shared storage lock before disconnecting USB.
+  Busy cleanup defers the snapshot instead of holding the camera drive offline
+  while old snapshots are deleted. The inherited lock descriptor is checked
+  against the actual snapshots directory.
+- Startup and periodic snapshots reconnect USB immediately after the immutable
+  copy-on-write copy, before snapshot filesystem checks, indexing, comparison,
+  and duplicate deletion. Archive operations retain their separate disconnected
+  workflow. Live encrypted or uninspectable recordings still block snapshots.
+- Network time synchronization runs independently of archive configuration,
+  with bounded attempts and background retries. Verified time is cached as an
+  explicitly unsynchronized offline lower bound; diagnostics report the last
+  verification separately from the current clock.
+- Dashboard USB status uses the active camera LUN, controller binding, and
+  host connection state. A prepared gadget no longer implies a connected
+  camera drive, and connection status does not claim that Tesla is recording.
+  Binary storage quantities are labeled GiB/MiB.
+- USB re-export refuses live image mountpoints that remain mounted, including
+  failed-unmount recovery. Worker processes receive graceful stop signals so
+  clock-service restoration is not skipped during application maintenance.
+- These changes extend the still-unpublished rc.5 source candidate. They do not
+  replace any published image or constitute physical-hardware validation.
+
+### Fixed
+
+- First-boot command-line normalization removes the standalone Raspberry Pi OS
+  `resize` trigger, preserves the generated root identity and unrelated
+  options, and enforces exactly one `rootwait` plus one `modules-load` token
+  whose module list begins with `dwc2,g_ether`. Deduplicated extra modules are
+  preserved. Image verification now rejects any image that violates those
+  invariants.
+- Transaction recovery is installed only after the backing-file layout has
+  created and mounted `/mutable`, preventing the first setup from blocking on a
+  mount that cannot exist yet.
+- Completed read-only boots no longer emit harmless boot-log write errors, and
+  a failed `run_once` hook remains available for a later retry.
+- The read-write remount helper resolves the real boot mount behind the
+  `/teslausb` link, verifies both root and boot postconditions, and fails
+  explicitly instead of silently leaving `/boot/firmware` read-only.
+- Camera-only diagnostics no longer report the optional media-drive web mount
+  as missing; that mount is required only when a Music, LightShow, or Boombox
+  image exists.
+- An empty `TeslaCam/EncryptedClips` placeholder is treated as clear while any
+  file, hidden entry, directory, link, non-directory object, or unknown
+  inspection state remains protected. Unknown results invalidate stale
+  dashboard status instead of leaving an earlier clear result visible.
+- The offline configuration wizard no longer contains mojibake-prone text and
+  validates `CAM_SIZE` against the advertised microSD capacity. Unsupported,
+  unitless, overflowing, undersized, and over-capacity values are rejected.
+- Configuration validators accept only size units implemented by the runtime,
+  preventing generated settings from reaching invalid shell arithmetic.
+
+### Documentation
+
+- Added conservative camera-image ceilings for common microSD capacities and
+  clarified the difference between decimal card labels and GiB configuration
+  values, including the reserve needed for system partitions, metadata,
+  snapshots, and optional media images.
+- Recorded the rc.4 first-boot resize defect as a known published-image issue
+  rather than associating that artifact with the rc.5 source repairs.
 
 ## [1.2.0-rc.4] - 2026-08-08
 
@@ -27,6 +164,15 @@ uploaded or published.
 
 All feature, security, provenance, and physical-hardware testing boundaries
 documented for the preceding candidates remain in effect.
+
+### Known issue discovered after publication
+
+- Although `rpi-resize.service` was disabled, the published rc.4 image retained
+  a standalone `resize` token in `cmdline.txt`. Raspberry Pi OS therefore
+  expanded the root filesystem during early boot, consuming the free space
+  TeslaUSB needed for its backing-file and mutable partitions. Do not treat
+  rc.4 as containing the complete resize repair; use an rc.5-or-newer image
+  after it has been built and verified.
 
 ## [1.2.0-rc.3] - 2026-08-08
 
@@ -210,3 +356,4 @@ Initial private enhanced release, based on upstream `main-dev` commit
 [1.2.0-rc.2]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.2
 [1.2.0-rc.3]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.3
 [1.2.0-rc.4]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4
+[1.2.0-rc.5]: https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5

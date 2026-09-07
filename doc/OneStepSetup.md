@@ -10,13 +10,27 @@ This is a streamlined process for setting up the Pi. You'll flash the 64-bit Ras
 
 ## Configure the SD card before first boot of the Pi
 
-1.  Sign in to the private repository and download a release's Raspberry Pi Zero 2 W arm64/Trixie `.img.xz` plus its `.sha256` file. Verify the SHA-256 digest, then flash the compressed file directly using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or a similar flashing tool. Use a high-endurance card: 64 GB is the minimum and 128 GB or larger is recommended. If the release has no image asset, build the exact tag with the pinned [64-bit Trixie pi-gen instructions](../pi-gen-sources/Readme.md).
+1.  Download a published release's Raspberry Pi Zero 2 W arm64/Trixie `.img.xz` plus its `.sha256` file. Public GitHub assets need no sign-in; a private mirror requires an authorized account. Verify the SHA-256 digest, then flash the compressed file directly using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or a similar flashing tool. Use a high-endurance card: 64 GB is the minimum and 128 GB or larger is recommended. If the release has no image asset, build the exact tag with the pinned [64-bit Trixie pi-gen instructions](../pi-gen-sources/Readme.md).
 
     In Raspberry Pi Imager, click **Operating System**, scroll to **Use custom**, and select the local `.img.xz`; extraction is not required. Flashing erases the selected card. Decline Imager OS customization because TeslaUSB has its own first-boot configuration and SSH provisioning.
 
 1.  Mount the card again and open `teslausb_config_wizard.html` from its `boot` partition. Complete the offline form, download `teslausb_setup.json`, and copy that downloaded file to the root of the `boot` partition. The wizard does not use the network, analytics, browser storage, or remote scripts; it recommends conservative Zero 2 W values and generates its web password locally.
 
     Every fresh image needs `SSID`, `WIFIPASS`, and an explicit uppercase ISO 3166-1 alpha-2 `WIFI_COUNTRY` for the physical location where it will operate (`GB`, not `UK`, for the United Kingdom). TeslaUSB will not guess a regulatory domain or enable Wi-Fi with a missing/unrecognized country. The recommended starting profile uses `ARCHIVE_SYSTEM: "none"`, `CAM_SIZE: "40G"`, a named timezone, web authentication, and no destructive `DATA_DRIVE` selection. Configure an archive only after the local system is healthy.
+
+    Enter the decimal GB capacity printed on the card in the wizard (for example, enter `1000` for a 1 TB card). `CAM_SIZE` uses binary GiB (`G` or case-sensitive `GiB` input), so never copy the printed capacity into it. In particular, do not use `500G` on a 512 GB card. The wizard rejects values above these conservative ceilings and does not save the card capacity in the JSON:
+
+    | Capacity printed on card | Maximum `CAM_SIZE` |
+    | ---: | ---: |
+    | 64 GB | `40G` |
+    | 128 GB | `100G` |
+    | 256 GB | `210G` |
+    | 512 GB | `440G` |
+    | 1 TB (1000 GB) | `880G` |
+    | 1.5 TB (1500 GB) | `1330G` |
+    | 2 TB (2000 GB) | `1780G` |
+
+    These are ceilings, not targets. `20G` is accepted as the hard minimum, while `40G` remains the recommended starting value. Subtract any `MUSIC_SIZE`, `LIGHTSHOW_SIZE`, `BOOMBOX_SIZE`, and `INCREASE_ROOT_SIZE` allocations from the applicable ceiling. The ceiling rule is `floor-to-10(0.90 * advertised decimal GB - 15)` and deliberately leaves room for card-label conversion, system data, filesystem metadata, and snapshots.
 
     Advanced users can instead copy `teslausb_setup.json.sample` to `teslausb_setup.json` and edit its `variables` object. The checked-in [JSON sample](../pi-gen-sources/00-teslausb-tweaks/files/teslausb_setup.json.sample) and [declarative configuration guide](DeclarativeConfig.md) describe the required native JSON types.
 

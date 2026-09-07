@@ -11,6 +11,7 @@ const {
   declarativeSchema,
   generateConfig,
   migrateConfig,
+  normalizeCameraSize,
   parseConfig,
   preflightConfig,
   sanitizeConfig
@@ -53,6 +54,61 @@ assert.equal(parsed.assignments.get("WIFIPASS").value, secret);
 assert.equal(parsed.assignments.get("WIFI_COUNTRY").value, "US");
 assert.equal(parsed.assignments.get("ARCHIVE_SYSTEM").value, "cifs");
 assert.equal(preflightConfig(generated).issues.filter((issue) => issue.level === "error").length, 0);
+assert.equal(normalizeCameraSize("20G"), "20G");
+assert.equal(normalizeCameraSize("40GiB"), "40G");
+assert.equal(normalizeCameraSize("1780G"), "1780G");
+for (const invalidCameraSize of [
+  "0", "19G", "1781G", "40", "40960M", "1T", "1P", "40GB", "40g", "40GIB",
+  "9007199254740993G", `${"9".repeat(5000)}G`
+]) {
+  assert.throws(() => normalizeCameraSize(invalidCameraSize), /CAM_SIZE/);
+  const invalidConfig = generated.replace(
+    /export CAM_SIZE=.*\n/,
+    () => `export CAM_SIZE=${bashQuote(invalidCameraSize)}\n`
+  );
+  assert.match(
+    preflightConfig(invalidConfig).issues.map((issue) => issue.message).join("\n"),
+    /CAM_SIZE/
+  );
+}
+const gibCameraConfig = generated.replace(
+  /export CAM_SIZE=.*\n/,
+  () => `export CAM_SIZE=${bashQuote("40GiB")}\n`
+);
+assert.equal(
+  preflightConfig(gibCameraConfig).issues.filter((issue) => issue.level === "error").length,
+  0
+);
+assert.equal(JSON.parse(migrateConfig(gibCameraConfig)).variables.CAM_SIZE, "40G");
+
+for (const optionalSizeName of [
+  "MUSIC_SIZE", "LIGHTSHOW_SIZE", "BOOMBOX_SIZE", "INCREASE_ROOT_SIZE"
+]) {
+  for (const optionalSize of ["", "0", "1K", "512M", "4G"]) {
+    const optionalSizeConfig = `${generated}export ${optionalSizeName}=${bashQuote(optionalSize)}\n`;
+    assert.equal(
+      preflightConfig(optionalSizeConfig).issues.filter((issue) => issue.level === "error").length,
+      0,
+      `${optionalSizeName}=${optionalSize} was rejected`
+    );
+    assert.equal(
+      JSON.parse(migrateConfig(optionalSizeConfig)).variables[optionalSizeName],
+      optionalSize
+    );
+  }
+  for (const optionalSize of [
+    "1", "1T", "1P", "4GB", "4GiB", "4g", "512m",
+    "1781G", "1822721M", "1866465281K", "999999999999G",
+    `${"9".repeat(5000)}G`
+  ]) {
+    const invalidOptionalSizeConfig = `${generated}export ${optionalSizeName}=${bashQuote(optionalSize)}\n`;
+    assert.match(
+      preflightConfig(invalidOptionalSizeConfig).issues.map((issue) => issue.message).join("\n"),
+      new RegExp(optionalSizeName)
+    );
+    assert.throws(() => migrateConfig(invalidOptionalSizeConfig), /failed preflight/);
+  }
+}
 
 const missingWifiCountry = generated.replace(/export WIFI_COUNTRY=.*\n/, "");
 assert.match(

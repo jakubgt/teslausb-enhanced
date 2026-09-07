@@ -58,6 +58,26 @@ DEBIAN_FRONTEND=noninteractive apt-get -y install \
   ntpsec ntpsec-ntpdig busybox-syslogd
 dpkg --purge rsyslog
 
+# -C alone is insufficient when /etc/syslog.conf contains file rules: BusyBox
+# handles those rules before its RAM ring. Keep local system logs in bounded
+# shared memory, including during maintenance when root temporarily becomes RW.
+function configure_ram_syslog() {
+  # This helper does not rely on errexit inherited from its caller. Stop at
+  # the first failed step rather than reporting a successful read-only setup.
+  install -d -m 0755 /etc/systemd/system/busybox-syslogd.service.d || return 1
+  install -o root -g root -m 0644 \
+    "${SOURCE_DIR:?}/setup/pi/busybox-syslogd-ram.conf" \
+    /etc/systemd/system/busybox-syslogd.service.d/30-teslausb-ram.conf || return 1
+  systemctl daemon-reload || return 1
+  systemctl restart busybox-syslogd.service || return 1
+}
+
+if ! configure_ram_syslog
+then
+  log_progress "STOP: could not configure RAM-only system logging"
+  exit 1
+fi
+
 log_progress "Configuring system..."
 
 # Add fsck.mode=auto, noswap and/or ro to end of cmdline.txt
@@ -161,22 +181,63 @@ then
   sed -i -r "s@(/\s+ext4\s+\S+)@\1,ro@" /etc/fstab
 fi
 
-if ! grep -w -q "/var/log" /etc/fstab
+function fstab_has_mountpoint() {
+  # Compare the mountpoint field exactly. grep -w also matches /var/log/nginx
+  # when asked for /var/log, silently skipping the required parent tmpfs.
+  awk -v target="$1" '$1 !~ /^#/ && $2 == target { found = 1 } END { exit !found }' "${2:-/etc/fstab}"
+}
+
+function ensure_ram_log_mount() {
+  local fstab="${1:-/etc/fstab}"
+  local candidate
+  local check_status
+  # An atomic replacement must not follow a symlink or silently split a
+  # hard-linked configuration file. Keep an existing exact mount untouched.
+  [ -f "$fstab" ] && [ ! -L "$fstab" ] || return 1
+  [ "$(stat -c %h -- "$fstab")" = 1 ] || return 1
+  if fstab_has_mountpoint /var/log "$fstab"
+  then
+    return 0
+  else
+    check_status=$?
+    [ "$check_status" -eq 1 ] || return 1
+  fi
+  candidate=$(mktemp -- "${fstab}.teslausb.XXXXXX") || return 1
+  # util-linux mount/findmnt expects parents before children in fstab even
+  # though systemd also generates the corresponding dependency ordering.
+  # Comments and other entries retain their original text and relative order.
+  if ! awk '
+    BEGIN { parent = "tmpfs /var/log tmpfs nodev,nosuid,size=32M,mode=0755 0 0" }
+    !inserted && $1 !~ /^#/ && $2 ~ /^\/var\/log\// { print parent; inserted = 1 }
+    { print }
+    END { if (!inserted) print parent }
+  ' "$fstab" > "$candidate" ||
+     ! chown --reference="$fstab" -- "$candidate" ||
+     ! chmod --reference="$fstab" -- "$candidate" ||
+     ! mv -fT -- "$candidate" "$fstab"
+  then
+    rm -f -- "$candidate"
+    return 1
+  fi
+}
+
+if ! ensure_ram_log_mount
 then
-  echo "tmpfs /var/log tmpfs nodev,nosuid 0 0" >> /etc/fstab
+  log_progress "STOP: could not safely add the parent /var/log RAM mount"
+  exit 1
 fi
 
-if ! grep -w -q "/var/tmp" /etc/fstab
+if ! fstab_has_mountpoint /var/tmp
 then
   echo "tmpfs /var/tmp tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
 
-if ! grep -w -q "/tmp" /etc/fstab
+if ! fstab_has_mountpoint /tmp
 then
   echo "tmpfs /tmp    tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
 
-if ! grep -w -q "/var/spool" /etc/fstab
+if ! fstab_has_mountpoint /var/spool
 then
   echo "tmpfs /var/spool tmpfs nodev,nosuid 0 0" >> /etc/fstab
 fi
@@ -189,7 +250,7 @@ then
   # image provides the traditional account instead.
   NTP_STATE_USER=ntp
 fi
-if ! grep -w -q "$NTP_STATE_DIR" /etc/fstab
+if ! fstab_has_mountpoint "$NTP_STATE_DIR"
 then
   if [ ! -d "$NTP_STATE_DIR" ]
   then

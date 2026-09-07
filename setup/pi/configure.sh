@@ -829,9 +829,11 @@ After=mutable.mount backingfiles.mount
 Type=simple
 ExecStart=/bin/bash /root/bin/archiveloop
 Restart=always
+RestartPreventExitStatus=78
 RestartSec=5s
 TimeoutStopSec=30s
-KillMode=mixed
+# Clock/snapshot workers need SIGTERM so they can restore services and release locks.
+KillMode=control-group
 RuntimeDirectory=teslausb
 RuntimeDirectoryMode=0755
 

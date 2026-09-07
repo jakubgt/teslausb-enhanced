@@ -1,0 +1,2 @@
+# Runtime scripts must remain executable on Linux after Windows checkouts.
+* text=auto eol=lf

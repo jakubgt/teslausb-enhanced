@@ -45,14 +45,34 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+SETUP_LOGFILE=/teslausb/teslausb-headless-setup.log
+
+function setup_progress () {
+  # The root and boot filesystems can intentionally be read-only at this
+  # point. Redirect stderr before opening the log so a failed append remains
+  # non-fatal and the message is still available in the boot journal.
+  printf '%s : %s\n' "$(date)" "$*" 2> /dev/null >> "$SETUP_LOGFILE" || true
+  printf '%s\n' "$*"
+}
+
 if [ -f /teslausb/run_once ]
 then
   install -o root -g root -m 0700 -- /teslausb/run_once "$RC_LOCAL_TMPDIR/run_once"
-  "$RC_LOCAL_TMPDIR/run_once" || echo "run_once failed"
-  mv /teslausb/run_once /teslausb/ran_once || true
+  if "$RC_LOCAL_TMPDIR/run_once"
+  then
+    if [ ! -e /teslausb/run_once ] && [ ! -L /teslausb/run_once ]
+    then
+      setup_progress "run_once succeeded and consumed its own trigger"
+    elif ! mv /teslausb/run_once /teslausb/ran_once
+    then
+      setup_progress "WARNING: run_once succeeded but could not be renamed; it will be retried"
+      exit 1
+    fi
+  else
+    setup_progress "run_once failed; leaving it in place for retry"
+    exit 1
+  fi
 fi
-
-SETUP_LOGFILE=/teslausb/teslausb-headless-setup.log
 
 function write_all_leds {
   for led in /sys/class/leds/*
@@ -72,11 +92,6 @@ function error_strobe() {
     write_all_leds 0 delay_on
     sleep 1
   done
-}
-
-function setup_progress () {
-  echo "$( date ) : $1" >> "$SETUP_LOGFILE" || echo "can't write to $SETUP_LOGFILE"
-  echo "$1"
 }
 
 function get_script () {

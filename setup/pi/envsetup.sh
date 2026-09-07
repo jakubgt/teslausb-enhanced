@@ -140,6 +140,61 @@ function validate_teslausb_hostname {
   fi
 }
 
+function normalize_cam_size {
+  local candidate="${CAM_SIZE:-0}"
+  local size_gib
+
+  if ! [[ "$candidate" =~ ^([1-9][0-9]*)(G|GiB)$ ]]
+  then
+    setup_config_message "STOP: CAM_SIZE must use an explicit G or GiB suffix, such as 40G."
+    return 1
+  fi
+  size_gib="${BASH_REMATCH[1]}"
+  if [ "${#size_gib}" -gt 4 ] ||
+     [ "$((10#$size_gib))" -lt 20 ] || [ "$((10#$size_gib))" -gt 1780 ]
+  then
+    setup_config_message "STOP: CAM_SIZE must be between 20G and 1780G; 40G is recommended."
+    return 1
+  fi
+  CAM_SIZE="${size_gib}G"
+}
+
+function validate_optional_storage_size {
+  local name="$1"
+  local candidate="${!name:-0}"
+  local amount
+  local maximum
+  local unit
+
+  if [ -z "$candidate" ] || [ "$candidate" = 0 ]
+  then
+    return 0
+  fi
+  if ! [[ "$candidate" =~ ^([1-9][0-9]*)([KMG])$ ]]
+  then
+    setup_config_message "STOP: $name must use an explicit K, M, or G suffix, such as 512M or 4G."
+    return 1
+  fi
+  amount="${BASH_REMATCH[1]}"
+  unit="${BASH_REMATCH[2]}"
+  if [ "${#amount}" -gt 10 ]
+  then
+    setup_config_message "STOP: $name must not exceed 1780G."
+    return 1
+  fi
+  amount=$((10#$amount))
+  case "$unit" in
+    K) maximum=1866465280 ;;
+    M) maximum=1822720 ;;
+    G) maximum=1780 ;;
+  esac
+  if [ "$amount" -gt "$maximum" ]
+  then
+    setup_config_message "STOP: $name must not exceed 1780G."
+    return 1
+  fi
+}
+
 function read_setup_variables {
   local selected_setup_file
   if [ -n "${setup_file+x}" ]
@@ -244,10 +299,19 @@ function read_setup_variables {
   SAMBA_USER=${SAMBA_USER:-pi}
   SSH_ALLOW_DEFAULT_PASSWORD=${SSH_ALLOW_DEFAULT_PASSWORD:-false}
   INCREASE_ROOT_SIZE=${INCREASE_ROOT_SIZE:-0}
-  export CAM_SIZE=${CAM_SIZE:-0}
-  export MUSIC_SIZE=${MUSIC_SIZE:-0}
-  export BOOMBOX_SIZE=${BOOMBOX_SIZE:-0}
-  export LIGHTSHOW_SIZE=${LIGHTSHOW_SIZE:-0}
+  CAM_SIZE=${CAM_SIZE:-0}
+  normalize_cam_size || return 1
+  MUSIC_SIZE=${MUSIC_SIZE:-0}
+  BOOMBOX_SIZE=${BOOMBOX_SIZE:-0}
+  LIGHTSHOW_SIZE=${LIGHTSHOW_SIZE:-0}
+  for teslausb_size_name in MUSIC_SIZE BOOMBOX_SIZE LIGHTSHOW_SIZE INCREASE_ROOT_SIZE
+  do
+    validate_optional_storage_size "$teslausb_size_name" || return 1
+  done
+  export CAM_SIZE
+  export MUSIC_SIZE
+  export BOOMBOX_SIZE
+  export LIGHTSHOW_SIZE
   export WIFI_COUNTRY=${WIFI_COUNTRY:-''}
   export DATA_DRIVE=${DATA_DRIVE:-''}
   export USE_EXFAT=${USE_EXFAT:-false}

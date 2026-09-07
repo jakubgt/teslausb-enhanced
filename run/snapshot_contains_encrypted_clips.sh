@@ -1,8 +1,8 @@
 #!/bin/bash -eu
 
-# Return 0 when a snapshot view contains TeslaCam/EncryptedClips, 1 when a
-# mounted/readable view is confirmed clear, and 2 when the result is unknown.
-# Only directory-entry existence is checked; clip contents are never opened.
+# Return 0 when a snapshot view contains a non-empty TeslaCam/EncryptedClips,
+# 1 when a mounted/readable view is confirmed clear, and 2 when the result is
+# unknown. Directory entries are checked, but clip contents are never opened.
 
 if [ "$#" -ne 1 ]
 then
@@ -13,6 +13,8 @@ fi
 snapshots_root="${SNAPSHOTS_ROOT:-/backingfiles/snapshots}"
 snapshot_mount_root="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
 snapshot_findmnt_command="${SNAPSHOT_FINDMNT_COMMAND:-findmnt}"
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+path_status_helper="${TESLAUSB_ENCRYPTED_PATH_STATUS_HELPER:-$script_dir/encrypted_clips_path_status.sh}"
 snapshot_name="$1"
 case "$snapshot_name" in
   snap-[0-9][0-9][0-9][0-9][0-9][0-9])
@@ -46,11 +48,18 @@ then
   snapshot_view="$snapshot_mount_root/$snapshot_name"
 fi
 
-if [ -e "$snapshot_view/TeslaCam/EncryptedClips" ] ||
-   [ -L "$snapshot_view/TeslaCam/EncryptedClips" ]
-then
-  exit 0
-fi
+encrypted_status=0
+"$path_status_helper" "$snapshot_view/TeslaCam/EncryptedClips" || encrypted_status=$?
+case "$encrypted_status" in
+  0)
+    exit 0
+    ;;
+  1)
+    ;;
+  *)
+    exit 2
+    ;;
+esac
 
 # Seeing TeslaCam proves the snapshot view was mounted/readable. If autofs or
 # the image failed, fail closed instead of treating the empty mount as clear.

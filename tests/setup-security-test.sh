@@ -12,6 +12,7 @@ configure_ssh="$repo_root/setup/pi/configure-ssh.sh"
 pi_gen_run="$repo_root/pi-gen-sources/00-teslausb-tweaks/00-run.sh"
 pi_gen_config="$repo_root/pi-gen-sources/pi-gen-config"
 release_image_verifier="$repo_root/tools/verify-release-image.sh"
+remountfs_rw="$repo_root/run/remountfs_rw"
 image_workflow="$repo_root/.github/workflows/build-image.yml"
 wpa_sample="$repo_root/pi-gen-sources/00-teslausb-tweaks/files/wpa_supplicant.conf.sample"
 
@@ -38,12 +39,267 @@ assert_absent() {
 # envsetup's hardware-specific main body.
 eval "$(sed -n '/^function validate_source_coordinates {$/,/^}$/p' "$envsetup")"
 eval "$(sed -n '/^function validate_teslausb_hostname {$/,/^}$/p' "$envsetup")"
+eval "$(sed -n '/^function normalize_cam_size {$/,/^}$/p' "$envsetup")"
+eval "$(sed -n '/^function validate_optional_storage_size {$/,/^}$/p' "$envsetup")"
 eval "$(sed -n '/^function lock_image_account () {$/,/^}$/p' "$pi_gen_run")"
+eval "$(sed -n '/^function normalize_boot_cmdline () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_source_bundle () {$/,/^}$/p' "$pi_gen_run")"
 eval "$(sed -n '/^function verify_tzupdate_checksum () {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^function set_timezone () {$/,/^}$/p' "$setup_script")"
+eval "$(sed -n '/^function fix_cmdline_txt_modules_load () {$/,/^}$/p' "$setup_script")"
+eval "$(sed -n '/^function check_optional_web_mount() {$/,/^}$/p' "$setup_script")"
 eval "$(sed -n '/^find_enabled_systemd_unit() {$/,/^}$/p' "$release_image_verifier")"
+eval "$(sed -n '/^verify_boot_cmdline() {$/,/^}$/p' "$release_image_verifier")"
 setup_config_message() { :; }
+
+# remountfs_rw must validate the /teslausb link separately from the filesystem
+# that contains it. Shell-function mocks keep the fixtures independent of the
+# host mount table and expose final state plus exact rollback ordering.
+function exercise_remountfs_rw () (
+  local link_destination="$1"
+  local boot_target="$2"
+  local fstab_boot_target="$3"
+  local failure_mode="$4"
+  local expected_result="$5"
+  local expected_calls="$6"
+  local expected_root_state="$7"
+  local expected_boot_state="$8"
+  local root_state="$9"
+  local boot_state="${10}"
+  local root_rw_attempted=false
+  local boot_rw_attempted=false
+  local mount_calls=
+
+  # shellcheck source=../run/remountfs_rw
+  source "$remountfs_rw"
+
+  # These command mocks are called indirectly by the sourced remount helper.
+  # shellcheck disable=SC2317
+  function readlink () {
+    if [ "$#" -ne 3 ] || [ "$1" != -f ] || [ "$2" != -- ] ||
+       [ "$3" != /teslausb ]
+    then
+      return 64
+    fi
+    [ "$failure_mode" != link-resolve ] || return 1
+    printf '%s\n' "$link_destination"
+  }
+
+  # shellcheck disable=SC2317
+  function findmnt () {
+    if [ "$#" -eq 3 ] && [ "$1" = --fstab ] && [ "$2" = -nro ] &&
+       [ "$3" = TARGET ]
+    then
+      [ "$failure_mode" != fstab-resolve ] || return 1
+      case "$fstab_boot_target" in
+        /) printf '/\n' ;;
+        /boot|/boot/firmware) printf '/\n%s\n' "$fstab_boot_target" ;;
+        *) printf '%s\n' "$fstab_boot_target" ;;
+      esac
+      return
+    fi
+    if [ "$#" -ne 4 ] || [ "$1" != -nro ] || [ "$3" != -T ]
+    then
+      return 64
+    fi
+    case "$2:$4" in
+      TARGET:/teslausb)
+        [ "$failure_mode" != active-resolve ] || return 1
+        printf '%s\n' "$boot_target"
+        ;;
+      OPTIONS:/)
+        if [ "$failure_mode" = root-verify-error ] &&
+           [ "$root_rw_attempted" = true ] && [ "$root_state" = rw ]
+        then
+          return 1
+        fi
+        printf '%s,relatime\n' "$root_state"
+        ;;
+      "OPTIONS:$boot_target")
+        case "$failure_mode" in
+          boot-verify-error|boot-rollback-failure)
+            if [ "$boot_rw_attempted" = true ] && [ "$boot_state" = rw ]
+            then
+              return 1
+            fi
+            ;;
+        esac
+        printf '%s,nosuid,nodev\n' "$boot_state"
+        ;;
+      *) return 64 ;;
+    esac
+  }
+
+  # shellcheck disable=SC2317
+  function mount () {
+    local action
+    local target
+
+    if [ "$#" -ne 3 ] || [ "$1" != -o ]
+    then
+      return 64
+    fi
+    case "$2" in
+      remount,rw) action=rw ;;
+      remount,ro) action=ro ;;
+      *) return 64 ;;
+    esac
+    target="$3"
+    mount_calls="${mount_calls}${mount_calls:+ }$action:$target"
+    case "$action:$target" in
+      rw:/)
+        root_rw_attempted=true
+        [ "$failure_mode" != root-mount ] || return 1
+        if [ "$failure_mode" = root-mount-after-change ]
+        then
+          root_state=rw
+          return 1
+        fi
+        [ "$failure_mode" = root-stays-ro ] || root_state=rw
+        [ "$boot_target" != / ] || boot_state="$root_state"
+        ;;
+      "rw:$boot_target")
+        boot_rw_attempted=true
+        case "$failure_mode" in
+          boot-mount|root-rollback-failure) return 1 ;;
+          boot-mount-after-change)
+            boot_state=rw
+            return 1
+            ;;
+        esac
+        [ "$failure_mode" = boot-stays-ro ] || boot_state=rw
+        ;;
+      ro:/)
+        [ "$failure_mode" != root-rollback-failure ] || return 1
+        root_state=ro
+        [ "$boot_target" != / ] || boot_state=ro
+        ;;
+      "ro:$boot_target")
+        [ "$failure_mode" != boot-rollback-failure ] || return 1
+        boot_state=ro
+        ;;
+      *) return 64 ;;
+    esac
+  }
+
+  if remount_filesystems_rw > /dev/null 2>&1
+  then
+    [ "$expected_result" = success ] ||
+      fail "remountfs_rw succeeded in $failure_mode fixture"
+  else
+    [ "$expected_result" = failure ] ||
+      fail "remountfs_rw failed in $failure_mode fixture"
+  fi
+  [ "$mount_calls" = "$expected_calls" ] ||
+    fail "remountfs_rw calls for $failure_mode were '$mount_calls', expected '$expected_calls'"
+  [ "$root_state" = "$expected_root_state" ] ||
+    fail "remountfs_rw left root $root_state in $failure_mode fixture"
+  [ "$boot_state" = "$expected_boot_state" ] ||
+    fail "remountfs_rw left boot $boot_state in $failure_mode fixture"
+)
+
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware none \
+  success 'rw:/ rw:/boot/firmware' rw rw ro ro
+exercise_remountfs_rw /boot /boot /boot none \
+  success 'rw:/ rw:/boot' rw rw ro ro
+exercise_remountfs_rw /boot/firmware /boot /boot none \
+  success 'rw:/ rw:/boot' rw rw ro ro
+exercise_remountfs_rw /boot / / none success 'rw:/' rw rw ro ro
+exercise_remountfs_rw /boot/firmware / / none success 'rw:/' rw rw ro ro
+exercise_remountfs_rw /boot / /boot none failure '' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot /boot/firmware none \
+  failure '' ro ro ro ro
+exercise_remountfs_rw /boot / /mutable none failure '' ro ro ro ro
+exercise_remountfs_rw /boot / / fstab-resolve failure '' ro ro ro ro
+exercise_remountfs_rw /mutable / / none failure '' ro ro ro ro
+exercise_remountfs_rw /boot / / link-resolve failure '' ro ro ro ro
+exercise_remountfs_rw /boot /mutable / none failure '' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware active-resolve \
+  failure '' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-mount \
+  failure 'rw:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-mount-after-change \
+  failure 'rw:/ ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-stays-ro \
+  failure 'rw:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-verify-error \
+  failure 'rw:/ ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-mount \
+  failure 'rw:/ rw:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-mount-after-change \
+  failure 'rw:/ rw:/boot/firmware ro:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-stays-ro \
+  failure 'rw:/ rw:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-verify-error \
+  failure 'rw:/ rw:/boot/firmware ro:/boot/firmware ro:/' ro ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-mount \
+  failure 'rw:/boot/firmware' rw ro rw ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-verify-error \
+  failure 'rw:/ ro:/' ro rw ro rw
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware none \
+  success '' rw rw rw rw
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware root-rollback-failure \
+  failure 'rw:/ rw:/boot/firmware ro:/' rw ro ro ro
+exercise_remountfs_rw /boot/firmware /boot/firmware /boot/firmware boot-rollback-failure \
+  failure 'rw:/ rw:/boot/firmware ro:/boot/firmware ro:/' ro rw ro ro
+
+optional_web_mount_checks=()
+checkmounted() {
+  optional_web_mount_checks+=("$1")
+}
+optional_backingfiles="$test_root/optional-backingfiles"
+mkdir -p "$optional_backingfiles"
+check_optional_web_mount "$optional_backingfiles"
+[ "${#optional_web_mount_checks[@]}" -eq 0 ] ||
+  fail 'CAM-only diagnostics required the optional web mount'
+for optional_disk in music_disk.bin lightshow_disk.bin boombox_disk.bin
+do
+  optional_web_mount_checks=()
+  touch "$optional_backingfiles/$optional_disk"
+  check_optional_web_mount "$optional_backingfiles"
+  [ "${#optional_web_mount_checks[@]}" -eq 1 ] ||
+    fail "diagnostics did not require the web mount for $optional_disk"
+  [ "${optional_web_mount_checks[0]}" = /var/www/html/fs ] ||
+    fail "diagnostics checked the wrong optional web mount for $optional_disk"
+  rm -- "$optional_backingfiles/$optional_disk"
+done
+
+for valid_cam_size in 20G 40G 40GiB 1780G
+do
+  CAM_SIZE="$valid_cam_size"
+  normalize_cam_size || fail "CAM_SIZE validator rejected $valid_cam_size"
+  [[ "$CAM_SIZE" =~ ^[0-9]+G$ ]] ||
+    fail "CAM_SIZE validator did not canonicalize $valid_cam_size"
+done
+for invalid_cam_size in 0 19G 1781G 40 40960M 1T 1P 40GB 40g 40GIB 9007199254740993G
+do
+  CAM_SIZE="$invalid_cam_size"
+  if normalize_cam_size
+  then
+    fail "CAM_SIZE validator accepted $invalid_cam_size"
+  fi
+done
+unset CAM_SIZE
+if normalize_cam_size
+then
+  fail "CAM_SIZE validator accepted an unset value"
+fi
+
+for optional_size in 0 1K 512M 4G 1780G 1822720M 1866465280K
+do
+  MUSIC_SIZE="$optional_size"
+  validate_optional_storage_size MUSIC_SIZE ||
+    fail "optional-size validator rejected $optional_size"
+done
+for invalid_optional_size in 1 1T 1P 4GB 4GiB 4g 512m 1781G 1822721M 1866465281K 999999999999G
+do
+  # shellcheck disable=SC2034 # Read indirectly by validate_optional_storage_size.
+  MUSIC_SIZE="$invalid_optional_size"
+  if validate_optional_storage_size MUSIC_SIZE
+  then
+    fail "optional-size validator accepted $invalid_optional_size"
+  fi
+done
 
 REPO=marcone
 BRANCH=release/v1.2.1
@@ -141,11 +397,162 @@ then
   fail 'image-account lock accepted a shadow file without the configured user'
 fi
 
+# The image build removes Raspberry Pi OS's consume-the-card resize request
+# and canonicalizes rootwait to one standalone token. Similar-looking values
+# remain data instead of being changed by substring matching.
+cmdline_rootfs="$test_root/cmdline-rootfs"
+mkdir -p "$cmdline_rootfs/boot/firmware"
+cmdline_file="$cmdline_rootfs/boot/firmware/cmdline.txt"
+printf '%s\n' \
+  'console=tty1 root=/dev/mmcblk0p2 resize rootwait foo=resize modules.load=legacy,g_ether modules-load=foo,dwc2,foo rootwait quiet' \
+  > "$cmdline_file"
+chmod 0640 "$cmdline_file"
+normalize_boot_cmdline "$cmdline_rootfs"
+[ "$(cat "$cmdline_file")" = \
+  'console=tty1 root=/dev/mmcblk0p2 foo=resize quiet rootwait modules-load=dwc2,g_ether,legacy,foo' ] ||
+  fail 'image boot command line was not normalized safely'
+[ "$(stat -c '%a' "$cmdline_file")" = 640 ] ||
+  fail 'image boot command line normalization changed its mode'
+normalized_cmdline_sum="$(sha256sum "$cmdline_file")"
+normalize_boot_cmdline "$cmdline_rootfs"
+[ "$(sha256sum "$cmdline_file")" = "$normalized_cmdline_sum" ] ||
+  fail 'image boot command line normalization is not idempotent'
+
+printf 'root=/dev/mmcblk0p2\nsecond=line\n' > "$cmdline_file"
+if normalize_boot_cmdline "$cmdline_rootfs" 2> /dev/null
+then
+  fail 'image boot command line normalizer accepted multiple lines'
+fi
+printf '\n' > "$cmdline_file"
+if normalize_boot_cmdline "$cmdline_rootfs" 2> /dev/null
+then
+  fail 'image boot command line normalizer accepted an empty line'
+fi
+printf '%s\n' 'root=/dev/mmcblk0p2 rootwait' > "$cmdline_file"
+normalize_boot_cmdline "$cmdline_rootfs"
+[ "$(cat "$cmdline_file")" = \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether' ] ||
+  fail 'image boot command line normalizer did not add a missing modules-load token'
+
+# The release verifier enforces the same invariant on the artifact, catching
+# future pi-gen changes before an unsafe image can be published.
+printf '%s\n' \
+  'root=/dev/mmcblk0p2 foo=resize rootwait modules-load=dwc2,g_ether,legacy,foo' \
+  > "$cmdline_file"
+verify_boot_cmdline "$cmdline_file" 'root=/dev/mmcblk0p2'
+for invalid_cmdline in \
+  'quiet rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 root=/dev/other rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/other rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 resize rootwait modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait=5 modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=g_ether,dwc2' \
+  'root=/dev/mmcblk0p2 rootwait modules.load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether modules-load=dwc2,g_ether' \
+  'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether,foo,foo'
+do
+  printf '%s\n' "$invalid_cmdline" > "$cmdline_file"
+  if (verify_boot_cmdline "$cmdline_file" 'root=/dev/mmcblk0p2') 2> /dev/null
+  then
+    fail "release verifier accepted unsafe cmdline.txt: $invalid_cmdline"
+  fi
+done
+printf 'root=/dev/mmcblk0p2 rootwait modules-load=dwc2,g_ether\r\n' > "$cmdline_file"
+if (verify_boot_cmdline "$cmdline_file" 'root=/dev/mmcblk0p2') 2> /dev/null
+then
+  fail 'release verifier accepted a CRLF cmdline.txt'
+fi
+
+# Runtime setup rewrites all legacy or duplicate module parameters as one
+# canonical token, retains unrelated modules, and puts dwc2 before g_ether.
+runtime_cmdline="$test_root/runtime-cmdline.txt"
+printf '%s\n' \
+  'console=tty1 modules.load=legacy,g_ether modules-load=foo,dwc2,foo quiet rootwait' \
+  > "$runtime_cmdline"
+# shellcheck disable=SC2034 # Read by the evaluated setup function.
+CMDLINE_PATH="$runtime_cmdline"
+setup_progress() { :; }
+fix_cmdline_txt_modules_load
+[ "$(cat "$runtime_cmdline")" = \
+  'console=tty1 quiet rootwait modules-load=dwc2,g_ether,legacy,foo' ] ||
+  fail 'runtime cmdline module parameters were not canonicalized safely'
+runtime_cmdline_sum="$(sha256sum "$runtime_cmdline")"
+fix_cmdline_txt_modules_load
+[ "$(sha256sum "$runtime_cmdline")" = "$runtime_cmdline_sum" ] ||
+  fail 'runtime cmdline module normalization is not idempotent'
+printf '%s\n' 'console=tty1 rootwait' > "$runtime_cmdline"
+fix_cmdline_txt_modules_load
+[ "$(cat "$runtime_cmdline")" = \
+  'console=tty1 rootwait modules-load=dwc2,g_ether' ] ||
+  fail 'runtime cmdline module parameter was not added when absent'
+printf 'console=tty1\nrootwait\n' > "$runtime_cmdline"
+if fix_cmdline_txt_modules_load 2> /dev/null
+then
+  fail 'runtime cmdline module normalizer accepted multiple lines'
+fi
+
+# Progress remains visible on stdout when /teslausb is read-only. Redirecting
+# stderr before opening the log prevents the shell's failed-redirection error
+# from aborting rc.local or obscuring the useful message.
+rc_setup_progress_function="$(
+  sed -n '/^function setup_progress () {$/,/^}$/p' "$rc_local"
+)"
+progress_log="$test_root/setup-progress.log"
+progress_stderr="$test_root/setup-progress.err"
+progress_stdout="$(
+  (
+    eval "$rc_setup_progress_function"
+    SETUP_LOGFILE="$progress_log"
+    setup_progress 'writable progress'
+  ) 2> "$progress_stderr"
+)"
+[ "$progress_stdout" = 'writable progress' ] ||
+  fail 'rc.local progress did not remain visible on stdout'
+grep -Fq ' : writable progress' "$progress_log" ||
+  fail 'rc.local progress did not append to a writable log'
+[ ! -s "$progress_stderr" ] ||
+  fail 'rc.local progress emitted an unexpected writable-log error'
+progress_stdout="$(
+  (
+    eval "$rc_setup_progress_function"
+    # shellcheck disable=SC2034 # Read by the evaluated rc.local function.
+    SETUP_LOGFILE="$test_root/missing-parent/setup-progress.log"
+    setup_progress 'read-only progress'
+  ) 2> "$progress_stderr"
+)"
+[ "$progress_stdout" = 'read-only progress' ] ||
+  fail 'rc.local lost progress when its log was unavailable'
+[ ! -s "$progress_stderr" ] ||
+  fail 'rc.local exposed a failed log redirection on stderr'
+
 assert_contains "$pi_gen_config" 'FIRST_USER_NAME=pi'
 assert_contains "$pi_gen_config" 'FIRST_USER_PASS=raspberry'
 assert_contains "$pi_gen_config" 'ENABLE_SSH=1'
 assert_absent "$rc_local" 'lock_fresh_image_default_password'
 assert_absent "$rc_local" 'passwd --lock'
+# A failed one-time repair remains on the boot partition so the next boot can
+# retry it; only a successful exit is allowed to consume the marker.
+# shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
+assert_contains "$rc_local" 'if "$RC_LOCAL_TMPDIR/run_once"'
+assert_contains "$rc_local" 'run_once succeeded and consumed its own trigger'
+assert_contains "$rc_local" 'run_once failed; leaving it in place for retry'
+assert_contains "$rc_local" 'WARNING: run_once succeeded but could not be renamed; it will be retried'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
+assert_absent "$rc_local" '"$RC_LOCAL_TMPDIR/run_once" || echo "run_once failed"'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
+run_once_call_line="$(grep -nF -- \
+  'if "$RC_LOCAL_TMPDIR/run_once"' "$rc_local" | cut -d: -f1)"
+run_once_rename_line="$(grep -nF -- \
+  'if ! mv /teslausb/run_once /teslausb/ran_once' "$rc_local" | cut -d: -f1)"
+if [ -z "$run_once_call_line" ] || [ -z "$run_once_rename_line" ] ||
+   [ "$run_once_call_line" -ge "$run_once_rename_line" ]
+then
+  fail 'rc.local does not gate run_once consumption on a successful exit'
+fi
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
 assert_contains "$rc_local" 'printf '\''%s:%s\n'\'' "$login_user" "$SSH_USER_PASSWORD" | chpasswd'
 # shellcheck disable=SC2016 # Assertions intentionally search literal shell source.
@@ -154,13 +561,18 @@ assert_contains "$rc_local" 'passwd --unlock "$login_user"'
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
 image_lock_line="$(grep -nF -- 'lock_image_account "${ROOTFS_DIR}" "${FIRST_USER_NAME:-pi}"' "$pi_gen_run" | cut -d: -f1)"
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
+cmdline_normalize_line="$(grep -nF -- 'normalize_boot_cmdline "${ROOTFS_DIR}"' "$pi_gen_run" | cut -d: -f1)"
+# shellcheck disable=SC2016 # The search string is intentionally literal source.
 ssh_enable_line="$(grep -nF -- 'touch "${ROOTFS_DIR}/boot/firmware/ssh"' "$pi_gen_run" | cut -d: -f1)"
-if [ -z "$image_lock_line" ] || [ -z "$ssh_enable_line" ]
+if [ -z "$image_lock_line" ] || [ -z "$cmdline_normalize_line" ] ||
+   [ -z "$ssh_enable_line" ]
 then
-  fail 'pi-gen account lock or SSH enable step was not found'
+  fail 'pi-gen account lock, command-line normalization, or SSH enable step was not found'
 fi
 [ "$image_lock_line" -lt "$ssh_enable_line" ] ||
   fail 'pi-gen enables SSH before locking the image account'
+[ "$cmdline_normalize_line" -lt "$ssh_enable_line" ] ||
+  fail 'pi-gen enables SSH before normalizing the boot command line'
 # shellcheck disable=SC2016 # The search string is intentionally literal source.
 assert_absent "$pi_gen_run" 'touch "${ROOTFS_DIR}/boot/ssh"'
 assert_contains "$pi_gen_run" 'systemctl disable rpi-resize.service'
@@ -177,6 +589,21 @@ assert_contains "$release_image_verifier" \
   'release image contains a legacy root-filesystem SSH marker'
 assert_contains "$release_image_verifier" \
   'automatic root partition resizing remains enabled'
+assert_contains "$release_image_verifier" \
+  'automatic root resize token remains in boot cmdline.txt'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt must contain exactly one rootwait token'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt must contain exactly one root token'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt root token does not match the verified root partition'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
+assert_contains "$release_image_verifier" \
+  'blkid -p -s PART_ENTRY_UUID -o value -- "$ROOT_PARTITION"'
+assert_contains "$release_image_verifier" \
+  'boot cmdline.txt must contain exactly one modules-load token'
+assert_contains "$release_image_verifier" \
+  'boot modules-load token must start with dwc2,g_ether'
 assert_contains "$release_image_verifier" \
   'dpkg database backup timer remains enabled'
 assert_contains "$release_image_verifier" \
@@ -196,6 +623,37 @@ assert_absent "$release_image_verifier" \
 assert_absent "$release_image_verifier" \
   'system-connections" \
   -mindepth 1 \( -type f -o -type l \) -print -quit 2> /dev/null || true'
+
+backing_files_line="$(grep -n '^create_usb_drive_backing_files$' "$setup_script" | cut -d: -f1)"
+recovery_install_line="$(grep -n '^install_transaction_recovery_service$' "$setup_script" | cut -d: -f1)"
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
+recovery_precondition_line="$(grep -nF -- \
+  '--mountpoint "$MUTABLE_MOUNTPOINT"' "$setup_script" | cut -d: -f1)"
+recovery_start_line="$(grep -nF -- \
+  'systemctl start teslausb-upgrade-recovery.service' "$setup_script" | cut -d: -f1)"
+if [ -z "$backing_files_line" ] || [ -z "$recovery_install_line" ] ||
+   [ -z "$recovery_precondition_line" ] || [ -z "$recovery_start_line" ]
+then
+  fail 'transaction-recovery setup ordering or mutable-mount precondition is missing'
+fi
+[ "$backing_files_line" -lt "$recovery_install_line" ] ||
+  fail 'transaction recovery is installed before the mutable filesystem exists'
+[ "$recovery_precondition_line" -lt "$recovery_start_line" ] ||
+  fail 'transaction recovery can start before checking the mutable filesystem'
+# shellcheck disable=SC2016 # Assertion intentionally searches literal shell source.
+assert_contains "$setup_script" \
+  '[[ ",$mutable_mount_options," != *,rw,* ]]'
+assert_contains "$setup_script" \
+  'the mutable filesystem must be mounted read-write before installing transaction recovery'
+encrypted_helper_install_line="$(grep -nF -- \
+  'copy_script run/encrypted_clips_path_status.sh /root/bin' "$setup_script" | cut -d: -f1)"
+encrypted_guard_install_line="$(grep -nF -- \
+  'copy_script run/guarded_snapshot.sh /root/bin' "$setup_script" | cut -d: -f1)"
+if [ -z "$encrypted_helper_install_line" ] || [ -z "$encrypted_guard_install_line" ] ||
+   [ "$encrypted_helper_install_line" -ge "$encrypted_guard_install_line" ]
+then
+  fail 'fresh setup does not install the encrypted-path helper before its guarded caller'
+fi
 # shellcheck disable=SC2016 # Assertions intentionally search literal workflow source.
 assert_contains "$image_workflow" \
   'sudo -n bash -- "${GITHUB_WORKSPACE}/tools/verify-release-image.sh"'

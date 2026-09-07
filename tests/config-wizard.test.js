@@ -38,6 +38,7 @@ const stageScriptPath = path.join(
 );
 
 const html = fs.readFileSync(wizardPath, "utf8");
+assert.doesNotMatch(html, /[^\x00-\x7f]/, "wizard must stay ASCII-only to avoid local-file mojibake");
 const scriptMatches = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
 const styleMatches = [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)];
 assert.equal(scriptMatches.length, 1, "wizard must have exactly one self-contained script");
@@ -46,7 +47,9 @@ const script = scriptMatches[0][1];
 const style = styleMatches[0][1];
 
 function sha256Base64(value) {
-  return crypto.createHash("sha256").update(value, "utf8").digest("base64");
+  // HTML parsing normalizes CRLF/CR newlines to LF before CSP hashes inline
+  // blocks. Normalize here too so the source test is checkout-platform safe.
+  return crypto.createHash("sha256").update(value.replace(/\r\n?/g, "\n"), "utf8").digest("base64");
 }
 
 const cspMatch = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
@@ -74,6 +77,12 @@ assert.ok(countrySelect, "wizard is missing the required Wi-Fi country selector"
 assert.match(countrySelect[0], /\srequired(?:\s|>)/i);
 assert.match(html, /<option value="" selected>/i, "country selector must start with an empty choice");
 assert.doesNotMatch(html, /<option value="[A-Z]{2}" selected>/i, "wizard must not guess the user's regulatory country");
+const cardCapacityInput = html.match(/<input id="cardCapacityGb"[^>]*>/);
+assert.ok(cardCapacityInput, "wizard is missing the advertised card-capacity input");
+assert.match(cardCapacityInput[0], /\stype="number"/i);
+assert.match(cardCapacityInput[0], /\smin="64"/i);
+assert.match(cardCapacityInput[0], /\smax="2000"/i);
+assert.match(cardCapacityInput[0], /\srequired(?:\s|>)/i);
 assert.doesNotMatch(
   script,
   /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon|localStorage|sessionStorage|indexedDB|serviceWorker)\b/,
@@ -109,6 +118,24 @@ assert.equal(wizard.countryCodes.includes("US"), true);
 assert.equal(wizard.countryCodes.includes("DE"), true);
 assert.equal(wizard.countryCodes.includes("UK"), false);
 assert.equal(wizard.countryCodes.includes("ZZ"), false);
+const expectedSafeCameraSizes = new Map([
+  [64, 40],
+  [128, 100],
+  [256, 210],
+  [400, 340],
+  [512, 440],
+  [1000, 880],
+  [1500, 1330],
+  [2000, 1780]
+]);
+for (const [advertisedCapacityGb, safeMaximumGiB] of expectedSafeCameraSizes) {
+  assert.equal(wizard.safeCameraMaxGiB(advertisedCapacityGb), safeMaximumGiB);
+}
+for (const unsupportedCapacity of [
+  "", "064", "1e3", "1000.0", "63", "2001", "2048", "not-a-size", null, undefined
+]) {
+  assert.throws(() => wizard.safeCameraMaxGiB(unsupportedCapacity), /64 to 2000/);
+}
 
 const generatedPasswords = new Set();
 for (let index = 0; index < 24; index += 1) {
@@ -126,6 +153,7 @@ const baseValues = {
   wifiCountry: "US",
   ssid: "Garage 2.4 GHz",
   wifiPassword: "private wifi password",
+  cardCapacityGb: "64",
   camSize: "40G",
   timeZone: "America/Chicago",
   archiveSystem: "none",
@@ -192,6 +220,8 @@ for (const documentValue of documents) {
   assert.match(documentValue.variables.WIFI_COUNTRY, /^[A-Z]{2}$/);
   assert.equal(documentValue.variables.TIME_ZONE, "America/Chicago");
   assert.equal(documentValue.variables.WEB_USERNAME, "teslausb");
+  assert.equal(Object.hasOwn(documentValue.variables, "CARD_CAPACITY_GB"), false);
+  assert.equal(Object.hasOwn(documentValue.variables, "ADVERTISED_CARD_CAPACITY_GB"), false);
   for (const forbidden of [
     "DATA_DRIVE", "REPO", "BRANCH", "TESLAFI_API_TOKEN", "TESSIE_API_TOKEN",
     "TELEGRAM_BOT_TOKEN", "NTFY_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"
@@ -206,6 +236,51 @@ assert.equal(documents[0].variables.TEMPERATURE_INTERVAL, 60);
 assert.equal(documents[0].variables.TEMPERATURE_POSTARCHIVE, true);
 assert.equal(documents.at(-1).variables.SSH_DISABLE_PASSWORD_AUTHENTICATION, true);
 assert.equal(Object.hasOwn(documents.at(-1).variables, "TEMPERATURE_CAUTION"), false);
+assert.equal(wizard.serializeDocument(documents[0]).includes("cardCapacity"), false);
+
+for (const [advertisedCapacityGb, safeMaximumGiB] of expectedSafeCameraSizes) {
+  const atCeiling = wizard.buildDocument({
+    ...baseValues,
+    cardCapacityGb: String(advertisedCapacityGb),
+    camSize: safeMaximumGiB + "GiB"
+  });
+  assert.equal(atCeiling.variables.CAM_SIZE, safeMaximumGiB + "G");
+  assert.throws(
+    () => wizard.buildDocument({
+      ...baseValues,
+      cardCapacityGb: String(advertisedCapacityGb),
+      camSize: (safeMaximumGiB + 1) + "G"
+    }),
+    new RegExp("must not exceed " + safeMaximumGiB + "G")
+  );
+}
+assert.equal(
+  wizard.buildDocument({...baseValues, camSize: "20G"}).variables.CAM_SIZE,
+  "20G"
+);
+assert.throws(() => wizard.buildDocument({...baseValues, camSize: "19G"}), /at least 20G/);
+for (const invalidCameraSize of [
+  "40",
+  "40960M",
+  "1T",
+  "1P",
+  "40GB",
+  "40g",
+  "40GIB"
+]) {
+  assert.throws(
+    () => wizard.buildDocument({...baseValues, camSize: invalidCameraSize}),
+    /explicit G or GiB suffix/
+  );
+}
+assert.throws(
+  () => wizard.buildDocument({...baseValues, camSize: "9007199254740993G"}),
+  /too large/
+);
+assert.throws(
+  () => wizard.buildDocument({...baseValues, cardCapacityGb: "2001"}),
+  /64 to 2000/
+);
 
 const redacted = wizard.serializeDocument(wizard.redactDocument(documents[1]));
 for (const secret of [
@@ -234,8 +309,8 @@ for (const validCountry of ["US", "DE"]) {
   );
 }
 assert.throws(() => wizard.buildDocument({...baseValues, timeZone: "auto"}), /named IANA/);
-assert.throws(() => wizard.buildDocument({...baseValues, webPassword: "password"}), /12–72|default value/);
-assert.throws(() => wizard.buildDocument({...baseValues, wifiPassword: "short"}), /8–63/);
+assert.throws(() => wizard.buildDocument({...baseValues, webPassword: "password"}), /12 to 72|default value/);
+assert.throws(() => wizard.buildDocument({...baseValues, wifiPassword: "short"}), /8 to 63/);
 
 function findPython() {
   const candidates = [process.env.TESLAUSB_TEST_PYTHON, "python3", "python"].filter(Boolean);

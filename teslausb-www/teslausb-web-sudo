@@ -151,6 +151,25 @@ run_reboot() {
 (( $# == 1 )) || usage_error
 
 case "$1" in
+  maintenance-health)
+    # The web worker cannot choose a helper, path, argument, or Python module.
+    # Pin every executable source component before crossing the root boundary.
+    helper=/var/www/html/cgi-bin/maintenance.py
+    for component in / /var /var/www /var/www/html /var/www/html/cgi-bin "$helper"
+    do
+      [[ ! -L "$component" ]] || exit 77
+      if [[ "$component" == "$helper" ]]
+      then
+        [[ -f "$component" ]] || exit 77
+      else
+        [[ -d "$component" ]] || exit 77
+      fi
+      ownership=$(stat -c '%u:%g:%a' -- "$component") || exit 77
+      [[ "$ownership" =~ ^0:0:([0-7]{3,4})$ ]] || exit 77
+      (( (8#${BASH_REMATCH[1]} & 022) == 0 )) || exit 77
+    done
+    exec /usr/bin/python3 -I "$helper" health
+    ;;
   diagnose)
     exec /root/bin/setup-teslausb diagnose
     ;;

@@ -12,31 +12,35 @@ BACKINGFILES_ROOT="${BACKINGFILES_ROOT:-/backingfiles}"
 SNAPSHOTS_ROOT="${SNAPSHOTS_ROOT:-$BACKINGFILES_ROOT/snapshots}"
 SNAPSHOT_MOUNT_ROOT="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
 CAM_DISK_IMAGE="${CAM_DISK_IMAGE:-$BACKINGFILES_ROOT/cam_disk.bin}"
-SNAPSHOT_FINDMNT_COMMAND="${SNAPSHOT_FINDMNT_COMMAND:-findmnt}"
-SNAPSHOT_POLICY_HELPER="${SNAPSHOT_POLICY_HELPER:-/root/bin/snapshot_contains_encrypted_clips.sh}"
-readonly SNAPSHOT_FINDMNT_COMMAND SNAPSHOT_POLICY_HELPER
+MUTABLE_TESLACAM="${MUTABLE_TESLACAM:-/mutable/TeslaCam}"
 
-if [ "${FLOCKED:-}" != "$0" ]
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=run/snapshot_lock.sh
+source "$script_dir/snapshot_lock.sh"
+acquire_snapshot_lock || exit "$?"
+
+resume_gadget=false
+if [ "${1:-}" = --resume-gadget ]
 then
-  mkdir -p "$SNAPSHOTS_ROOT"
-  if FLOCKED="$0" flock -E 99 "$SNAPSHOTS_ROOT" "$0" "$@" || case "$?" in
-  99) echo "failed to lock snapshots dir"
-      exit 99
-      ;;
-  *)  exit $?
-      ;;
-  esac
-  then
-    # success
-    exit 0
-  fi
+  resume_gadget=true
+  shift
 fi
+case "${1:-fsck}" in
+  fsck | nofsck) ;;
+  *) echo "invalid snapshot mode" >&2; exit 64 ;;
+esac
+resume_gadget_command=/root/bin/enable_gadget.sh
+if [ "${TESLAUSB_GUARDED_SNAPSHOT_TEST_OVERRIDES:-}" = 1 ]
+then
+  resume_gadget_command="${TESLAUSB_ENABLE_GADGET:-$resume_gadget_command}"
+fi
+readonly resume_gadget resume_gadget_command
 
 function linksnapshotfiletorecents {
   local file=$1
   local curmnt=$2
   local finalmnt=$3
-  local recents=/mutable/TeslaCam/RecentClips
+  local recents="$MUTABLE_TESLACAM/RecentClips"
 
   filename=${file##/*/}
   if [[ ! "$filename" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}.* ]]
@@ -53,16 +57,16 @@ function linksnapshotfiletorecents {
 }
 
 function make_links_for_snapshot {
-  local saved=/mutable/TeslaCam/SavedClips
-  local sentry=/mutable/TeslaCam/SentryClips
-  local track=/mutable/TeslaCam/TeslaTrackMode
-  if [ ! -d $saved ]
+  local saved="$MUTABLE_TESLACAM/SavedClips"
+  local sentry="$MUTABLE_TESLACAM/SentryClips"
+  local track="$MUTABLE_TESLACAM/TeslaTrackMode"
+  if [ ! -d "$saved" ]
   then
-    mkdir -p $saved
+    mkdir -p "$saved"
   fi
-  if [ ! -d $sentry ]
+  if [ ! -d "$sentry" ]
   then
-    mkdir -p $sentry
+    mkdir -p "$sentry"
   fi
   local curmnt="$1"
   local finalmnt="$2"
@@ -120,36 +124,26 @@ function snapshot {
   # before cleaning up old snapshots to maintain free space.
   local oldnum=-1
   local newnum=0
-  if stat "$SNAPSHOTS_ROOT"/snap-*/snap.bin > /dev/null 2>&1
+  local previous_dir
+  previous_dir=$(find "$SNAPSHOTS_ROOT" -mindepth 2 -maxdepth 2 -type f \
+    -name snap.bin -printf '%h\n' | LC_ALL=C sort | tail -n 1)
+  if [ -n "$previous_dir" ]
   then
-    oldnum=$(find "$SNAPSHOTS_ROOT"/snap-* -maxdepth 1 -name snap.bin | sort | tail -1 | tr -c -d '[:digit:]' | sed 's/^0*//' )
+    local previous_name=${previous_dir##*/}
+    [[ "$previous_name" =~ ^snap-[0-9]{6}$ ]] || return 64
+    oldnum=$((10#${previous_name#snap-}))
     newnum=$((oldnum + 1))
   fi
   local oldname
   local newsnapdir
   oldname=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$oldnum")/snap.bin
 
-  # check that the previous snapshot is complete
+  # Incomplete snapshots belong to low-space cleanup. Inspecting/removing one
+  # here could prolong the window during which the live USB drive is offline.
   if [ ! -e "${oldname}.toc" ] && [ "$oldnum" != "-1" ]
   then
-    local incomplete_name
-    local incomplete_policy_status=0
-    incomplete_name=$(basename -- "$(dirname -- "$oldname")")
-    env SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
-      SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
-      SNAPSHOT_FINDMNT_COMMAND="$SNAPSHOT_FINDMNT_COMMAND" \
-      "$SNAPSHOT_POLICY_HELPER" "$incomplete_name" || incomplete_policy_status=$?
-    if [ "$incomplete_policy_status" -eq 1 ]
-    then
-      log "previous snapshot was incomplete and confirmed clear, deleting"
-      rm -rf -- "$(dirname -- "$oldname")"
-      newnum=$((oldnum))
-      oldnum=$((oldnum - 1))
-      oldname=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$oldnum")/snap.bin
-    else
-      log "preserving incomplete snapshot $incomplete_name because EncryptedClips is present or its status is unknown"
-      oldname=
-    fi
+    log "preserving incomplete previous snapshot for guarded low-space cleanup"
+    oldname=
   fi
 
   newsnapdir=$SNAPSHOTS_ROOT/snap-$(printf "%06d" "$newnum")
@@ -169,31 +163,42 @@ function snapshot {
     mkdir -p "$SNAPDIR"
   fi
 
-  if [ -e "$newsnapname" ]
+  if [ -e "$newsnapname" ] || [ -L "$newsnapname" ]
   then
-    umount "$newsnapmnt" || true
-    rm -rf "$newsnapname"
+    log "refusing to overwrite an existing snapshot image"
+    return 1
   fi
 
   # make a copy-on-write snapshot of the current image
   cp --reflink=always "$CAM_DISK_IMAGE" "$newsnapname"
   # at this point we have a snapshot of the cam image, which is completely
   # independent of the still in-use image exposed to the car
+  if [ "$resume_gadget" = true ]
+  then
+    "$resume_gadget_command"
+    log "USB recording restored; finishing immutable snapshot processing"
+  fi
 
   # create loopback and scan the partition table, this will create an additional
   # loop device in addition to the main loop device, e.g. /dev/loop0 and
   # /dev/loop0p1
 
-  # Use -p repair arg. It works with vfat and exfat.
   LOOP=$(losetup_find_show -P "$newsnapname")
   PARTLOOP=${LOOP}p1
 
+  local check_status=0
+  local detach_status=0
   if [ "$1" = "fsck" ]
   then
-    fsck "$PARTLOOP" -- -p || true
+    python3 /root/bin/check-filesystem.py "$PARTLOOP" || check_status=$?
   fi
 
-  losetup -d "$LOOP"
+  losetup -d "$LOOP" || detach_status=$?
+  if [ "$check_status" -ne 0 ] || [ "$detach_status" -ne 0 ]
+  then
+    log "Snapshot filesystem check or loop cleanup failed (check=$check_status, detach=$detach_status); preserving incomplete snapshot without indexing"
+    return 69
+  fi
 
   # if needed, manually mount the image and check/fix timestamps
   if [ "$(getconf LONG_BIT)" = "32" ] && [ "$(. /etc/os-release && echo "${VERSION_ID:-}")" = "12" ]
@@ -238,7 +243,7 @@ function snapshot {
     mv "${newsnapname}.toc_" "${newsnapname}.toc"
   else
     log "new snapshot is identical to previous one, discarding"
-    if ! /root/bin/release_snapshot.sh "$newsnapdir"
+    if ! "$script_dir/release_snapshot.sh" "$newsnapdir"
     then
       log "snapshot release was refused; retaining the snapshot"
       if [ ! -e "$newsnapdir/mnt" ] && [ ! -L "$newsnapdir/mnt" ]

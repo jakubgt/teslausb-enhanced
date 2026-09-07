@@ -1,11 +1,241 @@
 #!/bin/bash
 
-echo "Making root partition writeable"
-mount / -o remount,rw
+function resolve_teslausb_boot_mount () {
+  local boot_mount
+  local boot_path
+  local fstab_has_root=false
+  local fstab_separate_boot=
+  local fstab_target
+  local fstab_targets
 
-if findmnt /teslausb > /dev/null
+  if ! boot_path="$(readlink -f -- /teslausb 2> /dev/null)"
+  then
+    echo "STOP: unable to resolve the /teslausb link." >&2
+    return 1
+  fi
+  case "$boot_path" in
+    /boot|/boot/firmware) ;;
+    *)
+      echo "STOP: /teslausb links to unexpected path $boot_path." >&2
+      return 1
+      ;;
+  esac
+
+  if ! boot_mount="$(findmnt -nro TARGET -T /teslausb 2> /dev/null)"
+  then
+    echo "STOP: unable to resolve the boot filesystem behind /teslausb." >&2
+    return 1
+  fi
+
+  # Generic installs may keep /boot on the root filesystem. Accept only a
+  # mount that can legitimately contain the validated link destination.
+  case "$boot_path:$boot_mount" in
+    /boot:/|/boot:/boot|/boot/firmware:/|/boot/firmware:/boot|/boot/firmware:/boot/firmware)
+      ;;
+    *)
+      echo "STOP: /teslausb resolves to unexpected mount $boot_mount." >&2
+      return 1
+      ;;
+  esac
+
+  if [ "$boot_mount" != "$boot_path" ]
+  then
+    # findmnt cannot walk parent paths for --fstab, so inspect its stable raw
+    # TARGET column and determine whether fstab declares a more-specific boot
+    # mount than the active filesystem containing the link destination.
+    if ! fstab_targets="$(findmnt --fstab -nro TARGET 2> /dev/null)"
+    then
+      echo "STOP: unable to confirm the configured boot mount for /teslausb." >&2
+      return 1
+    fi
+    while IFS= read -r fstab_target
+    do
+      case "$fstab_target" in
+        /) fstab_has_root=true ;;
+      esac
+      case "$boot_path:$boot_mount:$fstab_target" in
+        /boot:/:/boot|/boot/firmware:/:/boot|/boot/firmware:/:/boot/firmware|/boot/firmware:/boot:/boot/firmware)
+          fstab_separate_boot="$fstab_target"
+          ;;
+      esac
+    done <<< "$fstab_targets"
+    if [ -n "$fstab_separate_boot" ]
+    then
+      echo "STOP: $fstab_separate_boot is configured as a separate boot mount but is not mounted." >&2
+      return 1
+    fi
+    if [ "$boot_mount" = / ] && [ "$fstab_has_root" != true ]
+    then
+      echo "STOP: fstab does not confirm that the boot files belong to the root mount." >&2
+      return 1
+    fi
+  fi
+
+  printf '%s\n' "$boot_mount"
+}
+
+function filesystem_rw_state () {
+  local has_ro=false
+  local has_rw=false
+  local mount_options
+  local target="$1"
+
+  if ! mount_options="$(findmnt -nro OPTIONS -T "$target" 2> /dev/null)" ||
+     [ -z "$mount_options" ] || [[ "$mount_options" == *$'\n'* ]]
+  then
+    return 1
+  fi
+
+  case ",$mount_options," in
+    *,ro,*) has_ro=true ;;
+  esac
+  case ",$mount_options," in
+    *,rw,*) has_rw=true ;;
+  esac
+
+  [ "$has_ro" != "$has_rw" ] || return 1
+  if [ "$has_rw" = true ]
+  then
+    printf 'rw\n'
+  else
+    printf 'ro\n'
+  fi
+}
+
+function restore_mount_read_only () {
+  local current_state
+  local target="$1"
+
+  # A failed read-write remount may not have changed the mount at all. Avoid a
+  # redundant remount in that case, but recover conservatively if its state
+  # cannot be read.
+  if current_state="$(filesystem_rw_state "$target")" &&
+     [ "$current_state" = ro ]
+  then
+    return 0
+  fi
+
+  echo "Restoring $target to read-only" >&2
+  if ! mount -o remount,ro "$target"
+  then
+    echo "STOP: failed to restore $target to read-only." >&2
+    return 1
+  fi
+  if ! current_state="$(filesystem_rw_state "$target")" ||
+     [ "$current_state" != ro ]
+  then
+    echo "STOP: $target is not read-only after rollback." >&2
+    return 1
+  fi
+}
+
+function rollback_changed_mounts () {
+  local boot_mount="$1"
+  local restore_boot="$2"
+  local restore_root="$3"
+  local rollback_status=0
+
+  # Roll back in reverse order so the boot filesystem is protected before the
+  # root filesystem. Continue restoring root even if restoring boot fails.
+  if [ "$restore_boot" = true ] &&
+     ! restore_mount_read_only "$boot_mount"
+  then
+    rollback_status=1
+  fi
+  if [ "$restore_root" = true ] && ! restore_mount_read_only /
+  then
+    rollback_status=1
+  fi
+  return "$rollback_status"
+}
+
+function fail_remount_and_rollback () {
+  local message="$1"
+  local boot_mount="$2"
+  local restore_boot="$3"
+  local restore_root="$4"
+
+  echo "$message" >&2
+  if ! rollback_changed_mounts "$boot_mount" "$restore_boot" "$restore_root"
+  then
+    echo "STOP: filesystem rollback was incomplete; reboot before making changes." >&2
+  fi
+  return 1
+}
+
+function remount_filesystems_rw () {
+  local boot_mount
+  local boot_initial_state
+  local restore_boot=false
+  local restore_root=false
+  local root_initial_state
+
+  boot_mount="$(resolve_teslausb_boot_mount)" || return 1
+  if ! root_initial_state="$(filesystem_rw_state /)"
+  then
+    echo "STOP: unable to determine whether the root filesystem is writable." >&2
+    return 1
+  fi
+  if [ "$boot_mount" = / ]
+  then
+    boot_initial_state="$root_initial_state"
+  elif ! boot_initial_state="$(filesystem_rw_state "$boot_mount")"
+  then
+    echo "STOP: unable to determine whether $boot_mount is writable." >&2
+    return 1
+  fi
+
+  if [ "$root_initial_state" = ro ]
+  then
+    echo "Making root partition writeable"
+    restore_root=true
+    if ! mount -o remount,rw /
+    then
+      fail_remount_and_rollback \
+        "STOP: failed to remount the root filesystem read-write." \
+        "$boot_mount" "$restore_boot" "$restore_root"
+      return 1
+    fi
+    if [ "$(filesystem_rw_state /)" != rw ]
+    then
+      fail_remount_and_rollback \
+        "STOP: the root filesystem is still read-only after remount." \
+        "$boot_mount" "$restore_boot" "$restore_root"
+      return 1
+    fi
+  else
+    echo "Root partition is already writeable"
+  fi
+
+  if [ "$boot_mount" = / ]
+  then
+    echo "Boot files share the root partition"
+  elif [ "$boot_initial_state" = ro ]
+  then
+    echo "Making $boot_mount partition writeable"
+    restore_boot=true
+    if ! mount -o remount,rw "$boot_mount"
+    then
+      fail_remount_and_rollback \
+        "STOP: failed to remount $boot_mount read-write." \
+        "$boot_mount" "$restore_boot" "$restore_root"
+      return 1
+    fi
+    if [ "$(filesystem_rw_state "$boot_mount")" != rw ]
+    then
+      fail_remount_and_rollback \
+        "STOP: $boot_mount is still read-only after remount." \
+        "$boot_mount" "$restore_boot" "$restore_root"
+      return 1
+    fi
+  else
+    echo "$boot_mount partition is already writeable"
+  fi
+
+  echo "Done. Make any changes needed, and reboot the Pi when ready."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]
 then
-  echo "Making boot/firmware partition writeable"
-  mount /teslausb -o remount,rw
+  remount_filesystems_rw
 fi
-echo "Done. Make any changes needed, and reboot the Pi when ready."

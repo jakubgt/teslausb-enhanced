@@ -4,13 +4,13 @@ TeslaUSB Enhanced turns a Raspberry Pi Zero 2 W into a Tesla-compatible USB
 drive with automatic archiving, music storage, a local dashboard, recovery
 tools, and a safer first-boot experience.
 
-This is a private, unofficial derivative of
+This is an unofficial derivative of
 [`marcone/teslausb`](https://github.com/marcone/teslausb). It keeps the upstream
 TeslaUSB workflow while adding a ready-to-flash image, an offline configuration
 wizard, stricter security boundaries, verified archive transfers, and guarded
 recovery and upgrade tools.
 
-**Project links:** [current image](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4)
+**Project links:** [rc.5 image target](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5)
 · [all releases](https://github.com/jakubgt/teslausb-enhanced/releases)
 · [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
@@ -18,25 +18,34 @@ recovery and upgrade tools.
 > The current image is a prerelease for early testing. Back up your existing
 > configuration, keys, and recordings before flashing it.
 
+> [!CAUTION]
+> Do not use the published `v1.2.0-rc.4` image for a fresh setup. Its boot
+> command line still contains Raspberry Pi OS's standalone `resize` trigger,
+> which can consume the card space TeslaUSB needs. This source targets rc.5;
+> wait for the verified rc.5 image and checksum after these changes are merged.
+
 ## Current release
 
 | Item | Status |
 | --- | --- |
-| Image release | [`v1.2.0-rc.4`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.4) — published prerelease |
+| Image release target | [`v1.2.0-rc.5`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5) — built and published after the rc.5 source is merged and verified |
 | Latest stable source release | [`v1.1.0`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0) — source only, no downloadable image |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
-| Image download | [`teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz) |
-| Image SHA-256 | `a96492c6662cd010b5b95d3eb290996be1bd2f9d423233e0d4437efdce440210` |
-| Source commit | [`6de23a6`](https://github.com/jakubgt/teslausb-enhanced/commit/6de23a6d1643b93a37eeecd3fd23766a68c5d1b8) |
-| Hardware validation | Automated image verification passed; testing of the exact published bytes on a physical Zero 2 W and Tesla is still pending |
+| Image download | [`teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz) |
+| Image SHA-256 | Use the `.sha256` asset generated for the exact rc.5 image; do not reuse the rc.4 digest |
+| Source commit | Recorded in the rc.5 image metadata after the verified build |
+| Hardware validation | Automated verification must pass before rc.5 publication; physical Zero 2 W and Tesla testing of the exact published bytes is still required |
 
-The repository and release are private. Download the image while signed in to
-an authorized GitHub account; Raspberry Pi Imager cannot authenticate to a
-private release URL itself.
+Public GitHub release assets can be downloaded without signing in. If you are
+using a private mirror or an access-restricted release, download with an
+authorized account first; Raspberry Pi Imager cannot authenticate to a private
+release URL itself.
 
 GitHub currently labels `v1.1.0` as **Latest**, but that release is source-only.
-Use the `v1.2.0-rc.4` prerelease above for the flashable image.
+Use the rc.5 prerelease only after its image and checksum assets have been
+published. The rc.4 image remains available for provenance, not for a fresh
+flash.
 
 ## What this fork adds
 
@@ -51,7 +60,7 @@ Use the `v1.2.0-rc.4` prerelease above for the flashable image.
 | Application upgrades | Content-addressed releases, checksum validation, atomic activation, health checks, automatic recovery, and rollback | A failed managed application update can return to the previous working release |
 | Encrypted recordings | `EncryptedClips` detection and warnings with guarded snapshot, cleanup, archive, and viewer boundaries | Opaque encrypted recordings stay outside built-in processing instead of being treated as normal clips |
 | Security | Web authentication by default, same-origin POST actions, narrowed nginx/CGI/sudo boundaries, fail-closed drive selection, and pinned optional downloads | Reduces accidental exposure, command injection, and destructive-drive mistakes |
-| Pi Zero 2 W safeguards | Locked image account, no embedded user credentials, current boot/SSH layout, disabled resize/swap services, and exact embedded setup source | First boot is deterministic and does not need a private GitHub token |
+| Pi Zero 2 W safeguards | Locked image account, no embedded user credentials, verified `rootwait`/USB-module boot tokens, removed `resize` trigger, disabled resize/swap services, and exact embedded setup source | First boot is deterministic and does not need a private GitHub token |
 
 For the complete version-by-version record, see the
 [`CHANGELOG`](CHANGELOG.md).
@@ -71,20 +80,53 @@ For the complete version-by-version record, see the
 The card sizes above are project recommendations, not Raspberry Pi hardware
 limits.
 
+### Choose a safe camera size
+
+`CAM_SIZE` is the size of the virtual drive shown to the car. The card's label
+uses decimal GB, but TeslaUSB's `G` suffix means binary GiB. Do not copy the
+printed card capacity into `CAM_SIZE`: for example, `500G` is not safe on a
+512 GB card. The offline wizard asks for the advertised card capacity, enforces
+the matching ceiling below, and keeps that capacity choice out of the generated
+JSON.
+
+| Capacity printed on card | Maximum `CAM_SIZE` |
+| ---: | ---: |
+| 64 GB | `40G` |
+| 128 GB | `100G` |
+| 256 GB | `210G` |
+| 512 GB | `440G` |
+| 1 TB (1000 GB) | `880G` |
+| 1.5 TB (1500 GB) | `1330G` |
+| 2 TB (2000 GB) | `1780G` |
+
+These are safety ceilings, not targets. They use the conservative rule
+`floor-to-10(0.90 * advertised decimal GB - 15)`. `CAM_SIZE` must be at least
+`20G`; `40G` remains the recommended starting value and leaves much more room
+for filesystem metadata, copy-on-write snapshots, and normal operation. If you
+configure `MUSIC_SIZE`, `LIGHTSHOW_SIZE`, `BOOMBOX_SIZE`, or
+`INCREASE_ROOT_SIZE`, subtract those allocations from the table ceiling before
+choosing `CAM_SIZE`.
+
+The table limits storage allocation, not filesystem-check memory. Large FAT32
+volumes can require more RAM to check than a Zero 2 W has available. The runtime
+checks an unmounted filesystem read-only first and repairs only when needed,
+then requires a clean verification pass. On boards with 1 GiB RAM or less it
+uses a temporary, bounded compressed-RAM device during the check; it does not
+create an SD-card swap file or enable persistent swap services. A failed live
+drive check stops recording startup instead of repeatedly retrying or reporting
+success. Do not reformat a populated card to resolve a checker-memory error.
+
 ### Flash and configure
 
-1. Download the current [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz)
-   and its [checksum file](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz.sha256).
-2. Verify the image digest before flashing. It must equal:
-
-   ```text
-   a96492c6662cd010b5b95d3eb290996be1bd2f9d423233e0d4437efdce440210
-   ```
+1. After rc.5 is published, download its [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz)
+   and [checksum file](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz.sha256).
+2. Verify the image digest before flashing. It must exactly match the digest in
+   that rc.5 checksum asset.
 
    On Windows PowerShell:
 
    ```powershell
-   Get-FileHash .\teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
+   Get-FileHash .\teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
    ```
 
 3. In Raspberry Pi Imager, choose **Use custom**, select the downloaded
@@ -109,7 +151,7 @@ LED stages, troubleshooting, and what happens during first boot.
 ## Offline configuration wizard
 
 The recommended helper is `teslausb_config_wizard.html`, included on the
-current `v1.2.0-rc.4` image's boot partition. It:
+rc.5 image's boot partition. It:
 
 - runs entirely in the browser with no network requests, analytics, remote
   scripts, form submission, or browser storage;
@@ -127,6 +169,7 @@ private, retain only an encrypted backup, and remove it from shared computers.
 | Setting | Recommended starting value |
 | --- | --- |
 | Camera image | `CAM_SIZE: "40G"` |
+| Card-size safety | Enter the capacity printed on the card; keep `CAM_SIZE` at or below the calculated ceiling |
 | Archive | `ARCHIVE_SYSTEM: "none"` until local operation is confirmed |
 | RecentClips archive | `ARCHIVE_RECENTCLIPS: false` |
 | Wi-Fi country | Explicit physical-location ISO country code; no default is guessed (`GB`, not `UK`) |
@@ -191,6 +234,26 @@ See [USB gadget repair](doc/USBGadgetRepair.md).
 
 ## Upgrading an existing installation
 
+The September 2026 source updates add a day-scoped viewer, **Refresh recordings**,
+snapshot/library freshness labels, and storage/clock/recovery evidence in
+**Tools > Advanced maintenance**. Refresh reads the existing index; it does not
+force a snapshot, disconnect USB, or make still-live footage appear immediately.
+Failed refreshes retain the previous library and identify it as not refreshed.
+
+The health panel distinguishes backing-card free space from the car's virtual
+camera drive, which it does not inspect while recording. It shows the cleanup
+reserve, finalized snapshot metadata, and completed-release evidence when
+available. Recovery-backup allocation can include shared blocks: it is not a
+promise of reclaimable space, and the panel does not delete backups.
+
+For viewer controls, cleanup-delay and independent-clock corrections, logging
+and connection-status semantics, and a safe on-device test plan, see
+[runtime maintenance and verification](doc/RuntimeMaintenance.md). These changes
+extend the unpublished rc.5 candidate; a source PR or merge is not an image
+release or an automatic update of an installed Pi. They are not present in the
+rc.4 image. A complete near-full-card rollover and the next-boot logging changes
+still require their own on-device verification.
+
 - Do **not** perform an in-place Bookworm-to-Trixie or 32-bit-to-64-bit OS
   upgrade. Back up the private configuration and keys, flash a clean arm64
   Trixie image, and restore through the JSON configuration workflow.
@@ -198,11 +261,12 @@ See [USB gadget repair](doc/USBGadgetRepair.md).
   and `/root/bin` entrypoints. They do not roll back OS packages, firmware,
   partitions, configuration, credentials, archive data, or separately managed
   third-party binaries.
-- This repository is private. The image contains the exact setup source needed
-  for first boot, but future source downloads do not receive an embedded GitHub
-  credential, and this fork does not yet provide a signed release-asset updater.
-  Prefer a new verified image unless you have deliberately configured a trusted
-  authenticated update path.
+- The image contains the exact setup source needed for first boot, without an
+  embedded GitHub credential. Public sources can be fetched anonymously;
+  private mirrors still require an explicitly configured authenticated path.
+  This fork does not yet provide a signed release-asset updater. Prefer a new
+  verified image unless you have deliberately selected and verified the exact
+  runtime update source.
 
 See [transactional upgrades](doc/TransactionalUpgrades.md) for verification,
 recovery, rollback, and the precise transaction boundary.
@@ -217,13 +281,14 @@ Before publication, the release pipeline checks:
 - a locked default account and absence of active setup credentials;
 - absence of SSH host keys, initialized machine identity, and random seed;
 - the exact embedded source manifest and installed package inventory;
-- disabled resize, swap, and package-backup services required by this image;
+- removal of the standalone `resize` boot trigger, exact `rootwait` and USB
+  module tokens, and disabled resize, swap, and package-backup services;
 - XZ stream integrity, SHA-256 manifests, and uploaded GitHub asset digests.
 
 The release also provides
-[build metadata](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.image-metadata.json)
+[build metadata](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.image-metadata.json)
 and an
-[installed-package manifest](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.4/teslausb-enhanced-v1.2.0-rc.4-pi-zero-2w-arm64-trixie.packages.tsv).
+[installed-package manifest](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.packages.tsv).
 
 These checks are extensive, but they do not replace a complete physical test
 of first boot, 2.4 GHz Wi-Fi, web authentication, USB enumeration, reboot,
@@ -275,6 +340,12 @@ Pull requests and issue reports are welcome. Keep changes focused, preserve the
 security and fail-closed boundaries, and include relevant tests or exact
 reproduction steps. Never commit real TeslaUSB configuration files, passwords,
 tokens, private keys, VINs, or archive credentials.
+
+Public issues and attachments can also expose Wi-Fi names, private IPs, personal
+paths, locations, and account details. Review and redact reports locally; share
+only the necessary sanitized excerpt, never a raw card image or real setup
+file. For sensitive security reports or an accidental credential exposure, see
+[the security and privacy reporting guidance](SECURITY.md).
 
 ## License and names
 

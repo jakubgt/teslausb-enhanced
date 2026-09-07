@@ -18,6 +18,11 @@ then
   exit 64
 fi
 
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=run/snapshot_lock.sh
+source "$script_dir/snapshot_lock.sh"
+acquire_snapshot_lock || exit "$?"
+
 policy_status=0
 env SNAPSHOTS_ROOT="$SNAPSHOTS_ROOT" \
   SNAPSHOT_MOUNT_ROOT="$SNAPSHOT_MOUNT_ROOT" \
@@ -36,43 +41,76 @@ case "$policy_status" in
     ;;
 esac
 
-log "releasing snapshot $SNAPSHOTS_ROOT/$NAME"
-IMAGE="$SNAPSHOTS_ROOT/$NAME/snap.bin"
-umount "$IMAGE" || true
-
-# delete the snapshot folders
-rm -rf -- "$SNAPSHOTS_ROOT/$NAME"
-
-# Delete obsolete links, except literal or aliased EncryptedClips paths. Link
-# targets are resolved only to classify their directory path; contents are not
-# opened.
+# Select only links to this exact snapshot before resolving any target. Reading
+# every historical link with separate readlink/realpath processes made each
+# release increasingly slow as history grew. find emits both fields in one
+# walk; unrelated links never trigger a resolver or an autofs mount.
+obsolete_links=()
 if [ -d "$MUTABLE_TESLACAM" ] && [ ! -L "$MUTABLE_TESLACAM" ]
 then
-  while IFS= read -r -d '' mutable_link
+  while IFS= read -r -d '' mutable_link && IFS= read -r -d '' link_target
   do
     case "$mutable_link" in
       */EncryptedClips | */EncryptedClips/*)
         continue
         ;;
     esac
+    case "$link_target" in
+      */EncryptedClips | */EncryptedClips/* | */../* | */./*)
+        continue
+        ;;
+      "$SNAPSHOTS_ROOT/$NAME/mnt/"* | "$SNAPSHOT_MOUNT_ROOT/$NAME/"*)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    # Classify aliases while the read-only snapshot still exists. Do not follow
+    # arbitrary relative/custom links and never inspect recording contents.
     resolved_link=$(realpath -e -- "$mutable_link" 2> /dev/null || true)
     case "$resolved_link" in
       */EncryptedClips | */EncryptedClips/*)
         continue
         ;;
     esac
-    link_target=$(readlink -- "$mutable_link" || true)
-    case "$link_target" in
-      */"$NAME"/*)
-        rm -f -- "$mutable_link"
-        ;;
-    esac
+    obsolete_links+=("$mutable_link")
   done < <(find "$MUTABLE_TESLACAM" -name EncryptedClips -prune -o \
-    -type l -print0)
+    -type l -printf '%p\0%l\0')
+fi
 
+log "releasing snapshot $SNAPSHOTS_ROOT/$NAME"
+IMAGE="$SNAPSHOTS_ROOT/$NAME/snap.bin"
+unmount_status=0
+umount "$IMAGE" || unmount_status=$?
+
+# Delete the snapshot folders, then unlink obsolete view entries in bounded
+# batches. Keep the directory lock through both operations.
+rm -rf -- "$SNAPSHOTS_ROOT/$NAME"
+for ((link_index=0; link_index<${#obsolete_links[@]}; link_index+=256))
+do
+  rm -f -- "${obsolete_links[@]:link_index:256}"
+done
+
+if [ -d "$MUTABLE_TESLACAM" ] && [ ! -L "$MUTABLE_TESLACAM" ]
+then
   # Delete empty standard-view folders, but never an EncryptedClips directory
   # or anything below one, including legacy/custom mutable paths.
   find "$MUTABLE_TESLACAM" -depth -mindepth 2 \
     ! -path '*/EncryptedClips' ! -path '*/EncryptedClips/*' \
-    -type d -empty -exec rmdir "{}" \; || true
+    -type d -empty -delete || true
+fi
+
+# A pre-deletion "releasing" log line is only an attempt. Publish completion
+# only after required removals and confirmed absence of an image mount. Keep
+# logging best-effort; unavailable metadata must not change cleanup behavior.
+mount_status=0
+if [ "$unmount_status" -ne 0 ]
+then
+  "$SNAPSHOT_FINDMNT_COMMAND" --noheadings --source "$IMAGE" --output TARGET \
+    > /dev/null 2>&1 || mount_status=$?
+fi
+if [ "$unmount_status" -eq 0 ] || [ "$mount_status" -eq 1 ]
+then
+  released_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || released_at=
+  log "released snapshot $NAME${released_at:+ at $released_at}" || true
 fi
