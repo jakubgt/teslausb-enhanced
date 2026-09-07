@@ -10,7 +10,7 @@ This is a streamlined process for setting up the Pi. You'll flash the 64-bit Ras
 
 ## Configure the SD card before first boot of the Pi
 
-1.  Sign in to the private repository and download a release's Raspberry Pi Zero 2 W arm64/Trixie `.img.xz` plus its `.sha256` file. Verify the SHA-256 digest, then flash the compressed file directly using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or a similar flashing tool. Use a high-endurance card: 64 GB is the minimum and 128 GB or larger is recommended. If the release has no image asset, build the exact tag with the pinned [64-bit Trixie pi-gen instructions](../pi-gen-sources/Readme.md).
+1.  Download a published release's Raspberry Pi Zero 2 W arm64/Trixie `.img.xz` plus its `.sha256` file. Public GitHub assets need no sign-in; a private mirror requires an authorized account. Verify the SHA-256 digest, then flash the compressed file directly using [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or a similar flashing tool. Use a high-endurance card: 64 GB is the minimum and 128 GB or larger is recommended. If the release has no image asset, build the exact tag with the pinned [64-bit Trixie pi-gen instructions](../pi-gen-sources/Readme.md).
 
     In Raspberry Pi Imager, click **Operating System**, scroll to **Use custom**, and select the local `.img.xz`; extraction is not required. Flashing erases the selected card. Decline Imager OS customization because TeslaUSB has its own first-boot configuration and SSH provisioning.
 

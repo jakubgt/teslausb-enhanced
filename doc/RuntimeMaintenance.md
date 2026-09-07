@@ -211,7 +211,7 @@ is still required.
 - Add an external archive/backup if footage matters. Snapshot rotation is a
   rolling history on the same card, not protection against card failure.
 - A future signed, checksum-verified runtime-update package with rollback would
-  make deployment of this private fork simpler. Do not use a generic upstream
+  make deployment of this fork simpler. Do not use a generic upstream
   update command unless replacing this fork's behavior is intentional.
 - Build and verify the exact rc.5 image only after source validation; record a
   physical Pi/car test of those exact bytes before treating it as hardware-tested.

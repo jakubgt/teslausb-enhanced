@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to this private TeslaUSB distribution are documented here.
+All notable changes to this TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 

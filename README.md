@@ -4,7 +4,7 @@ TeslaUSB Enhanced turns a Raspberry Pi Zero 2 W into a Tesla-compatible USB
 drive with automatic archiving, music storage, a local dashboard, recovery
 tools, and a safer first-boot experience.
 
-This is a private, unofficial derivative of
+This is an unofficial derivative of
 [`marcone/teslausb`](https://github.com/marcone/teslausb). It keeps the upstream
 TeslaUSB workflow while adding a ready-to-flash image, an offline configuration
 wizard, stricter security boundaries, verified archive transfers, and guarded
@@ -37,9 +37,10 @@ recovery and upgrade tools.
 | Source commit | Recorded in the rc.5 image metadata after the verified build |
 | Hardware validation | Automated verification must pass before rc.5 publication; physical Zero 2 W and Tesla testing of the exact published bytes is still required |
 
-The repository and release are private. Download the image while signed in to
-an authorized GitHub account; Raspberry Pi Imager cannot authenticate to a
-private release URL itself.
+Public GitHub release assets can be downloaded without signing in. If you are
+using a private mirror or an access-restricted release, download with an
+authorized account first; Raspberry Pi Imager cannot authenticate to a private
+release URL itself.
 
 GitHub currently labels `v1.1.0` as **Latest**, but that release is source-only.
 Use the rc.5 prerelease only after its image and checksum assets have been
@@ -260,11 +261,12 @@ still require their own on-device verification.
   and `/root/bin` entrypoints. They do not roll back OS packages, firmware,
   partitions, configuration, credentials, archive data, or separately managed
   third-party binaries.
-- This repository is private. The image contains the exact setup source needed
-  for first boot, but future source downloads do not receive an embedded GitHub
-  credential, and this fork does not yet provide a signed release-asset updater.
-  Prefer a new verified image unless you have deliberately configured a trusted
-  authenticated update path.
+- The image contains the exact setup source needed for first boot, without an
+  embedded GitHub credential. Public sources can be fetched anonymously;
+  private mirrors still require an explicitly configured authenticated path.
+  This fork does not yet provide a signed release-asset updater. Prefer a new
+  verified image unless you have deliberately selected and verified the exact
+  runtime update source.
 
 See [transactional upgrades](doc/TransactionalUpgrades.md) for verification,
 recovery, rollback, and the precise transaction boundary.
@@ -338,6 +340,12 @@ Pull requests and issue reports are welcome. Keep changes focused, preserve the
 security and fail-closed boundaries, and include relevant tests or exact
 reproduction steps. Never commit real TeslaUSB configuration files, passwords,
 tokens, private keys, VINs, or archive credentials.
+
+Public issues and attachments can also expose Wi-Fi names, private IPs, personal
+paths, locations, and account details. Review and redact reports locally; share
+only the necessary sanitized excerpt, never a raw card image or real setup
+file. For sensitive security reports or an accidental credential exposure, see
+[the security and privacy reporting guidance](SECURITY.md).
 
 ## License and names
 

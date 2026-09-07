@@ -5,12 +5,13 @@ OS Trixie image. A Raspberry Pi Zero 2 W is supported when it is running the
 arm64 image; its 512 MB of RAM is sufficient because candidates are staged on
 the mutable data filesystem rather than held as a second in-memory runtime.
 
-The private release image performs its first setup from the exact source bundle
+The release image performs its first setup from the exact source bundle
 embedded in the filesystem, so it does not need a GitHub token. Do not put a
 personal access token in `teslausb_setup.json`, and do not point `REPO` at a
 private owner expecting anonymous runtime downloads to work. Until a signed
 release-asset updater is implemented, use a newly published image (plus a
-private configuration backup) for distribution releases of this private fork.
+private configuration backup) for distribution image releases of this fork.
+Public release assets do not require GitHub authentication; private mirrors do.
 The existing network upgrade command defaults to the public upstream source and
 is suitable only when those explicitly selected sources are intended.
 

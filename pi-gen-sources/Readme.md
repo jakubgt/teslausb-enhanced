@@ -31,8 +31,12 @@ not contain an image or when an operator wants an independent build.
    source commit and are intentionally rejected by `prepare.sh`:
 
    ```bash
-   git clone --branch <release-tag> --single-branch <your-private-repository-url> teslausb
+   git clone --branch <release-tag> --single-branch https://github.com/jakubgt/teslausb-enhanced.git teslausb
    ```
+
+   Public repository clones need no authentication. If building from a private
+   mirror, substitute its URL and authenticate locally; never put a token in
+   the URL, committed configuration, build recipe, or release notes.
 
 2. Clone pi-gen's 64-bit `arm64` branch and detach at the commit pinned by this
    release:
