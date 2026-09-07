@@ -10,7 +10,7 @@ TeslaUSB workflow while adding a ready-to-flash image, an offline configuration
 wizard, stricter security boundaries, verified archive transfers, and guarded
 recovery and upgrade tools.
 
-**Project links:** [rc.5 image target](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5)
+**Project links:** [rc.5 image release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5)
 · [all releases](https://github.com/jakubgt/teslausb-enhanced/releases)
 · [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
@@ -21,21 +21,22 @@ recovery and upgrade tools.
 > [!CAUTION]
 > Do not use the published `v1.2.0-rc.4` image for a fresh setup. Its boot
 > command line still contains Raspberry Pi OS's standalone `resize` trigger,
-> which can consume the card space TeslaUSB needs. This source targets rc.5;
-> wait for the verified rc.5 image and checksum after these changes are merged.
+> which can consume the card space TeslaUSB needs. Use the newly built rc.5
+> image and its matching checksum for fresh-install testing; rc.4 is retained
+> only for provenance.
 
 ## Current release
 
 | Item | Status |
 | --- | --- |
-| Image release target | [`v1.2.0-rc.5`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5) — built and published after the rc.5 source is merged and verified |
+| Image prerelease | [`v1.2.0-rc.5`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5) — verified image assets published September 7, 2026 |
 | Latest stable source release | [`v1.1.0`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0) — source only, no downloadable image |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
 | Image download | [`teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz) |
-| Image SHA-256 | Use the `.sha256` asset generated for the exact rc.5 image; do not reuse the rc.4 digest |
-| Source commit | Recorded in the rc.5 image metadata after the verified build |
-| Hardware validation | Automated verification must pass before rc.5 publication; physical Zero 2 W and Tesla testing of the exact published bytes is still required |
+| Image SHA-256 | [Matching rc.5 checksum](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz.sha256); do not reuse the rc.4 digest |
+| Image source commit | [`9348aa7`](https://github.com/jakubgt/teslausb-enhanced/commit/9348aa734920e561bad2fd441e244744d09e8193), recorded in the image metadata |
+| Hardware validation | Offline image checks passed; fresh-flash Zero 2 W/Tesla testing of these exact bytes and full-capacity rollover remain unverified |
 
 Public GitHub release assets can be downloaded without signing in. If you are
 using a private mirror or an access-restricted release, download with an
@@ -43,9 +44,13 @@ authorized account first; Raspberry Pi Imager cannot authenticate to a private
 release URL itself.
 
 GitHub currently labels `v1.1.0` as **Latest**, but that release is source-only.
-Use the rc.5 prerelease only after its image and checksum assets have been
-published. The rc.4 image remains available for provenance, not for a fresh
-flash.
+Use the linked rc.5 prerelease for early testing. Its four downloaded assets
+were independently checksum-checked, and the decompressed image matched its
+recorded hash and privacy checks. The build's final draft-publication lookup
+failed after verification and upload; the same audited assets were published
+without rebuilding or moving the tag. The [workflow correction](https://github.com/jakubgt/teslausb-enhanced/pull/11)
+is merged for future builds. The rc.4 image remains available for provenance,
+not for a fresh flash.
 
 ## What this fork adds
 
