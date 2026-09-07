@@ -187,9 +187,44 @@ function fstab_has_mountpoint() {
   awk -v target="$1" '$1 !~ /^#/ && $2 == target { found = 1 } END { exit !found }' "${2:-/etc/fstab}"
 }
 
-if ! fstab_has_mountpoint /var/log
+function ensure_ram_log_mount() {
+  local fstab="${1:-/etc/fstab}"
+  local candidate
+  local check_status
+  # An atomic replacement must not follow a symlink or silently split a
+  # hard-linked configuration file. Keep an existing exact mount untouched.
+  [ -f "$fstab" ] && [ ! -L "$fstab" ] || return 1
+  [ "$(stat -c %h -- "$fstab")" = 1 ] || return 1
+  if fstab_has_mountpoint /var/log "$fstab"
+  then
+    return 0
+  else
+    check_status=$?
+    [ "$check_status" -eq 1 ] || return 1
+  fi
+  candidate=$(mktemp -- "${fstab}.teslausb.XXXXXX") || return 1
+  # util-linux mount/findmnt expects parents before children in fstab even
+  # though systemd also generates the corresponding dependency ordering.
+  # Comments and other entries retain their original text and relative order.
+  if ! awk '
+    BEGIN { parent = "tmpfs /var/log tmpfs nodev,nosuid,size=32M,mode=0755 0 0" }
+    !inserted && $1 !~ /^#/ && $2 ~ /^\/var\/log\// { print parent; inserted = 1 }
+    { print }
+    END { if (!inserted) print parent }
+  ' "$fstab" > "$candidate" ||
+     ! chown --reference="$fstab" -- "$candidate" ||
+     ! chmod --reference="$fstab" -- "$candidate" ||
+     ! mv -fT -- "$candidate" "$fstab"
+  then
+    rm -f -- "$candidate"
+    return 1
+  fi
+}
+
+if ! ensure_ram_log_mount
 then
-  echo "tmpfs /var/log tmpfs nodev,nosuid,size=32M,mode=0755 0 0" >> /etc/fstab
+  log_progress "STOP: could not safely add the parent /var/log RAM mount"
+  exit 1
 fi
 
 if ! fstab_has_mountpoint /var/tmp
