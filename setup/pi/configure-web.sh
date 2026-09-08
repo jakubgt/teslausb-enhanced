@@ -637,6 +637,25 @@ sed -i '/mount.ctts/d' /etc/fstab
 echo "mount.ctts#/mutable/TeslaCam /var/www/html/TeslaCam fuse defaults,nofail,x-systemd.requires=/mutable 0 0" >> /etc/fstab
 mkdir -p /mutable/TeslaCam
 
+# Recording recovery copies and disposable previews must never be served as
+# static files. Validate existing paths before changing their ownership.
+for recording_store in /mutable/teslausb-recording-trash /mutable/teslausb-previews
+do
+  if [ -L "$recording_store" ] || { [ -e "$recording_store" ] && ! [ -d "$recording_store" ]; }
+  then
+    echo "Unsafe recording store path: $recording_store" >&2
+    exit 1
+  fi
+  install -d -o www-data -g www-data -m 0700 "$recording_store"
+done
+# Low previews use a bounded optional encoder; High and original downloads work
+# without it. The normal image/setup path installs the distribution's encoder.
+DEBIAN_FRONTEND=noninteractive apt-get -y install ffmpeg
+install -o root -g root -m 0644 "$SOURCE_DIR/setup/pi/teslausb-trash-cleanup.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$SOURCE_DIR/setup/pi/teslausb-trash-cleanup.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now teslausb-trash-cleanup.timer
+
 sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 
 # Install the root-owned dispatcher before replacing the sudo policy.  The

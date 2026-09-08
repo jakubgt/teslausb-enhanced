@@ -24,7 +24,8 @@ fi
 # accidentally inheriting the historical GET behavior.
 case "$route" in
   /actions/sync|/actions/reboot|/actions/drives/toggle|/actions/drives/repair|/actions/diagnostics|/actions/ble/pair|\
-  /files/upload|/files/copy|/files/move|/files/delete|/files/mkdir)
+  /files/upload|/files/copy|/files/move|/files/delete|/files/mkdir|\
+  /trash/move|/trash/restore|/trash/delete)
     cgi_require_method POST
     cgi_require_mutation
     ;;
@@ -46,6 +47,9 @@ case "$route" in
     "maintenance_logs": ["diagnostics", "archiveloop", "setup", "maintenance"],
     "config": "/api/v1/config",
     "videos": "/api/v1/videos",
+    "recording_downloads": "/api/v1/recordings/download",
+    "recording_previews": "/api/v1/recordings/preview",
+    "trash": "/api/v1/trash",
     "speed_test": "/api/v1/speed-test",
     "ble_status": "/api/v1/ble/status",
     "actions": ["sync", "reboot", "drives/toggle", "drives/repair", "diagnostics", "ble/pair"],
@@ -65,6 +69,12 @@ EOF
     ;;
   /videos)
     exec "$script_dir/videolist.sh"
+    ;;
+  /recordings/download|/recordings/preview|/recordings/preview/media|/trash/download)
+    exec "$script_dir/recording-media.sh"
+    ;;
+  /trash|/trash/media|/trash/move|/trash/restore|/trash/delete)
+    exec "$script_dir/recording-trash.sh"
     ;;
   /speed-test)
     exec "$script_dir/randomdata.sh"

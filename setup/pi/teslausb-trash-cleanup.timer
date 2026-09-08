@@ -1,0 +1,11 @@
+[Unit]
+Description=Check TeslaUSB recording Trash expiration hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+Unit=teslausb-trash-cleanup.service
+
+[Install]
+WantedBy=timers.target

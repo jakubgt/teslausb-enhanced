@@ -1,0 +1,16 @@
+[Unit]
+Description=Expire TeslaUSB recording Trash after its recovery period
+RequiresMountsFor=/mutable
+ConditionPathIsDirectory=/mutable/teslausb-recording-trash
+ConditionPathExists=/var/www/html/cgi-bin/recording-trash.py
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+UMask=0077
+Nice=15
+IOSchedulingClass=idle
+ProtectSystem=full
+ExecStart=/usr/bin/python3 -I /var/www/html/cgi-bin/recording-trash.py cleanup
+TimeoutStartSec=120

@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            bash dash g++ libfuse-dev libnginx-mod-http-fancyindex nginx \
+            bash dash ffmpeg g++ libfuse-dev libnginx-mod-http-fancyindex nginx \
             pkg-config python3 rsync shellcheck sudo
       - name: Run ShellCheck
         shell: bash
@@ -79,3 +79,18 @@ jobs:
           ./tests/maintenance-helpers.test.js
           ./tests/config-tool.test.js
           ./tests/config-wizard.test.js
+          ./tests/modern-model.test.mjs
+          ./tests/modern-device.test.js
+      - name: Install browser test runtime
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/teslausb-browser" --no-audit --no-fund playwright@1.62.1
+          "$RUNNER_TEMP/teslausb-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Test modern UI in Chromium with local fixture recordings
+        shell: bash
+        env:
+          PLAYWRIGHT_CHANNEL: chromium
+        run: |
+          export NODE_PATH="$RUNNER_TEMP/teslausb-browser/node_modules"
+          node ./tests/modern-device-browser.test.js
+          node ./tests/modern-browser.test.mjs

@@ -83,6 +83,64 @@ archive_manifest_entry_matches() {
   [ "$ARCHIVE_ENTRY_DIGEST" = "$expected_digest" ] || return 1
 }
 
+archive_status_success_timestamp() {
+  # Keep only one validated timestamp from the previous atomic status file.
+  # Never source status JSON or interpret arbitrary text as shell commands.
+  # Python is also used by the recording/maintenance runtime helpers.
+  python3 - "$ARCHIVE_STATUS_FILE" "$1" "$2" <<'PY'
+import datetime
+import json
+import os
+import re
+import stat
+import sys
+
+def utc_timestamp(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value):
+        return ""
+    try:
+        datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return ""
+    return value
+
+def unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate status key")
+        result[key] = value
+    return result
+
+last_success = ""
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022 or info.st_size > 16384:
+            raise ValueError("Untrusted status file")
+        raw = source.read(16385)
+        if len(raw) > 16384:
+            raise ValueError("Status file exceeded its size limit")
+        previous = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_keys)
+        if not isinstance(previous, dict) or type(previous.get("schema_version")) is not int or previous["schema_version"] != 1:
+            raise ValueError("Unsupported status schema")
+        if "last_successful_at" in previous:
+            last_success = utc_timestamp(previous["last_successful_at"])
+        elif previous.get("last_result") == "success":
+            # Seed the additive field from a pre-upgrade successful status.
+            last_success = utc_timestamp(previous.get("last_finished"))
+except (OSError, ValueError, TypeError, UnicodeError):
+    pass
+
+# Only the success path (after backend verification) advances this timestamp.
+# Starting, failing, or completing an empty run must preserve the last success.
+if sys.argv[2] == "success":
+    last_success = utc_timestamp(sys.argv[3]) or last_success
+print(last_success)
+PY
+}
+
 archive_status_write() {
   local last_result="$1"
   local last_started="$2"
@@ -97,6 +155,8 @@ archive_status_write() {
   local result_json
   local started_json
   local finished_json
+  local successful_json
+  local last_successful_at
   local message_json
 
   archive_is_unsigned_integer "$pending_files" || return 2
@@ -106,6 +166,7 @@ archive_status_write() {
 
   status_dir=$(dirname -- "$ARCHIVE_STATUS_FILE") || return
   archive_prepare_real_directory "$status_dir" || return
+  last_successful_at=$(archive_status_success_timestamp "$last_result" "$last_finished") || return
   tmp=$(mktemp "$status_dir/.archive-status.XXXXXX") || return
 
   archive_json_escape "$last_result"
@@ -114,6 +175,8 @@ archive_status_write() {
   started_json=$ARCHIVE_JSON_ESCAPED
   archive_json_escape "$last_finished"
   finished_json=$ARCHIVE_JSON_ESCAPED
+  archive_json_escape "$last_successful_at"
+  successful_json=$ARCHIVE_JSON_ESCAPED
   archive_json_escape "$message"
   message_json=$ARCHIVE_JSON_ESCAPED
 
@@ -123,6 +186,7 @@ archive_status_write() {
     "  \"last_result\": $result_json," \
     "  \"last_started\": $started_json," \
     "  \"last_finished\": $finished_json," \
+    "  \"last_successful_at\": $successful_json," \
     "  \"pending_files\": $pending_files," \
     "  \"pending_bytes\": $pending_bytes," \
     "  \"transferred_files\": $transferred_files," \
