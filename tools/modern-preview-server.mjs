@@ -35,12 +35,19 @@ function stretchMp4(data, factor = 20) {
   boxes(0, out.length); return out;
 }
 
+function stretchWebm(data) {
+  const out=Buffer.from(data),tag=Buffer.from([0x2a,0xd7,0xb1,0x83]),offset=out.indexOf(tag);
+  if(offset<0)throw new Error('The generated WebM has no supported TimecodeScale.');
+  const scale=out.readUIntBE(offset+4,3)*8;if(scale>0xffffff)throw new Error('The generated WebM time scale is too large.');
+  out.writeUIntBE(scale,offset+4,3);return out;
+}
+
 export async function generateFixtureMedia() {
   const {chromium} = require('playwright');
   const browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true});
   try {
     const page = await browser.newPage();
-    const result = await page.evaluate(async () => {
+    const result = await page.evaluate(async forceWebm => {
       const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 360;
       const ctx = canvas.getContext('2d'); let frame = 0;
       function paint() {
@@ -58,18 +65,18 @@ export async function generateFixtureMedia() {
         ctx.fillStyle='#e3edf5';ctx.font='12px sans-serif';ctx.fillText('FICTIONAL CAMERA DEMO  ·  no vehicle connection',16,352);ctx.fillStyle='#162332c9';ctx.fillRect(13,13,210,28);ctx.fillStyle='#e7eff7';ctx.fillText('2026-09-08  18:39:'+String(frame%60).padStart(2,'0'),23,31);
       }
       paint();
-      const mime = ['video/mp4;codecs=avc1.42001E', 'video/mp4', 'video/webm;codecs=vp8'].find(type => MediaRecorder.isTypeSupported(type));
+      const mime = (forceWebm?['video/webm;codecs=vp8']:['video/mp4;codecs=avc1.42001E', 'video/mp4', 'video/webm;codecs=vp8']).find(type => MediaRecorder.isTypeSupported(type));
       const stream = canvas.captureStream(12), recorder = new MediaRecorder(stream, {mimeType: mime, videoBitsPerSecond: 280000}), chunks = [];
       recorder.ondataavailable = event => { if(event.data.size) chunks.push(event.data); };
       const done = new Promise(resolve => { recorder.onstop = resolve; });
       const timer = setInterval(paint, 1000 / 12); recorder.start();
-      await new Promise(resolve => setTimeout(resolve, 3400)); recorder.stop(); await done; clearInterval(timer);stream.getTracks().forEach(track => track.stop());
+      await new Promise(resolve => setTimeout(resolve, mime.startsWith('video/webm')?8400:3400)); recorder.stop(); await done; clearInterval(timer);stream.getTracks().forEach(track => track.stop());
       const blob = new Blob(chunks, {type: mime}), array = new Uint8Array(await blob.arrayBuffer());
       let binary = ''; for (const value of array) binary += String.fromCharCode(value);
       return {data: btoa(binary), type: mime.split(';')[0]};
-    });
+    },process.env.MODERN_FIXTURE_WEBM==='1');
     const original = Buffer.from(result.data, 'base64');
-    return {data: result.type === 'video/mp4' ? stretchMp4(original) : original, type: result.type};
+    return {data: result.type === 'video/mp4' ? stretchMp4(original) : stretchWebm(original), type: result.type};
   } finally { await browser.close(); }
 }
 
@@ -126,7 +133,7 @@ export async function createPreviewServer({port = 0, media = null} = {}) {
       if(p==='/api/v1/recordings/preview') {const mode=state.previewState;return json(response,{ok:true,state:mode,reason:mode==='unavailable'?'No smaller preview exists in this local sample.':undefined,preview_url:mode==='ready'?'/api/v1/recordings/preview/media?'+new URLSearchParams({path:query.get('path')}):undefined});}
       if(p==='/api/v1/recordings/preview/media'){sendMedia(request,response);return;}
       if(p==='/api/v1/trash')return state.failTrash?json(response,{ok:false,error:'Fixture trash status unavailable'},503):json(response,trashStatus());
-      if(p==='/api/v1/trash/move') {const body=JSON.parse(request.body||'{}'),event=state.events.find(item=>item.event===body.event);if(!event||event.event.startsWith('RecentClips/'))return json(response,{ok:false,error:'Fixture event is not eligible'},400);const id=createHash('sha256').update(event.event).digest('hex'),entry={...event,id,state:'trashed',deleted_at:new Date().toISOString(),expires_at:new Date(Date.now()+30*86400000).toISOString(),bytes:event.files.filter(file=>file.camera).length*media.data.length};state.trash.set(id,entry);return json(response,{...trashStatus(),item:publicEntry(entry)});}
+      if(p==='/api/v1/trash/move') {const body=JSON.parse(request.body||'{}'),event=state.events.find(item=>item.event===body.event);if(!event||event.event.startsWith('RecentClips/'))return json(response,{ok:false,error:'Fixture event is not eligible'},400);const id=createHash('sha256').update(event.event).digest('hex'),entry={...event,id,state:'trashed',deleted_at:new Date().toISOString(),expires_at:new Date(Date.now()+30*86400000).toISOString(),bytes:event.files.filter(file=>file.camera).length*media.data.length};state.trash.set(id,entry);return json(response,trashStatus());}
       if(p==='/api/v1/trash/restore'||p==='/api/v1/trash/delete') {const body=JSON.parse(request.body||'{}');for(const id of body.ids||[]){const entry=state.trash.get(id);if(entry)entry.state=p.endsWith('restore')?'restored':'deleted';}return json(response,trashStatus());}
       if(p==='/api/v1/trash/media'){const entry=state.trash.get(query.get('id'));if(!entry||entry.state==='deleted')return json(response,{ok:false,error:'Fixture media missing'},404);if(query.get('file')==='event.json')return json(response,{timestamp:entry.timestamp,city:entry.city,est_lat:41.88,est_lon:-87.63});sendMedia(request,response);return;}
       if(p==='/api/v1/recordings/download'||p==='/api/v1/trash/download') {

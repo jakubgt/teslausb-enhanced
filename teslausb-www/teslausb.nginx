@@ -76,7 +76,7 @@ server {
     location = /cgi-bin/api-v1.sh {
          deny all;
     }
-    location ~ ^/cgi-bin/.*\.py$ {
+    location ~ ^/cgi-bin/.*\.py(?:/|$) {
          deny all;
     }
 

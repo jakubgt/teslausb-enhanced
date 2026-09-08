@@ -137,6 +137,26 @@ class Contracts(unittest.TestCase):
         self.assertFalse(json.loads(output.getvalue())['ok'])
         self.assertNotIn('Status:', output.getvalue())
 
+    def test_invalid_json_is_rejected_before_acquiring_the_private_store_lock(self):
+        with patch.object(trash, 'read_request', side_effect=trash.TrashError('Incomplete JSON', 400)), \
+                patch.object(trash.Store, 'locked') as lock, patch.object(trash, 'json_response') as respond:
+            trash.main('move')
+            lock.assert_not_called()
+            respond.assert_called_once_with({'ok': False, 'error': 'Incomplete JSON'}, 400)
+
+    def test_json_body_requires_exact_bounded_content_length_and_media_type(self):
+        for length, body, content_type in (('100', b'{}', 'application/json'),
+                                           ('9000', b'{}', 'application/json'),
+                                           ('9' * 10000, b'{}', 'application/json'),
+                                           ('2', b'{}', 'text/plain')):
+            with self.subTest(length=length[:10], content_type=content_type), \
+                    patch.dict(trash.os.environ, {'CONTENT_LENGTH': length, 'CONTENT_TYPE': content_type}), \
+                    patch.object(trash.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(body))):
+                with self.assertRaises(trash.TrashError): trash.read_request()
+        with patch.dict(trash.os.environ, {'CONTENT_LENGTH': '2', 'CONTENT_TYPE': 'application/json; charset=utf-8'}), \
+                patch.object(trash.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(b'{}'))):
+            self.assertEqual(trash.read_request(), {})
+
 
 class PlaybackCompatibility(unittest.TestCase):
     @staticmethod

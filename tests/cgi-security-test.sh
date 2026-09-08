@@ -116,6 +116,154 @@ assert_contains 'the v1 capability endpoint is available' "$response" 'Status: 2
 assert_contains 'v1 responses advertise their version' "$response" 'X-TeslaUSB-API-Version: 1'
 assert_contains 'the capability document requires POST mutations' "$response" '"mutations": "POST"'
 assert_contains 'the capability document advertises manual gadget repair' "$response" '"drives/repair"'
+assert_contains 'the capability document advertises recording Trash' "$response" '"trash": "/api/v1/trash"'
+assert_contains 'the capability document advertises preview requests' "$response" '"recording_previews": "/api/v1/recordings/preview"'
+
+# Exercise the actual dispatcher and recording wrappers with inert Python
+# implementations. An accepted request can only create a marker in this fixture;
+# these tests never open /mutable, recordings, a preview encoder, or a Pi service.
+recording_fixture="$test_dir/recording-cgi"
+mkdir -p "$recording_fixture"
+cp "$cgi_dir/api-v1.sh" "$cgi_dir/cgi-common.sh" \
+  "$cgi_dir/recording-trash.sh" "$cgi_dir/recording-media.sh" "$recording_fixture/"
+chmod +x "$recording_fixture/"*.sh
+cat > "$recording_fixture/recording-trash.py" <<'PYTHON'
+import pathlib
+import sys
+
+operation = sys.argv[1]
+pathlib.Path(__file__).with_suffix('.called').write_text(operation, encoding='ascii')
+print('Status: 200 OK\r\nContent-Type: text/plain\r\n\r\nfixture-operation: ' + operation)
+PYTHON
+cp "$recording_fixture/recording-trash.py" "$recording_fixture/recording-media.py"
+
+run_recording_fixture() {
+  local script="$1"
+  local method="$2"
+  local route="$3"
+  local query="${4:-}"
+
+  DOCUMENT_ROOT="$document_root" GATEWAY_INTERFACE=CGI/1.1 \
+    HTTP_HOST=teslausb.local REQUEST_METHOD="$method" PATH_INFO="$route" \
+    QUERY_STRING="$query" bash "$recording_fixture/$script"
+}
+
+for trash_action in move restore delete
+do
+  recording_route="/api/v1/trash/$trash_action"
+  for entrypoint in api-v1.sh recording-trash.sh
+  do
+    response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 \
+      run_recording_fixture "$entrypoint" GET "$recording_route")"
+    assert_contains "$entrypoint rejects GET Trash $trash_action" "$response" 'Status: 405 Method Not Allowed'
+    response="$(HTTP_X_TESLAUSB_REQUEST= HTTP_SEC_FETCH_SITE=same-origin \
+      run_recording_fixture "$entrypoint" POST "$recording_route")"
+    assert_contains "$entrypoint requires CSRF header for Trash $trash_action" "$response" 'Status: 403 Forbidden'
+    response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
+      run_recording_fixture "$entrypoint" POST "$recording_route")"
+    assert_contains "$entrypoint rejects cross-site Trash $trash_action" "$response" 'Status: 403 Forbidden'
+    response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-site HTTP_ORIGIN=http://other.local \
+      run_recording_fixture "$entrypoint" POST "$recording_route")"
+    assert_contains "$entrypoint rejects another origin for Trash $trash_action" "$response" 'Status: 403 Forbidden'
+    response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+      run_recording_fixture "$entrypoint" POST "$recording_route" 'event=ignored-query')"
+    assert_contains "$entrypoint rejects query parameters for Trash $trash_action" "$response" 'Status: 400 Bad Request'
+  done
+done
+
+for entrypoint in api-v1.sh recording-media.sh
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST= HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
+  assert_contains "$entrypoint requires CSRF header before preview generation" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
+    run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
+  assert_contains "$entrypoint rejects cross-site preview generation" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin HTTP_ORIGIN=http://teslausb.local:8080 \
+    run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
+  assert_contains "$entrypoint rejects a different origin port for previews" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture "$entrypoint" DELETE /api/v1/recordings/preview)"
+  assert_contains "$entrypoint rejects unsupported preview mutation methods" "$response" 'Status: 405 Method Not Allowed'
+done
+
+for recording_route in /api/v1/trash /api/v1/trash/media \
+  /api/v1/trash/download /api/v1/recordings/download /api/v1/recordings/preview/media
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture api-v1.sh POST "$recording_route")"
+  assert_contains "$recording_route rejects POST on its read-only route" "$response" 'Status: 405 Method Not Allowed'
+  response="$(HTTP_SEC_FETCH_SITE=cross-site \
+    run_recording_fixture api-v1.sh GET "$recording_route")"
+  assert_contains "$recording_route rejects cross-site reads" "$response" 'Status: 403 Forbidden'
+done
+
+for recording_route in /api/v1/trash/cleanup /api/v1/trash/purge /api/v1/trash/media/extra \
+  /api/v1/recordings/preview/worker /api/v1/recordings/preview/request
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture api-v1.sh POST "$recording_route")"
+  assert_contains "$recording_route is not an exposed API action" "$response" 'Status: 404 Not Found'
+done
+
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture recording-trash.sh POST /cgi-bin/recording-trash.sh)"
+assert_contains 'direct Trash wrapper URL cannot choose a mutation' "$response" 'Status: 404 Not Found'
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture recording-media.sh POST /cgi-bin/recording-media.sh)"
+assert_contains 'direct recording wrapper URL cannot choose a worker operation' "$response" 'Status: 404 Not Found'
+
+if [[ ! -e "$recording_fixture/recording-trash.called" && ! -e "$recording_fixture/recording-media.called" ]]
+then
+  pass 'all rejected recording requests stop before the Python helper boundary'
+else
+  fail 'a rejected recording request reached the Python helper boundary'
+fi
+
+for trash_action in move restore delete
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin HTTP_ORIGIN=http://teslausb.local \
+    run_recording_fixture api-v1.sh POST "/api/v1/trash/$trash_action")"
+  assert_contains "protected Trash POST dispatches only $trash_action" "$response" "fixture-operation: $trash_action"
+done
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh POST /api/v1/recordings/preview 'path=fixture')"
+assert_contains 'protected preview POST dispatches its generation operation' "$response" 'fixture-operation: preview-request'
+response="$(HTTP_X_TESLAUSB_REQUEST= HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/recordings/preview 'path=fixture')"
+assert_contains 'preview GET dispatches status without starting generation' "$response" 'fixture-operation: preview-status'
+response="$(HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/trash/download 'id=fixture&camera=all')"
+assert_contains 'Trash downloads reach the original media helper' "$response" 'fixture-operation: trash-download'
+response="$(HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/trash/media 'id=fixture&file=fixture')"
+assert_contains 'Trash playback reaches the private playback helper' "$response" 'fixture-operation: media'
+
+# Direct Python helpers have no HTTP method/origin boundary of their own. Nginx
+# must deny both the exact helper URL and every path-info suffix before fcgiwrap.
+if python3 - "$cgi_dir/../../teslausb.nginx" <<'PYTHON'
+import pathlib
+import re
+import sys
+
+config = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+marker = 'location ~ ^/cgi-bin/.*\\.py(?:/|$) {'
+assert marker in config, 'Python helper deny rule must cover path-info suffixes'
+block = config.split(marker, 1)[1].split('}', 1)[0]
+assert 'deny all;' in block
+assert 'location ^~ /cgi-bin/' not in config, 'A priority prefix must not bypass regex denial'
+pattern = re.compile(r'^/cgi-bin/.*\.py(?:/|$)')
+for name in ('recording-trash.py', 'recording-media.py', 'maintenance.py'):
+    for suffix in ('', '/cleanup', '/preview-worker'):
+        assert pattern.search('/cgi-bin/' + name + suffix)
+assert 'fastcgi_param SCRIPT_FILENAME /var/www/html/cgi-bin/api-v1.sh;' in config
+assert 'fastcgi_param PATH_INFO $uri;' in config
+PYTHON
+then
+  pass 'nginx blocks direct Python helpers and pins the versioned dispatcher'
+else
+  fail 'nginx blocks direct Python helpers and pins the versioned dispatcher'
+fi
 
 response="$(run_api GET '/api/v1/actions/drives/repair')"
 assert_contains 'manual gadget repair rejects GET requests' "$response" 'Status: 405 Method Not Allowed'

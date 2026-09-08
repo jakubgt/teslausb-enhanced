@@ -127,7 +127,8 @@ are sequential one-event operations; report per-event successes and failures.
    if that is the usual script destination, but a web-user service cannot traverse
    `/root`. Prefer systemd `ExecStart=/usr/bin/python3 -I
    /var/www/html/cgi-bin/recording-trash.py cleanup`, with `User=www-data` (or the
-   actual CGI user). A 15-minute timer with `Persistent=true` is suitable. The
+   actual CGI user). The installed timer runs hourly with up to five minutes of
+   randomized delay and `Persistent=true`. The
    helper does not depend on an open browser. Expiry runs on the first eligible
    timer tick after 30 days; missing verified time defers it.
    The cleanup process emits a compact JSON journal record and exits nonzero on

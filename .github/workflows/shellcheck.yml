@@ -93,4 +93,5 @@ jobs:
         run: |
           export NODE_PATH="$RUNNER_TEMP/teslausb-browser/node_modules"
           node ./tests/modern-device-browser.test.js
+          node ./tests/modern-player-browser.test.js
           node ./tests/modern-browser.test.mjs

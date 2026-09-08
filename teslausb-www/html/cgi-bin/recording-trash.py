@@ -592,10 +592,13 @@ def read_request():
     if os.environ.get('CONTENT_TYPE', '').split(';')[0].strip() != 'application/json':
         raise TrashError('Send JSON for this operation.', 415)
     value = os.environ.get('CONTENT_LENGTH', '')
-    if not value.isdigit() or not 1 <= int(value) <= 8192:
+    if not value.isascii() or not value.isdigit() or len(value) > 4 or not 1 <= int(value) <= 8192:
         raise TrashError('Invalid JSON request length.', 400)
     try:
-        data = json.loads(sys.stdin.buffer.read(int(value)))
+        raw = sys.stdin.buffer.read(int(value))
+        if len(raw) != int(value):
+            raise TrashError('The JSON request body was incomplete.', 400)
+        data = json.loads(raw)
     except (ValueError, UnicodeError) as error:
         raise TrashError('Invalid JSON request.', 400) from error
     if type(data) is not dict:
@@ -619,6 +622,9 @@ def copy_deadline():
 
 def main(operation):
     try:
+        # Slow/incomplete request bodies must not hold the shared Trash lock.
+        # The shell wrapper has already enforced method, Host, Origin, and CSRF.
+        request_data = read_request() if operation in ('move', 'restore', 'delete') else None
         with Store().locked() as store:
             if operation == 'media':
                 values = parse_qs(os.environ.get('QUERY_STRING', ''), strict_parsing=True)
@@ -646,7 +652,7 @@ def main(operation):
                 return
             else:
                 if operation != 'status':
-                    data = read_request()
+                    data = request_data
                     if operation == 'move' and set(data) == {'event'}:
                         with copy_deadline():
                             store.move(data['event'])
