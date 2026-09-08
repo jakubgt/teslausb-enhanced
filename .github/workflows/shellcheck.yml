@@ -95,3 +95,4 @@ jobs:
           node ./tests/modern-device-browser.test.js
           node ./tests/modern-player-browser.test.js
           node ./tests/modern-browser.test.mjs
+          node ./tests/modern-browsing-browser.test.mjs

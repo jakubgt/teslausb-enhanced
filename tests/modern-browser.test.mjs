@@ -43,8 +43,8 @@ async function run() {
     const duration=await page.locator('#player video').evaluate(video=>video.duration);
     assert.ok(duration>=60,'Synthetic recording must cover a full 60-second segment; actual duration '+duration);
     await page.getByRole('button',{name:'Pause recording',exact:true}).click();
-    await seek(15);await page.getByRole('button',{name:'Skip forward 30 seconds'}).click();assert.ok(Math.abs(await position()-45)<1);
-    await page.getByRole('button',{name:'Skip back 10 seconds'}).click();assert.ok(Math.abs(await position()-35)<1);
+    await seek(15);await page.getByRole('button',{name:'Skip forward 10 seconds'}).click();assert.ok(Math.abs(await position()-25)<1);
+    await page.getByRole('button',{name:'Skip back 10 seconds'}).click();assert.ok(Math.abs(await position()-15)<1);
     await page.getByRole('button',{name:'Jump to event',exact:true}).click();assert.ok(Math.abs(await position()-15)<1);
     assert.equal(await page.locator('.event-tick').isVisible(),true);
     await page.getByRole('group',{name:'Focused camera'}).getByRole('button',{name:'Rear',exact:true}).click();await waitMedia();assert.ok(Math.abs(await position()-15)<1);

@@ -20,13 +20,25 @@ camera, timeline position, layout, quality, speed, and playback intention when
 the event is still available. Leaving or hiding the viewer releases video
 sources. A failed refresh keeps the previous list and labels it stale.
 
+Recent daily footage is browsable by recorded hour, initially the latest hour
+with clips. The hour menu lists only populated hours with clip counts, plus
+**All hours**. Each synchronized minute is one clip regardless of camera count.
+Every category shows at most 20 clips/events per page: 60 Recent minute clips
+produce three pages; sparse hours produce fewer. Saved and Sentry events keep
+their complete segment grouping and are not split by the hour filter.
+Previous/Next and a page selector replace an ever-growing grid. Browsing pages,
+hours, and search results does not reload the day or interrupt the active video.
+Refresh keeps the selected hour/page when still available; changed dates reset
+to the latest populated hour. Bulk selection applies only to the visible page
+and clears when changing pages or filters.
+
 Playback starts with Low preview checks. Low is an actual smaller H.264 encode,
 prepared on demand one segment at a time. Availability, preparation, failure,
 and retry are explicit. **Play original** switches to High; original files are
 never quietly represented as Low. Restored copies currently support High only.
 See [media constraints and APIs](ModernMedia.md) for the encoder's resource limits.
 
-The viewer supports fullscreen, -10/+30 seconds, playback speed, camera selection,
+The viewer supports fullscreen, -10/+10 seconds, playback speed, camera selection,
 an approximate segment timeline, metadata, and a Sentry event marker when its
 timestamp matches an available segment. File timestamps have no timezone, so
 unmatched metadata never produces a guessed jump. Map data loads from

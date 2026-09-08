@@ -1,11 +1,11 @@
-import {resolveLibrary,validTrash,escapeHTML as esc,bytesLabel,stampLabel,timeLabel,downloadQuery,CAMERAS} from './model.mjs';
+import {resolveLibrary,validTrash,recordingPage,escapeHTML as esc,bytesLabel,stampLabel,timeLabel,downloadQuery,CAMERAS} from './model.mjs';
 import {ClipPlayer} from './player.mjs';
 import {mountDevice} from './device.js';
 import {mountFiles,configuredFileDrives} from './files.js';
 import {mountTrash} from './trash.js';
 
 const $=s=>document.querySelector(s);
-const state={page:'recordings',events:[],paths:[],category:'all',query:'',selected:new Set(),shown:24,day:'latest',library:null,trash:null,trashAvailable:false,config:{},inFlight:false,speedTest:false,downloadCount:0};
+const state={page:'recordings',events:[],paths:[],category:'all',query:'',selected:new Set(),clipPage:1,hour:'latest',day:'latest',library:null,trash:null,trashAvailable:false,config:{},inFlight:false,speedTest:false,downloadCount:0};
 let healthTimer=null,device=null,files=null,trashView=null,libraryAbort=null;
 export async function api(path,options={}) {
   if(!path.startsWith('/api/v1/'))throw new Error('Unsupported API URL.');
@@ -44,22 +44,35 @@ async function navigate(page){
   else trashView=mountTrash($('#trash-page'),{api,onNotice:notice,onLibraryChanged:()=>loadLibrary(state.day)});
 }
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>navigate(b.dataset.page));
-function visibleEvents(){const query=state.query.toLowerCase().trim();return state.events.filter(e=>(state.category==='all'||e.group===state.category)&&(!query||`${e.category} ${e.sequence} ${e.start}`.toLowerCase().includes(query)));}
+function currentPage(){return recordingPage(state.events,{category:state.category,query:state.query,hour:state.hour,page:state.clipPage});}
 function renderGrid(){
-  const focused=document.activeElement?.dataset.select;const events=visibleEvents(),shown=events.slice(0,state.shown);
+  const focused=document.activeElement?.dataset.select;const view=currentPage(),events=view.events,shown=view.items;
+  state.clipPage=view.page;if(state.category==='RecentClips')state.hour=view.hour||'latest';
+  $('#hour-filter').hidden=state.category!=='RecentClips';
+  const hours=$('#recording-hour');hours.replaceChildren();
+  for(const {value,count} of view.hours)hours.add(new Option(`${value}:00–${value}:59 · ${count} clip${count===1?'':'s'}`,value));
+  hours.add(new Option('All hours','all'));hours.value=view.hour||'all';hours.disabled=!view.hours.length;
+  $('#recording-search').placeholder=state.category==='RecentClips'&&view.hour!=='all'?'Search this hour':'Search this day';
+  $('#recording-search').setAttribute('aria-label',state.category==='RecentClips'&&view.hour!=='all'?'Search recordings in the selected hour':'Search recordings in the selected day');
+  state.selected=new Set([...state.selected].filter(id=>shown.some(e=>e.id===id)));
   $('#clip-grid').innerHTML=shown.length?shown.map(e=>`<article class="clip-card${player.event?.id===e.id?' active':''}${state.selected.has(e.id)?' selected':''}">${e.group!=='RecentClips'?`<label class="clip-check"><input type="checkbox" data-select="${esc(e.id)}" aria-label="Select ${esc(e.category+' '+stampLabel(e.start))}" ${state.selected.has(e.id)?'checked':''}></label>`:''}<button type="button" class="clip-image" data-open="${esc(e.id)}" aria-label="View ${esc(e.category+' '+stampLabel(e.start))}">${e.thumb?`<img src="${esc(e.thumb)}" alt="" loading="lazy" decoding="async">`:`<span class="camera-placeholder" aria-hidden="true">▷</span><span>${e.cameras.length} camera angles</span>`}<span class="duration">${timeLabel(e.duration)}</span></button><div class="clip-body"><button type="button" data-open="${esc(e.id)}">${esc(e.category)} recording</button><div class="clip-meta"><span>${esc(e.start.slice(11).replaceAll('-',':'))}</span><span>${esc(e.date)}</span></div><div class="clip-meta"><span>${e.cameras.length} cameras · ${e.segments.length} segment${e.segments.length===1?'':'s'}</span>${e.owned?'<span>Restored</span>':''}</div></div></article>`).join(''):`<div class="empty"><h2>${state.library?'No recordings found':'Recordings unavailable'}</h2><p>${state.library?'Try a different category, search, or day.':'Check your connection, then refresh.'}</p></div>`;
   for(const img of document.querySelectorAll('#clip-grid img'))img.onerror=()=>{img.remove();};
-  $('#selection-count').textContent=state.selected.size?`${state.selected.size} selected`:`${events.length} recording${events.length===1?'':'s'}`;$('#bulk-trash').hidden=!state.selected.size;$('#bulk-trash').disabled=!state.trashAvailable||state.inFlight;
-  const eligible=events.filter(e=>e.group!=='RecentClips');$('#select-all').disabled=!eligible.length||!state.trashAvailable;$('#select-all').checked=!!eligible.length&&eligible.every(e=>state.selected.has(e.id));$('#select-all').indeterminate=eligible.some(e=>state.selected.has(e.id))&&!$('#select-all').checked;
-  $('#more-clips').hidden=events.length<=state.shown;$('#more-clips').textContent=`Show more (${events.length-state.shown} remaining)`;
+  $('#selection-count').textContent=state.selected.size?`${state.selected.size} selected on this page`:events.length?`${view.start}–${view.end} of ${view.total} recordings`:'0 recordings';$('#bulk-trash').hidden=!state.selected.size;$('#bulk-trash').disabled=!state.trashAvailable||state.inFlight;
+  const eligible=shown.filter(e=>e.group!=='RecentClips');$('#select-all').disabled=!eligible.length||!state.trashAvailable;$('#select-all').checked=!!eligible.length&&eligible.every(e=>state.selected.has(e.id));$('#select-all').indeterminate=eligible.some(e=>state.selected.has(e.id))&&!$('#select-all').checked;
+  $('#clip-pagination').hidden=view.pages<=1;$('#page-status').textContent=`Page ${view.page} of ${view.pages} · ${view.start}–${view.end} of ${view.total}`;
+  $('#page-prev').disabled=view.page<=1;$('#page-next').disabled=view.page>=view.pages;
+  const jump=$('#page-jump');if(jump.options.length!==view.pages){jump.replaceChildren();for(let n=1;n<=view.pages;n++)jump.add(new Option(String(n),String(n)));}jump.value=String(view.page);
   if(focused)document.querySelector(`[data-select="${CSS.escape(focused)}"]`)?.focus();
 }
 $('#clip-grid').onclick=e=>{const b=e.target.closest('[data-open]');if(!b||state.inFlight||state.speedTest)return;const event=state.events.find(x=>x.id===b.dataset.open);if(event){player.setEvent(event);renderGrid();$('#player').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}};
 $('#clip-grid').onchange=e=>{if(!e.target.dataset.select)return;if(e.target.checked)state.selected.add(e.target.dataset.select);else state.selected.delete(e.target.dataset.select);renderGrid();};
-document.querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>{state.category=b.dataset.category;state.shown=24;state.selected.clear();document.querySelectorAll('[data-category]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderGrid();});
-$('#recording-search').oninput=e=>{state.query=e.target.value;state.shown=24;state.selected.clear();renderGrid();};
-$('#select-all').onchange=e=>{for(const event of visibleEvents().filter(x=>x.group!=='RecentClips'))e.target.checked?state.selected.add(event.id):state.selected.delete(event.id);renderGrid();};
-$('#more-clips').onclick=()=>{state.shown+=24;renderGrid();};$('#recording-day').onchange=e=>loadLibrary(e.target.value);$('#refresh-recordings').onclick=()=>loadLibrary(state.day);
+document.querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>{state.category=b.dataset.category;state.clipPage=1;state.selected.clear();document.querySelectorAll('[data-category]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderGrid();});
+$('#recording-search').oninput=e=>{state.query=e.target.value;state.clipPage=1;state.selected.clear();renderGrid();};
+$('#recording-hour').onchange=e=>{state.hour=e.target.value;state.clipPage=1;state.selected.clear();renderGrid();};
+$('#select-all').onchange=e=>{for(const event of currentPage().items.filter(x=>x.group!=='RecentClips'))e.target.checked?state.selected.add(event.id):state.selected.delete(event.id);renderGrid();};
+function changeClipPage(page){state.clipPage=page;state.selected.clear();renderGrid();$('#clip-grid').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}
+$('#page-prev').onclick=()=>changeClipPage(state.clipPage-1);$('#page-next').onclick=()=>changeClipPage(state.clipPage+1);$('#page-jump').onchange=e=>changeClipPage(Number(e.target.value));
+$('#recording-day').onchange=e=>loadLibrary(e.target.value);$('#refresh-recordings').onclick=()=>loadLibrary(state.day);
 
 function updateDayOptions(data){const select=$('#recording-day');select.replaceChildren(new Option(data.selected_day&&state.day==='latest'?'Latest · '+data.selected_day:'Latest available day','latest'));
   const days=[...new Set([...(Array.isArray(data.available_days)?data.available_days:[]),...(state.trash?.restored||[]).map(e=>e.event_time?.slice(0,10))])].filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x||'')).sort().reverse();for(const day of days)select.add(new Option(day,day));
@@ -74,8 +87,12 @@ async function loadLibrary(day='latest'){
     if(libraryResult.status!=='fulfilled')throw libraryResult.reason;
     const {data,events,selectedDay}=await resolveLibrary(libraryResult.value,trash,day,candidate=>api('/api/v1/videos?'+new URLSearchParams({day:candidate}),{signal:libraryAbort.signal}),candidate=>{$('#library-state').textContent='Checking available recordings for '+candidate+'…';});
     state.trash=trash;state.trashAvailable=true;$('#trash-count').textContent=trash.items.length||'';
+    const changedDay=previousDay!==day||state.library?.selected_day!==data.selected_day;
     state.paths=data.videos;state.library=data;
-    state.events=events;state.selected=new Set([...state.selected].filter(id=>events.some(e=>e.id===id)));state.shown=24;updateDayOptions(data);
+    state.events=events;state.selected=new Set([...state.selected].filter(id=>events.some(e=>e.id===id)));
+    if(changedDay){state.clipPage=1;state.hour='latest';state.selected.clear();}
+    else if(state.category==='RecentClips'&&state.hour!=='all'&&!events.some(e=>e.group==='RecentClips'&&e.start.slice(11,13)===state.hour)){state.hour='latest';state.clipPage=1;}
+    updateDayOptions(data);
     $('#fresh-recording').textContent=stampLabel(events[0]?.newest);$('#fresh-refresh').textContent=new Date().toLocaleTimeString();
     $('#library-state').textContent=`${events.length} recordings available${selectedDay?' · '+selectedDay:''}. Latest snapshots are delayed footage, not a live camera feed.`;
     const same=events.find(e=>e.id===saved.id),event=same||events[0];if(state.page==='recordings'&&!document.hidden){if(event)await player.setEvent(event,same?saved:{});else player.clear();}

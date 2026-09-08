@@ -108,3 +108,22 @@ export async function resolveLibrary(initial,trash,day,fetchDay,onScan=()=>{}) {
 export function downloadQuery(event,camera) {
   const params=new URLSearchParams({event:event.event,camera});if(event.group==='RecentClips')params.set('segment',event.start);return params;
 }
+
+export const RECORDINGS_PER_PAGE=20;
+export function recordingPage(events,{category='all',query='',hour='latest',page=1}={}) {
+  const counts=new Map();
+  for(const event of events)if(event.group==='RecentClips'){
+    const value=event.start.slice(11,13);counts.set(value,(counts.get(value)||0)+1);
+  }
+  const hours=[...counts].sort(([a],[b])=>b.localeCompare(a)).map(([value,count])=>({value,count}));
+  const selectedHour=hour==='all'?'all':counts.has(hour)?hour:hours[0]?.value??null;
+  const search=query.toLowerCase().trim();
+  const matches=events.filter(event=>(category==='all'||event.group===category)
+    &&(category!=='RecentClips'||selectedHour==='all'||event.start.slice(11,13)===selectedHour)
+    &&(!search||`${event.category} ${event.sequence} ${event.start}`.toLowerCase().includes(search)));
+  const pages=Math.max(1,Math.ceil(matches.length/RECORDINGS_PER_PAGE));
+  const selectedPage=Math.max(1,Math.min(pages,Number.isFinite(page)?Math.floor(page):1));
+  const offset=(selectedPage-1)*RECORDINGS_PER_PAGE;
+  return {hours,hour:selectedHour,events:matches,total:matches.length,pages,page:selectedPage,
+    items:matches.slice(offset,offset+RECORDINGS_PER_PAGE),start:matches.length?offset+1:0,end:Math.min(offset+RECORDINGS_PER_PAGE,matches.length)};
+}

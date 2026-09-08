@@ -178,6 +178,11 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===path.resolve(process.argv[1
   // An immediately playable first screen is useful when reviewing the sample.
   // Integration tests retain the createPreviewServer() unavailable default.
   fixture.state.previewState='ready';
+  // Show a complete hour and a sparse hour in the interactive sample, while
+  // retaining the small default fixture for the existing integration tests.
+  const recent=fixture.state.events.find(event=>event.event==='RecentClips/'+NEWEST_DAY);
+  recent.stamps=[...Array.from({length:60},(_,minute)=>`${NEWEST_DAY}_17-${String(minute).padStart(2,'0')}-00`),...['10','20','30'].map(minute=>`${NEWEST_DAY}_16-${minute}-00`)];
+  recent.files=recent.stamps.flatMap(stamp=>CAMERAS.map(camera=>({name:`${stamp}-${camera}.mp4`,camera})));
   console.log(`FICTIONAL LOCAL PREVIEW ONLY — no Pi connection or real recording changes.\n${fixture.url}\nTrash and file actions affect in-memory fixtures. Stop the process to reset.`);
   process.on('SIGINT',async()=>{await fixture.close();process.exit(0);});
 }

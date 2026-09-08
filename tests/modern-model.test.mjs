@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildEvents,parseVideoPath,eventMarker,validLocation,resolveLibrary,validTrash,downloadQuery} from '../teslausb-www/html/modern/model.mjs';
+import {buildEvents,parseVideoPath,eventMarker,validLocation,resolveLibrary,validTrash,downloadQuery,recordingPage} from '../teslausb-www/html/modern/model.mjs';
 
 const emptyTrash=()=>({items:[],restored:[],tombstones:[],hidden_media:[]});
 const path=(day='2026-09-08',camera='front',group='SavedClips',minute='00')=>`${group}/${day}${group==='RecentClips'?'':'_12-00-00'}/${day}_12-${minute}-00-${camera}.mp4`;
@@ -44,4 +44,24 @@ test('explicit date stays selected even when empty and unknown Trash is rejected
   const result=await resolveLibrary({videos:[],available_days:[]},emptyTrash(),'2026-09-01',()=>{throw new Error('Unnecessary fetch');});assert.equal(result.selectedDay,'2026-09-01');assert.deepEqual(result.events,[]);
   assert.throws(()=>validTrash({items:[]}),/could not be verified/);
   await assert.rejects(resolveLibrary({videos:[path()]},null,'latest',()=>{}),/could not be verified/);
+});
+
+test('Recent hourly browsing counts synchronized minutes once and paginates a full hour into three pages',()=>{
+  const paths=[];for(let minute=0;minute<60;minute++)for(const camera of ['front','back'])paths.push(path(undefined,camera,'RecentClips',String(minute).padStart(2,'0')));
+  paths.push(path(undefined,'front','RecentClips').replace('_12-','_11-'));
+  const events=buildEvents(paths),view=recordingPage(events,{category:'RecentClips'});
+  assert.deepEqual(view.hours,[{value:'12',count:60},{value:'11',count:1}]);assert.equal(view.hour,'12');assert.equal(view.total,60);assert.equal(view.pages,3);assert.equal(view.items.length,20);
+  const last=recordingPage(events,{category:'RecentClips',page:3});assert.equal(last.start,41);assert.equal(last.end,60);assert.equal(last.items.length,20);
+  const ids=[1,2,3].flatMap(page=>recordingPage(events,{category:'RecentClips',page}).items.map(e=>e.id));assert.equal(new Set(ids).size,60);
+  const sparse=recordingPage(events,{category:'RecentClips',hour:'11',page:3});assert.equal(sparse.pages,1);assert.equal(sparse.page,1);assert.equal(sparse.items.length,1);
+  assert.equal(recordingPage(events,{category:'RecentClips',hour:'all'}).pages,4);
+});
+test('hour filtering is confined to Recent, search stays within the hour, and paging handles disappearing results',()=>{
+  const events=buildEvents([path(),path(undefined,'front',undefined,'01'),path(undefined,'front','RecentClips'),path(undefined,'front','RecentClips').replace('_12-','_11-')]);
+  const saved=recordingPage(events,{category:'SavedClips',hour:'11'});assert.equal(saved.items.length,1);assert.equal(saved.items[0].segments.length,2);
+  assert.equal(recordingPage(events,{category:'RecentClips',hour:'12',query:'11-00'}).total,0);
+  assert.equal(recordingPage(events,{category:'RecentClips',hour:'all',query:'11-00'}).total,1);
+  assert.equal(recordingPage(events,{category:'RecentClips',hour:'23'}).hour,'12');
+  assert.equal(recordingPage(events,{page:999}).page,1);assert.equal(recordingPage(events,{page:NaN}).page,1);
+  const empty=recordingPage([],{category:'RecentClips',page:3});assert.deepEqual(empty.items,[]);assert.equal(empty.start,0);assert.equal(empty.end,0);assert.equal(empty.hour,null);assert.equal(empty.page,1);
 });
