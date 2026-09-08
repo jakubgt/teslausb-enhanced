@@ -85,7 +85,8 @@ and pause playback. Shutdown takes the Pi offline; starting it again requires
 disconnecting and reconnecting power after it finishes shutting down. The API
 acknowledges that the action was queued, not that the device completed it. Device
 polling and action buttons pause until a manual status check receives a response;
-failed or lost power requests are never retried automatically. A successful status
+the pending state survives cached-page restoration and keeps navigation on Device.
+Failed or lost power requests are never retried automatically. A successful status
 check confirms connectivity only. The local preview simulates both actions and
 never issues a host power command.
 

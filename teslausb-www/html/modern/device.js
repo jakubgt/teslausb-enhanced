@@ -116,8 +116,11 @@ function element(tag, className, text) {
   return node;
 }
 
+let pendingPowerAction = null;
+export function hasPendingPowerAction() { return pendingPowerAction !== null; }
+
 export function mountDevice(container, {api, onNotice = () => {}}) {
-  let destroyed = false, busy = false, powerPending = false, statusGeneration = 0, status = null, maintenance = null, poll = null, refreshing = null, logGeneration = 0;
+  let destroyed = false, busy = false, powerPending = hasPendingPowerAction(), statusGeneration = 0, status = null, maintenance = null, poll = null, refreshing = null, logGeneration = 0;
   let selectedLog = 'diagnostics', selectedPanel = 'overview', speedController = null, speedTimer = null;
   const controllers = new Set(), logCache = new Map();
   const root = element('div', 'device-root');
@@ -233,7 +236,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
       if (destroyed || generation !== statusGeneration) return;
       const errors = [];
       status = results[0].status === 'fulfilled' ? results[0].value : null;
-      if (status && powerPending) { powerPending = false; say('power-status', 'The device responded to this status check. Power-action completion is not verified.'); }
+      if (status && powerPending) { powerPending = false; pendingPowerAction = null; say('power-status', 'The device responded to this status check. Power-action completion is not verified.'); }
       maintenance = results[1].status === 'fulfilled' && results[1].value?.schema_version === 1 ? results[1].value : null;
       if (!status) errors.push(`Device status unavailable: ${results[0].reason?.message || 'invalid response'}`);
       if (!maintenance) errors.push(`Maintenance status unavailable: ${results[1].reason?.message || 'invalid response'}`);
@@ -380,18 +383,19 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     if (!settings || id === 'toggle' && !['yes', 'no'].includes(status?.drives_active)) return;
     if (settings.confirm && !window.confirm(settings.confirm)) return;
     busy = true;
-    if (isPower) { powerPending = true; statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
+    if (isPower) { powerPending = true; pendingPowerAction = {message: 'A power action was requested. Use Refresh status to check the connection before continuing.', error: false}; statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
     updateBusy(); stopSpeed('Speed test stopped for device action.');
     if (id !== 'sync') window.dispatchEvent(new CustomEvent('teslausb:pause-media'));
     const key = isPower ? 'power-status' : id === 'sync' ? 'sync-status' : 'action-status'; say(key, 'Request in progress…');
     try {
       const result = await request(`/api/v1/actions/${settings.path}`, {method: 'POST', headers: {'X-TeslaUSB-Request': '1'}}, id === 'repair' ? 60000 : 30000);
       if (result?.ok === false) throw new Error(result.error || 'The device rejected the action.');
+      if (isPower && pendingPowerAction) pendingPowerAction = {message: settings.message, error: false};
       if (destroyed) return;
       say(key, settings.message); onNotice(settings.message);
       if (!isPower) await refresh();
       else { status = null; maintenance = null; showStatus(); showMaintenance(); say('status', `${id === 'shutdown' ? 'Shutdown' : 'Reboot'} requested. Current device status is unknown until refreshed.`); }
-    } catch (error) { if (!destroyed) { say(key, `Action could not be confirmed: ${error.message}. Refresh status before retrying.`, true); if (isPower) { status = null; maintenance = null; showStatus(); showMaintenance(); say('status', 'Power-action result is unknown. Use Refresh status to check the connection before retrying.', true); } } }
+    } catch (error) { const message = `Action could not be confirmed: ${error.message}. Refresh status before retrying.`; if (isPower && pendingPowerAction) pendingPowerAction = {message, error: true}; if (!destroyed) { say(key, message, true); if (isPower) { status = null; maintenance = null; showStatus(); showMaintenance(); say('status', 'Power-action result is unknown. Use Refresh status to check the connection before retrying.', true); } } }
     finally { busy = false; if (!destroyed) updateBusy(); }
   }
   function updateSsh() {
@@ -423,6 +427,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
   find('generate').addEventListener('click', () => void generateDiagnostics()); find('log-full').addEventListener('click', fullLog);
   find('log-download').addEventListener('click', () => { const capture = logCache.get(selectedLog), info = DEVICE_LOGS.find(log => log.id === selectedLog); if (capture) saveBlob(capture.blob, `${capture.truncated ? 'latest-tail-' : ''}${info.filename}`); });
   find('bundle').addEventListener('click', () => void downloadBundle()); find('speed').addEventListener('click', () => void speedTest());
-  void refresh();
+  if (powerPending) { updateBusy(); showMaintenance(); say('power-status', pendingPowerAction.message, pendingPowerAction.error); say('status', 'A power action was requested. Current device status is unknown until manually refreshed.'); }
+  else void refresh();
   return {refresh, destroy() { destroyed = true; clearTimeout(poll); stopSpeed(''); controllers.forEach(controller => controller.abort()); controllers.clear(); root.querySelectorAll('dialog').forEach(dialog => dialog.close()); logCache.clear(); root.remove(); }};
 }

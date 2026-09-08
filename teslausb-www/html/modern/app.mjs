@@ -1,6 +1,6 @@
 import {resolveLibrary,validTrash,recordingPage,escapeHTML as esc,bytesLabel,stampLabel,timeLabel,downloadQuery,CAMERAS} from './model.mjs';
 import {ClipPlayer} from './player.mjs';
-import {mountDevice} from './device.js';
+import {mountDevice,hasPendingPowerAction} from './device.js';
 import {mountFiles,configuredFileDrives} from './files.js';
 import {mountTrash} from './trash.js';
 
@@ -31,6 +31,7 @@ function applyTheme(){if(!['auto','light','dark'].includes(theme))theme='auto';d
 $('#theme-toggle').onclick=()=>{theme=theme==='auto'?'dark':theme==='dark'?'light':'auto';applyTheme();try{localStorage.setItem('teslausb-modern-theme',theme);}catch{}};applyTheme();
 
 async function navigate(page){
+  if(hasPendingPowerAction()&&page!=='device'){notice('A power action is pending. Use Device → Refresh status to check the connection before continuing.');return;}
   if(page==='files'&&!configuredFileDrives(state.config).length)return;
   if(state.page===page)return;
   if(state.page==='recordings')player.suspend();
@@ -102,8 +103,9 @@ async function loadLibrary(day='latest'){
 }
 
 let healthInFlight=false;
-async function refreshHealth(){if(healthInFlight||document.hidden||state.speedTest)return;healthInFlight=true;try{
+async function refreshHealth(){if(healthInFlight||document.hidden||state.speedTest||hasPendingPowerAction())return;healthInFlight=true;try{
   const [status,maintenance]=await Promise.allSettled([api('/api/v1/status'),api('/api/v1/maintenance')]);
+  if(hasPendingPowerAction())return;
   if(status.status==='fulfilled'){const s=status.value.status||status.value;$('#connection-status').textContent='USB: '+String(s.camera_drive_state||'unknown');$('#storage-text').textContent=s.free_space!=null?bytesLabel(s.free_space)+' free':'Storage not reported';const alerts=[];
     if(s.encrypted_clips?.detected)alerts.push(s.encrypted_clips.message||'Encrypted recordings detected. Built-in processing is paused.');
     const temp=Number(s.cpu_temp);if(Number.isFinite(temp)&&(temp>1000?temp/1000:temp)>=68)alerts.push('Device temperature is high. Check Device for details.');

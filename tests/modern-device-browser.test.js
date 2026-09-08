@@ -123,7 +123,17 @@ async function run() {
     await page.getByRole('tab', {name: 'Overview', exact: true}).click();
     await page.clock.fastForward(35000);
     assert.equal(statusRequests(), beforeShutdownStatus, 'Polling stays stopped after shutdown, including on Overview');
+    await page.evaluate(() => window.openFiles());
+    await page.getByText(/Available drives:/).waitFor();
+    await page.evaluate(() => window.openDevice());
+    await page.getByRole('tab', {name: 'Overview', exact: true}).waitFor();
+    assert.match(await page.locator('[data-device="status"]').textContent(), /unknown|not verified|not confirmed|pending/i);
+    await page.clock.fastForward(35000);
+    assert.equal(statusRequests(), beforeShutdownStatus, 'Remounting Device preserves pending power state without automatic status requests');
     await page.getByRole('tab', {name: 'Tools', exact: true}).click();
+    await assertPowerBlocked(true);
+    assert.match(await page.locator('[data-device="status"]').textContent(), /manually refreshed|refresh status|check/i, 'The remounted Device retains manual status-check guidance');
+    assert.match(await actionStatus().textContent(), /power cycle/i, 'The remounted Power card retains shutdown recovery guidance');
     await checkManualStatus(false);
     await checkManualStatus(true);
     const powerCard = page.locator('.device-card').filter({has: page.getByRole('heading', {name: /^Power/})});
@@ -148,7 +158,7 @@ async function run() {
     await assertPowerBlocked(true);
     assert.equal(statusRequests(), beforeReboot, 'Reboot also waits for manual status verification');
     await checkManualStatus(true);
-    console.log('Power controls passed: cancel, queued shutdown/reboot, CSRF/media pause, no polling, failed/lost response, and manual recovery.');
+    console.log('Power controls passed: cancel, queued shutdown/reboot, CSRF/media pause, no polling, remount persistence, failed/lost response, and manual recovery.');
     await page.screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-modern-device-tools.png'), fullPage: true});
     failStatus = true;
     await page.getByRole('button', {name: 'Refresh status', exact: true}).click();

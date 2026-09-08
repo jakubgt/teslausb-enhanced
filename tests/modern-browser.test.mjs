@@ -110,6 +110,13 @@ async function run() {
     page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Repair USB',exact:true}).click();assert.equal(fixture.state.mutations.filter(item=>item.path==='/api/v1/actions/drives/repair').length,0);
     page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Repair USB',exact:true}).click();await page.getByText('USB gadget rebuilt and verified.',{exact:true}).first().waitFor();
     await screenshot('device-tools-desktop-dark');await noOverflow('Desktop Device');
+    await page.waitForFunction(()=>!document.querySelector('[data-device="refresh"]').disabled);
+    page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Shut down TeslaUSB',exact:true}).click();await page.locator('[data-device="power-status"]').filter({hasText:'Shutdown queued'}).waitFor();
+    const pendingStart=fixture.state.requests.length;
+    await nav('Recordings');assert.equal(await page.locator('#device-page').isVisible(),true,'Pending power action keeps the status controls available');assert.equal(await page.locator('#player video[src]').count(),0,'Pending shutdown cannot resume recording streams through navigation');
+    await pageHide();await pageShow();await page.getByRole('tab',{name:'Tools',exact:true}).click();
+    assert.equal(await page.getByRole('button',{name:'Shut down TeslaUSB',exact:true}).isDisabled(),true,'Browser cache restoration preserves the pending power state');assert.equal(fixture.state.requests.slice(pendingStart).some(item=>item.path==='/api/v1/status'),false,'Remount does not perform an automatic power recovery check');
+    await page.getByRole('button',{name:'Refresh status',exact:true}).click();await page.getByText(/Status refreshed/).waitFor();assert.equal(await page.getByRole('button',{name:'Shut down TeslaUSB',exact:true}).isEnabled(),true);
     assert.ok(fixture.state.mutations.filter(item=>item.path.startsWith('/api/v1/actions/')).every(item=>item.method==='POST'&&item.headers['x-teslausb-request']==='1'));
     await nav('Files');await page.getByText(/Available drives:/).waitFor();await page.getByRole('option',{name:'Evening drive.wav',exact:true}).waitFor();await page.getByRole('option',{name:'Evening drive.wav',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Rename selected item',exact:true}).isVisible(),true);
     await page.getByRole('option',{name:'Evening drive.wav',exact:true}).dblclick();await page.locator('.files-audio-dialog audio[src]').waitFor();await hideDocument();assert.equal(await page.locator('.files-audio-dialog audio[src]').count(),0,'Hidden browser tabs release Files audio');await showDocument();

@@ -148,7 +148,7 @@ do
   response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 \
     run_shutdown_fixture "$entrypoint" GET)"
   assert_contains "$entrypoint rejects GET shutdown" "$response" 'Status: 405 Method Not Allowed'
-  response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST= \
+  response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST='' \
     run_shutdown_fixture "$entrypoint" POST)"
   assert_contains "$entrypoint requires CSRF before shutdown" "$response" 'Status: 403 Forbidden'
   response="$(HTTP_SEC_FETCH_SITE=cross-site HTTP_X_TESLAUSB_REQUEST=1 \
