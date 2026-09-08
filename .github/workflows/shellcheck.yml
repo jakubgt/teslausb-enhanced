@@ -81,6 +81,8 @@ jobs:
           ./tests/config-wizard.test.js
           ./tests/modern-model.test.mjs
           ./tests/modern-device.test.js
+          ./tests/modern-trash-storage.test.mjs
+          ./tests/modern-connection.test.mjs
       - name: Install browser test runtime
         shell: bash
         run: |
@@ -96,3 +98,5 @@ jobs:
           node ./tests/modern-player-browser.test.js
           node ./tests/modern-browser.test.mjs
           node ./tests/modern-browsing-browser.test.mjs
+          node ./tests/modern-trash-storage.test.mjs --browser
+          node ./tests/modern-polish-browser.test.mjs

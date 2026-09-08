@@ -152,9 +152,8 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
   const say = (key, message, error = false) => { const node = find(key); node.textContent = message; node.classList.toggle('device-error', error); };
   const request = async (path, options = {}, timeout = 30000) => {
     const controller = new AbortController(); controllers.add(controller);
-    const timer = setTimeout(() => controller.abort(), timeout);
-    try { return await api(path, {...options, signal: controller.signal}); }
-    finally { clearTimeout(timer); controllers.delete(controller); }
+    try { return await api(path, {...options, timeout, signal: controller.signal}); }
+    finally { controllers.delete(controller); }
   };
   const isValid = value => value !== '' && value !== null && value !== undefined && value !== 'N/A' && Number.isFinite(Number(value));
   function metric(label, value, detail) {
@@ -236,7 +235,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
       if (destroyed || generation !== statusGeneration) return;
       const errors = [];
       status = results[0].status === 'fulfilled' ? results[0].value : null;
-      if (status && powerPending) { powerPending = false; pendingPowerAction = null; say('power-status', 'The device responded to this status check. Power-action completion is not verified.'); }
+      if (status && powerPending) { powerPending = false; pendingPowerAction = null; window.dispatchEvent(new CustomEvent('teslausb:power-state')); say('power-status', 'The device responded to this status check. Power-action completion is not verified.'); }
       maintenance = results[1].status === 'fulfilled' && results[1].value?.schema_version === 1 ? results[1].value : null;
       if (!status) errors.push(`Device status unavailable: ${results[0].reason?.message || 'invalid response'}`);
       if (!maintenance) errors.push(`Maintenance status unavailable: ${results[1].reason?.message || 'invalid response'}`);
@@ -383,7 +382,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     if (!settings || id === 'toggle' && !['yes', 'no'].includes(status?.drives_active)) return;
     if (settings.confirm && !window.confirm(settings.confirm)) return;
     busy = true;
-    if (isPower) { powerPending = true; pendingPowerAction = {message: 'A power action was requested. Use Refresh status to check the connection before continuing.', error: false}; statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
+    if (isPower) { powerPending = true; pendingPowerAction = {message: 'A power action was requested. Use Refresh status to check the connection before continuing.', error: false}; window.dispatchEvent(new CustomEvent('teslausb:power-state')); statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
     updateBusy(); stopSpeed('Speed test stopped for device action.');
     if (id !== 'sync') window.dispatchEvent(new CustomEvent('teslausb:pause-media'));
     const key = isPower ? 'power-status' : id === 'sync' ? 'sync-status' : 'action-status'; say(key, 'Request in progress…');

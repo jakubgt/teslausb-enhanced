@@ -37,6 +37,16 @@ Refresh keeps the selected hour/page when still available; changed dates reset
 to the latest populated hour. Bulk selection applies only to the visible page
 and clears when changing pages or filters.
 
+The viewer's **Previous clip / Next clip** controls follow recorded time (earlier
+and later) across all pages of the current category, hour, and search results.
+The grid remains newest-first and follows the selected clip's page. Switching
+clips preserves camera, layout, quality, speed, and play/pause intent, starting
+the new clip at zero. **Play next automatically** is off on every fresh page
+load. When enabled, it advances after the final segment and stops at the end of
+the filtered selection. Changing filters leaves the current clip intact; if it
+falls outside the selection, navigation is disabled until a matching clip is
+selected. No hidden-tab or paused-player autoplay is triggered.
+
 Playback starts with Low preview checks. Low is an actual smaller H.264 encode,
 prepared on demand one segment at a time. Availability, preparation, failure,
 and retry are explicit. **Play original** switches to High; original files are
@@ -64,6 +74,14 @@ snapshot aliases in the modern library. Undo and Restore expose this owned copy.
 Trash expires after 30 days on the next hourly cleanup tick, provided the device
 has verified time; explicit permanent deletion is also available with confirmation.
 
+The Storage cards separate Trash, restored copies, total retained copies,
+filesystem free space, protected reserve, and space above that reserve. Copy
+totals are logical file sizes, not a promise of physical space reclaimed. Missing
+figures stay unknown; incomplete or inconsistent reports are identified. An empty
+Trash can still show restored copies, which remain preserved without automatic
+expiry. To remove one, move its restored recording back to Trash and delete that
+copy permanently. Empty Trash affects only copies currently in Trash.
+
 **Trash uses additional storage.** The snapshot index is read-only. Deleting a
 private recovery copy does not erase car recordings, archives, or original
 snapshots; normal snapshot cleanup still controls those originals. Classic
@@ -73,6 +91,15 @@ deadline and fail with a visible retry message. See [storage and recovery
 semantics](RecordingTrash.md) for exact behavior and limits.
 
 ## Device and Files
+
+The connection banner is separate from USB status and records the browser's last
+successful HTTP contact with TeslaUSB. A transport failure or browser offline
+event shows **Connection lost** with **Retry**. HTTP errors still prove the server
+responded; individual panels report the failed operation. Retry only reads status,
+including explicit recovery from pending power actions. It never repeats a device
+action or file mutation. Concurrent responses cannot let an older transport
+failure overwrite newer contact. Power actions pause automatic status checks;
+their completion remains unverified even if the device responds again.
 
 Device has Overview, Archive, Logs, and Tools panels. Archive includes Sync now,
 pending files/bytes, progress, errors, and a persistent last successful archive
@@ -104,6 +131,9 @@ appearance and adapts to phone widths without horizontal scrolling.
 
 Normal web setup installs modern assets, exact API routes, optional ffmpeg/ffprobe,
 private www-data-owned directories (mode 0700), and the hourly Trash timer. The
+web server explicitly serves trusted modern JavaScript modules with their script
+content type; uploaded modules remain downloads. Device requests share the API's
+timeout handling so a stalled connection is distinguished from cancellation. The
 helpers use the existing same-origin/host/authentication boundary; no broad sudo
 filesystem capability or live camera mount is added. Python helper files cannot
 be downloaded directly through nginx.

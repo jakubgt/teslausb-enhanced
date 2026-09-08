@@ -1,6 +1,37 @@
-const size = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / 1024 ** 3) + ' GB';
+const byteCount = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+const size = value => {
+  if (byteCount(value) === null) return 'Not reported';
+  const power = value ? Math.min(4, Math.floor(Math.log(value) / Math.log(1024))) : 0;
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / 1024 ** power) + ' ' + ['B', 'KiB', 'MiB', 'GiB', 'TiB'][power];
+};
+const recordingCount = value => value === null ? 'Recording count not reported' : `${value} recording${value === 1 ? '' : 's'}`;
 const stamp = value => new Date(value).toLocaleString();
 const cameraName = name => ({ front: 'Front', back: 'Rear', left_repeater: 'Left repeater', right_repeater: 'Right repeater', left_pillar: 'Left pillar', right_pillar: 'Right pillar' }[name] || name);
+
+export function trashStorageView(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const group = entries => {
+    if (!Array.isArray(entries)) return { count: null, bytes: null, ids: [] };
+    const ids = entries.map(entry => entry && typeof entry === 'object' && typeof entry.id === 'string' ? entry.id : null);
+    if (ids.some(id => !id) || new Set(ids).size !== ids.length) return { count: null, bytes: null, ids: [] };
+    const amounts = entries.map(entry => byteCount(entry.bytes));
+    const total = amounts.includes(null) ? null : amounts.reduce((sum, bytes) => sum + bytes, 0);
+    return { count: entries.length, bytes: byteCount(total), ids };
+  };
+  const trash = group(source.items), restored = group(source.restored);
+  const retainedBytes = byteCount(source.retained_bytes), freeBytes = byteCount(source.free_bytes), reserveBytes = byteCount(source.reserve_bytes);
+  const sharedIds = new Set(trash.ids);
+  const overlap = restored.ids.some(id => sharedIds.has(id));
+  const combined = trash.bytes !== null && restored.bytes !== null ? byteCount(trash.bytes + restored.bytes) : null;
+  const inconsistent = overlap || (combined !== null && retainedBytes !== null && combined !== retainedBytes);
+  return {
+    trash: { count: trash.count, bytes: trash.bytes }, restored: { count: restored.count, bytes: restored.bytes },
+    retainedBytes, retainedCount: !overlap && trash.count !== null && restored.count !== null ? trash.count + restored.count : null,
+    freeBytes, reserveBytes, aboveReserveBytes: freeBytes !== null && reserveBytes !== null ? Math.max(0, freeBytes - reserveBytes) : null,
+    belowReserve: freeBytes !== null && reserveBytes !== null ? freeBytes < reserveBytes : null,
+    inconsistent, incomplete: [trash.count, trash.bytes, restored.count, restored.bytes, retainedBytes, freeBytes, reserveBytes].includes(null)
+  };
+}
 
 export function mountTrash(container, { api, onNotice = () => {}, onLibraryChanged = () => {} } = {}) {
   let status = null;
@@ -13,6 +44,9 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
   container.classList.add('recording-trash');
   container.innerHTML = `<div class="trash-heading"><div><h1>Trash</h1><p class="trash-summary">Loading preserved recordings…</p></div><button type="button" data-action="refresh">Refresh</button></div>
     <div class="trash-policy"><strong>30 days to restore your recordings</strong><p>Deleted clips are preserved here for 30 days. Restore them before they expire, or delete the preserved copies permanently.</p><p>Trash uses additional storage. Original snapshots, car recordings, and archive copies are unchanged.</p></div>
+    <section class="trash-storage" aria-labelledby="trash-storage-title"><h2 id="trash-storage-title">Storage</h2><dl class="trash-storage-grid"></dl><p class="trash-storage-warning" role="status" hidden></p>
+      <p class="trash-storage-note">Copy sizes include the original camera files and metadata. Total retained includes both Trash and restored copies. These are logical file sizes; disk usage and space reclaimed can differ. Free space is reported by the filesystem holding these copies.</p>
+      <p class="trash-restored-help">Restoring keeps the preserved copy in Recordings, with no automatic expiry. To remove it, open Saved or Sentry in Recordings, move the restored clip to Trash again, then delete it permanently here. Empty Trash only removes copies currently in Trash.</p></section>
     <p class="trash-clock" hidden role="status"></p><p class="trash-message" role="status" aria-live="polite"></p>
     <div class="trash-toolbar"><label><input type="checkbox" data-action="select-all"> <span>Select all</span></label><span class="trash-selected"></span><button type="button" data-action="restore" disabled>Restore selected</button><button type="button" data-action="delete" class="trash-danger" disabled>Delete permanently</button><button type="button" data-action="empty" class="trash-danger" disabled>Empty Trash</button></div>
     <div class="trash-items"></div>
@@ -44,8 +78,32 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
   document.addEventListener('visibilitychange', visibility);
   window.addEventListener('pagehide', suspend);
   window.addEventListener('teslausb:pause-media', suspend);
+  const trashItems = () => Array.isArray(status?.items) ? status.items.filter(entry => entry && ['id', 'event', 'event_time', 'expires_at'].every(key => typeof entry[key] === 'string')) : [];
+  function renderStorage() {
+    const storage = trashStorageView(status);
+    const grid = find('.trash-storage-grid'); grid.replaceChildren();
+    const rows = [
+      ['trash', 'In Trash', storage.trash.bytes, recordingCount(storage.trash.count) + ' · 30-day retention'],
+      ['restored', 'Restored copies', storage.restored.bytes, recordingCount(storage.restored.count) + ' · kept until removed'],
+      ['retained', 'Total retained', storage.retainedBytes, storage.inconsistent ? 'Reported total · details do not match' : recordingCount(storage.retainedCount) + ' · Trash + restored'],
+      ['free', 'Free space', storage.freeBytes, 'Available on the copy-storage filesystem'],
+      ['reserve', 'Protected reserve', storage.reserveBytes, 'Kept free when making new copies'],
+      ['above-reserve', 'Available above reserve', storage.aboveReserveBytes, storage.belowReserve ? 'Free space is below the reserve; new copies may be blocked' : 'Headroom for preserving new copies']
+    ];
+    for (const [key, label, bytes, detail] of rows) {
+      const card = document.createElement('div'); card.dataset.storage = key;
+      const term = document.createElement('dt'); term.textContent = label;
+      const amount = document.createElement('dd'); amount.textContent = size(bytes);
+      const note = document.createElement('p'); note.textContent = detail;
+      card.append(term, amount, note); grid.append(card);
+    }
+    const warning = find('.trash-storage-warning');
+    warning.hidden = !status || (!storage.incomplete && !storage.inconsistent);
+    warning.textContent = storage.inconsistent ? 'Reported storage totals and copy details are inconsistent. Refresh before relying on these figures.' : 'Some storage details are unavailable. Refresh to check current figures.';
+    return storage;
+  }
   function selectionControls() {
-    const items = status?.items || [];
+    const items = trashItems();
     const checkbox = find('[data-action="select-all"]');
     checkbox.checked = !!items.length && selected.size === items.length;
     checkbox.indeterminate = selected.size > 0 && selected.size < items.length;
@@ -59,16 +117,17 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
   function render() {
     if (destroyed) return;
     releasePreview();
-    const items = [...(status?.items || [])].sort((a, b) => a.expires_at.localeCompare(b.expires_at));
+    const items = trashItems().sort((a, b) => a.expires_at.localeCompare(b.expires_at));
+    const storage = renderStorage();
     for (const id of selected) if (!items.some(item => item.id === id)) selected.delete(id);
-    find('.trash-summary').textContent = `${items.length} recording${items.length === 1 ? '' : 's'} · ${size(items.reduce((sum, item) => sum + item.bytes, 0))} preserved`;
+    find('.trash-summary').textContent = storage.trash.count === null ? 'Trash recording count is unavailable.' : `${recordingCount(storage.trash.count)} in Trash`;
     find('.trash-clock').hidden = status?.clock?.trusted !== false;
     find('.trash-clock').textContent = 'Automatic expiry is paused until the Pi verifies its clock. You can still restore or permanently delete clips.';
     const list = find('.trash-items');
     list.replaceChildren();
     if (!items.length) {
       const empty = document.createElement('p'); empty.className = 'trash-empty';
-      empty.textContent = 'Trash is empty. Saved and Sentry clips you delete will appear here.';
+      empty.textContent = storage.trash.count !== 0 ? 'Trash recordings could not be displayed. Refresh to check the current state.' : storage.restored.count > 0 ? 'Trash is empty. Restored copies still use storage. Move them back to Trash from Recordings to remove their preserved copies.' : 'Trash is empty. Saved and Sentry clips you delete will appear here.';
       list.append(empty);
     }
     for (const entry of items) {
@@ -106,7 +165,7 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
       if (response.ok === false) throw new Error(response.error);
       if (destroyed || requestRevision !== revision) return;
       status = response; render(); message('');
-    } catch (error) { if (!destroyed) message(error.message || 'Trash is unavailable. Try refreshing.', true); }
+    } catch (error) { if (!destroyed) { if (!status) find('.trash-summary').textContent = 'Trash is unavailable.'; message(error.message || 'Trash is unavailable. Try refreshing.', true); } }
   }
   function confirmDelete(ids) {
     return new Promise(resolve => {
@@ -147,8 +206,8 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
     } finally { busy = false; if (!destroyed) selectionControls(); }
   }
   function openPreview(id, button) {
-    const entry = status?.items.find(item => item.id === id);
-    const files = entry?.files.filter(item => item.camera) || [];
+    const entry = trashItems().find(item => item.id === id);
+    const files = Array.isArray(entry?.files) ? entry.files.filter(item => item?.camera) : [];
     if (!files.length) return;
     window.dispatchEvent(new CustomEvent('teslausb:pause-media'));
     releasePreview();
@@ -177,7 +236,7 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
     if (action === 'refresh') refresh();
     if (action === 'restore') operate('restore', [...selected]);
     if (action === 'delete') operate('delete', [...selected]);
-    if (action === 'empty') operate('delete', (status?.items || []).map(item => item.id));
+    if (action === 'empty') operate('delete', trashItems().map(item => item.id));
     if (action === 'restore-one') operate('restore', [id]);
     if (action === 'delete-one') operate('delete', [id]);
     if (action === 'preview') openPreview(id, button);
@@ -185,9 +244,10 @@ export function mountTrash(container, { api, onNotice = () => {}, onLibraryChang
   function change(event) {
     const { action, id } = event.target.dataset;
     if (action === 'select') { event.target.checked ? selected.add(id) : selected.delete(id); selectionControls(); }
-    if (action === 'select-all') { selected.clear(); if (event.target.checked) (status?.items || []).forEach(item => selected.add(item.id)); render(); }
+    if (action === 'select-all') { selected.clear(); if (event.target.checked) trashItems().forEach(item => selected.add(item.id)); render(); }
   }
   container.addEventListener('click', click); container.addEventListener('change', change);
+  renderStorage();
   refresh();
   return { refresh, suspend, destroy() {
     destroyed = true; abort.abort(); releasePreview();

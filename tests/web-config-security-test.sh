@@ -149,6 +149,13 @@ assert_contains "$nginx_config" 'add_header Content-Disposition "attachment" alw
 assert_contains "$nginx_config" 'add_header Referrer-Policy "same-origin" always;'
 assert_contains "$nginx_config" 'add_header Cross-Origin-Resource-Policy "same-origin" always;'
 
+# Installed ES modules must work even with older OS MIME tables. Their narrow
+# location adds no auth/header override; actual HTTP behavior is exercised by
+# test_modern_static_http.py when nginx is installed.
+assert_contains "$nginx_config" 'location ~ ^/modern/.*\.mjs$ {'
+assert_count 1 'types { application/javascript mjs; }' "$nginx_config"
+assert_contains "$configure_web" 'cp -r "$SOURCE_DIR/teslausb-www/html/." /var/www/html/'
+
 # Host validation is server-wide (not just CGI), and the private IPv6 rules
 # require a literal colon so a public DNS name beginning with fd/fc/fe cannot
 # masquerade as a local address.

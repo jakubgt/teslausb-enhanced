@@ -30,7 +30,7 @@ window.clearTimeout=id=>{if(polls.has(id))polls.delete(id);else nativeClear(id);
 window.firePoll=async()=>{const entry=polls.entries().next().value;if(!entry)throw new Error('Expected a preview poll');polls.delete(entry[0]);await entry[1]();};
 window.fixture={id:'SentryClips/2026-09-07_14-30-00',event:'SentryClips/2026-09-07_14-30-00',group:'SentryClips',category:'Sentry',start:'2026-09-07_14-29-00',duration:120,cameras:['front','back'],metadata:null,segments:['2026-09-07_14-29-00','2026-09-07_14-30-00'].map(stamp=>({stamp,files:Object.fromEntries(['front','back'].map(camera=>[camera,{path:'SentryClips/2026-09-07_14-30-00/'+stamp+'-'+camera+'.mp4',url:'/TeslaCam/'+stamp+'-'+camera+'.mp4'}]))}))};
 window.ready=path=>({state:'ready',reason:'preview_ready',preview_url:'/api/v1/recordings/preview/media?'+new URLSearchParams({path})});
-window.reset=()=>{window.player?.destroy?.();testHidden=false;polls.clear();window.calls=[];window.notices=[];window.reply=(path)=>ready(path);window.player=new ClipPlayer(document.querySelector('#player'),{api:async(url,options={})=>{const p=new URL(url,location.href).searchParams.get('path');calls.push({path:p,method:options.method||'GET',signal:options.signal});return reply(p,options);},onDownload(){},onTrash(){},onNotice:message=>notices.push(message)});return player;};
+window.reset=()=>{window.player?.destroy?.();testHidden=false;polls.clear();window.calls=[];window.notices=[];window.navigationCalls=[];window.mediaErrors=[];window.navigateHandler=async()=>{};window.reply=(path)=>ready(path);window.player=new ClipPlayer(document.querySelector('#player'),{api:async(url,options={})=>{const p=new URL(url,location.href).searchParams.get('path');calls.push({path:p,method:options.method||'GET',signal:options.signal});return reply(p,options);},onDownload(){},onTrash(){},onNotice:message=>notices.push(message),onNavigate:(direction,options)=>{navigationCalls.push({direction,...options});return navigateHandler(direction,options);},onMediaError:()=>mediaErrors.push(player.event.id)});return player;};
 window.metadata=()=>{for(const video of player.videos){videoState(video).readyState=2;video.dispatchEvent(new Event('loadedmetadata'));}};
 reset();window.harnessReady=true;
 </script></body></html>`;
@@ -156,6 +156,92 @@ async function run() {
       window.releasedVideos=[...player.videos];testHidden=true;document.dispatchEvent(new Event('visibilitychange'));
     });
     assert.equal(await page.evaluate(() => releasedVideos.every(video=>video.paused&&!video.src)&&player.videos.length===0), true, 'Hidden tabs pause and release every original source');
+
+    await page.evaluate(async () => {
+      reset();await player.setEvent(structuredClone(fixture),{quality:'high',playing:true});metadata();
+      player.setNavigation({previous:true,next:true,index:2,total:3,scope:'14:00–14:59'});
+    });
+    assert.equal(await page.getByRole('checkbox',{name:'Play next automatically'}).isChecked(), false, 'Automatic clip advance is off by default');
+    assert.equal(await page.locator('[data-clip-context]').textContent(), 'Clip 2 of 3 · 14:00–14:59');
+    await page.getByRole('button',{name:'Previous clip',exact:true}).click();
+    await page.getByRole('button',{name:'Next clip',exact:true}).click();
+    assert.deepEqual(await page.evaluate(() => navigationCalls), [{direction:-1,autoplay:false},{direction:1,autoplay:false}], 'Manual controls request earlier/later clips explicitly');
+    assert.equal(await page.evaluate(() => player.playing&&!player.master.paused), true, 'A declined manual navigation preserves active playback');
+    await page.evaluate(() => player.setNavigation({previous:true,next:true,index:1,total:3,scope:'Selected recordings'}));
+    assert.equal(await page.getByRole('button',{name:'Previous clip',exact:true}).isDisabled(), true, 'Previous cannot wrap from the earliest clip');
+    await page.evaluate(() => player.setNavigation({previous:true,next:true,index:3,total:3}));
+    assert.equal(await page.getByRole('button',{name:'Next clip',exact:true}).isDisabled(), true, 'Next cannot wrap from the latest clip');
+    assert.equal(await page.getByRole('checkbox',{name:'Play next automatically'}).isDisabled(), false, 'Autoplay preference remains editable at the final clip');
+    await page.getByRole('checkbox',{name:'Play next automatically'}).check();
+    await page.getByRole('checkbox',{name:'Play next automatically'}).uncheck();
+    await page.evaluate(() => player.setNavigation({previous:true,next:true,index:0,total:3,scope:'this hour'}));
+    assert.equal(await page.locator('[data-clip-context]').textContent(), 'Current clip is outside this hour · 3 clips');
+    assert.equal(await page.getByRole('button',{name:'Next clip',exact:true}).isDisabled(), true, 'A clip outside the filter cannot navigate into an unrelated queue');
+    await page.evaluate(() => player.setNavigation({previous:true,next:true,index:2,total:3,scope:'Saved',blocked:true}));
+    assert.equal(await page.getByRole('button',{name:'Previous clip',exact:true}).isDisabled(), true, 'Busy or blocked library state disables navigation');
+    assert.equal(await page.getByRole('checkbox',{name:'Play next automatically'}).isDisabled(), true);
+    await page.evaluate(() => {player.setNavigation({...player.navigation,blocked:false});player.q('[data-autoplay-next]').checked=true;player.suspend();});
+    assert.equal(await page.getByRole('button',{name:'Next clip',exact:true}).isDisabled(), true, 'Suspended views disable navigation');
+    await page.evaluate(() => player.resume());
+    assert.equal(await page.getByRole('button',{name:'Next clip',exact:true}).isDisabled(), false, 'Resuming restores the existing queue');
+    assert.equal(await page.getByRole('checkbox',{name:'Play next automatically'}).isChecked(), true, 'Suspend/resume preserves the autoplay preference');
+
+    await page.evaluate(async () => {
+      reset();await player.setEvent(structuredClone(fixture),{quality:'high',playing:true});metadata();
+      player.setNavigation({previous:false,next:true,index:1,total:2,scope:'Selected recordings'});player.q('[data-autoplay-next]').checked=true;
+      navigateHandler=()=>new Promise(resolve=>window.finishNavigation=resolve);
+      player.master.currentTime=60;player.master.dispatchEvent(new Event('ended'));metadata();
+    });
+    assert.equal(await page.evaluate(() => player.segmentIndex), 1, 'Within-event segment chaining is preserved');
+    assert.deepEqual(await page.evaluate(() => navigationCalls), [], 'First segment completion does not skip the rest of the clip');
+    await page.evaluate(() => {player.master.currentTime=60;player.master.dispatchEvent(new Event('ended'));player.master.dispatchEvent(new Event('ended'));});
+    assert.deepEqual(await page.evaluate(() => navigationCalls), [{direction:1,autoplay:true}], 'Final segment requests automatic next once even if ended repeats');
+    assert.equal(await page.evaluate(() => player.videos.every(video=>video.paused)), true, 'Outgoing cameras stop while navigation is pending');
+    await page.evaluate(async () => {finishNavigation();await Promise.resolve();});
+    assert.equal(await page.evaluate(() => player.playing), false, 'A refused automatic transition stops cleanly at the end');
+
+    await page.evaluate(async () => {
+      reset();await player.setEvent(structuredClone(fixture),{quality:'high',playing:true,camera:'back',mode:'all',rate:2,position:60});metadata();
+      player.setNavigation({previous:false,next:true,index:1,total:2});player.q('[data-autoplay-next]').checked=true;
+      navigateHandler=async(_direction,{autoplay})=>{const saved=player.snapshot();await player.setEvent({...structuredClone(fixture),id:'next-clip'},{...saved,position:0,playing:autoplay||saved.playing});player.setNavigation({previous:true,next:false,index:2,total:2});metadata();};
+      player.master.currentTime=60;player.master.dispatchEvent(new Event('ended'));
+    });
+    await page.waitForFunction(() => !player.navigating);
+    assert.deepEqual(await page.evaluate(() => ({id:player.event.id,position:player.position,camera:player.camera,mode:player.mode,quality:player.quality,rate:player.rate,playing:player.playing})), {id:'next-clip',position:0,camera:'back',mode:'all',quality:'high',rate:2,playing:true}, 'Navigation callback can preserve the viewer preferences and playback intent at the next clip start');
+    assert.equal(await page.getByRole('checkbox',{name:'Play next automatically'}).isChecked(), true, 'A new clip keeps the autoplay preference');
+
+    for(const stopReason of ['unchecked','paused','master-error','follower-error','play-rejected','hidden','suspended','blocked','queue-end']){
+      await page.evaluate(async reason => {
+        reset();await player.setEvent(structuredClone(fixture),{quality:'high',playing:true,mode:'all',position:60});metadata();
+        player.setNavigation({previous:false,next:true,index:1,total:2});player.q('[data-autoplay-next]').checked=reason!=='unchecked';
+        const outgoingMaster=player.master;
+        if(reason==='paused')await player.toggle();
+        if(reason==='master-error')outgoingMaster.dispatchEvent(new Event('error'));
+        if(reason==='follower-error')player.videos.find(video=>video!==outgoingMaster).dispatchEvent(new Event('error'));
+        if(reason==='play-rejected'){player.stopPlayback();videoState(outgoingMaster).fail=true;await player.toggle();}
+        if(reason==='hidden'){testHidden=true;document.dispatchEvent(new Event('visibilitychange'));}
+        if(reason==='suspended')player.suspend();
+        if(reason==='blocked')player.setNavigation({...player.navigation,blocked:true});
+        if(reason==='queue-end')player.setNavigation({previous:true,next:true,index:2,total:2});
+        outgoingMaster.dispatchEvent(new Event('ended'));await Promise.resolve();
+      },stopReason);
+      assert.deepEqual(await page.evaluate(() => navigationCalls), [], `No automatic next after ${stopReason}`);
+    }
+
+    await page.evaluate(async () => {
+      reset();await player.setEvent(structuredClone(fixture),{quality:'high',playing:true});metadata();
+      player.setNavigation({previous:false,next:true,index:1,total:2});navigateHandler=()=>new Promise((_resolve,reject)=>window.rejectNavigation=reject);
+      window.pendingNavigation=player.navigateClip(1);
+      await player.setEvent({...structuredClone(fixture),id:'independent-selection'},{quality:'high',playing:true});metadata();
+      rejectNavigation(new Error('Late navigation failure'));await pendingNavigation;
+    });
+    assert.equal(await page.evaluate(() => player.event.id==='independent-selection'&&player.playing&&!player.master.paused&&notices.length===0), true, 'A stale navigation failure cannot stop a newer independent selection');
+    await page.evaluate(async () => {
+      reset();await player.setEvent(structuredClone(fixture),{quality:'high'});window.oldVideo=player.master;
+      await player.setEvent({...structuredClone(fixture),id:'current-media'},{quality:'high'});
+      oldVideo.dispatchEvent(new Event('error'));player.master.dispatchEvent(new Event('error'));
+    });
+    assert.deepEqual(await page.evaluate(() => mediaErrors), ['current-media'], 'Only current-generation media errors notify the caller for a separate connection probe');
     await page.evaluate(() => player.destroy());
     assert.deepEqual(errors, []);
     console.log('Modern player browser regressions passed.');

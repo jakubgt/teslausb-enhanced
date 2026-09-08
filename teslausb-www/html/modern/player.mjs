@@ -1,9 +1,10 @@
 import {CAMERAS,escapeHTML as esc,timeLabel,stampLabel,eventMarker,validLocation} from './model.mjs';
 
 export class ClipPlayer {
-  constructor(container,{api,onDownload,onTrash,onNotice}) {
-    Object.assign(this,{container,api,onDownload,onTrash,onNotice});
+  constructor(container,{api,onDownload,onTrash,onNotice,onNavigate,onMediaError=()=>{}}) {
+    Object.assign(this,{container,api,onDownload,onTrash,onNotice,onNavigate,onMediaError});
     this.event=null;this.position=0;this.camera='front';this.mode='single';this.quality='low';this.rate=1;this.playing=false;this.suspended=false;this.generation=0;this.playIntent=0;this.videoIntent=new WeakMap();this.marker=null;this.metadata=null;this.videos=[];
+    this.navigation={previous:false,next:false,index:0,total:0,scope:'Current filter',blocked:false};this.navigating=false;this.destroyed=false;this.finalEndGeneration=null;
     container.innerHTML=`<section class="player" aria-label="Recording viewer"><div class="player-empty">Select a recording to view its camera angles.</div><div class="player-content" hidden>
       <div class="player-header"><div><h2 data-title>Latest available recording</h2><p data-capture></p></div><div class="player-options"><div class="mode-group" role="group" aria-label="Camera layout"><button type="button" data-mode="single" aria-pressed="true">Single camera</button><button type="button" data-mode="all" aria-pressed="false">All cameras</button></div><label>Quality <select data-quality><option value="low">Low · less data</option><option value="high">High · original</option></select></label></div></div>
       <div class="quality-status" role="status" aria-live="polite"><span data-quality-status>Checking low preview availability…</span><button type="button" data-preview-retry hidden>Check preview</button><button type="button" data-use-original hidden>Play original</button></div>
@@ -11,6 +12,7 @@ export class ClipPlayer {
       <div class="player-controls"><button type="button" data-play aria-label="Play recording">Play</button><button type="button" data-back aria-label="Skip back 10 seconds">−10s</button><button type="button" data-forward aria-label="Skip forward 10 seconds">+10s</button><button type="button" data-jump disabled>Jump to event</button><span class="timecode" data-time>0:00 / 0:00</span><select data-rate aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select><button type="button" data-fullscreen>Fullscreen</button></div>
       <div class="timeline-wrap"><input type="range" data-position aria-label="Playback position in seconds" min="0" max="60" step="0.1" value="0"><span class="event-tick" hidden aria-hidden="true"></span></div>
       <div class="camera-buttons" role="group" aria-label="Focused camera"></div>
+      <div class="clip-navigation" role="group" aria-label="Clip navigation"><div class="clip-navigation-actions"><button type="button" data-previous-clip disabled>Previous clip</button><span data-clip-context role="status" aria-live="polite">No clips in Current filter</span><button type="button" data-next-clip disabled>Next clip</button></div><label class="clip-autoplay"><input type="checkbox" data-autoplay-next disabled> Play next automatically</label></div>
       <details class="clip-details"><summary>Clip details &amp; location</summary><div class="details-content"></div></details>
       <div class="player-footer"><span>Downloads keep original quality</span><button type="button" data-download-camera>Download Front</button><button type="button" data-download-all class="primary">Download all cameras</button><button type="button" data-trash class="danger-text">Move to Trash</button></div>
     </div></section>`;
@@ -24,22 +26,53 @@ export class ClipPlayer {
     this.q('[data-preview-retry]').onclick=()=>{this.capturePosition();this.loadSegment({retryFailed:true});};
     this.q('[data-fullscreen]').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(this.q('.player').requestFullscreen)await this.q('.player').requestFullscreen();else this.onNotice('Fullscreen is not supported by this browser.');}catch(e){this.onNotice('Could not enter fullscreen: '+e.message);}};
     this.q('[data-download-camera]').onclick=()=>this.onDownload(this.event,this.camera);this.q('[data-download-all]').onclick=()=>this.onDownload(this.event,'all');this.q('[data-trash]').onclick=()=>this.onTrash([this.event]);
+    this.q('[data-previous-clip]').onclick=()=>this.navigateClip(-1);this.q('[data-next-clip]').onclick=()=>this.navigateClip(1);
     this.visibilityHandler=()=>{if(document.hidden)this.suspend();};
     document.addEventListener('visibilitychange',this.visibilityHandler);
+  }
+  setNavigation({previous=false,next=false,index=0,total=0,scope='Current filter',blocked=false}={}){
+    total=Number.isSafeInteger(total)&&total>0?total:0;index=Number.isSafeInteger(index)&&index>0&&index<=total?index:0;
+    this.navigation={previous:previous===true,next:next===true,index,total,scope:String(scope||'Current filter'),blocked:blocked===true};this.renderNavigation();
+  }
+  canNavigate(direction){
+    const n=this.navigation;
+    return !!this.event&&!this.destroyed&&!this.suspended&&!document.hidden&&!n.blocked&&!this.navigating&&typeof this.onNavigate==='function'&&n.index>0&&
+      (direction===-1?n.previous&&n.index>1:direction===1?n.next&&n.index<n.total:false);
+  }
+  renderNavigation(){
+    if(this.destroyed)return;const n=this.navigation;
+    this.q('[data-previous-clip]').disabled=!this.canNavigate(-1);this.q('[data-next-clip]').disabled=!this.canNavigate(1);
+    this.q('[data-autoplay-next]').disabled=!this.event||this.suspended||document.hidden||n.blocked||this.navigating||n.index===0||typeof this.onNavigate!=='function';
+    this.q('[data-clip-context]').textContent=n.index?`Clip ${n.index} of ${n.total} · ${n.scope}`:n.total?`Current clip is outside ${n.scope} · ${n.total} clips`:`No clips in ${n.scope}`;
+  }
+  async navigateClip(direction,{autoplay=false}={}){
+    if(!this.canNavigate(direction)||(autoplay&&(!this.playing||!this.q('[data-autoplay-next]').checked)))return false;
+    this.capturePosition();const previousEvent=this.event,generation=this.generation;this.navigating=true;this.videos.forEach(video=>this.pauseVideo(video));this.renderNavigation();
+    try{
+      await this.onNavigate(direction,{autoplay});
+      if(!this.destroyed&&this.event===previousEvent&&generation===this.generation){
+        if(autoplay)this.stopPlayback();
+        else if(this.playing&&!this.suspended&&!document.hidden)this.videos.filter(video=>video.readyState>=1).forEach(video=>this.playVideo(video,generation));
+      }
+      return true;
+    }
+    catch(error){if(!this.destroyed&&this.event===previousEvent&&generation===this.generation){this.stopPlayback();this.onNotice('Could not open the recording: '+(error?.message||'Try again.'));}return false;}
+    finally{this.navigating=false;this.renderNavigation();}
   }
   snapshot(){this.capturePosition();return {id:this.event?.id,position:this.position,camera:this.camera,mode:this.mode,quality:this.quality,rate:this.rate,playing:this.playing};}
   capturePosition(){if(this.master?.readyState>=1 && Number.isFinite(this.master.currentTime))this.position=this.segmentIndex*60+this.master.currentTime;}
   async setEvent(event,restore={}) {
+    if(this.destroyed)return;
     if(!event){this.clear();return;}
     this.generation++;this.playIntent++;this.releaseMedia();this.metadataAbort?.abort();this.metadata=null;this.marker=null;
     this.event=event;this.position=Math.min(Math.max(0,restore.position||0),Math.max(0,event.duration-.1));this.camera=event.cameras.includes(restore.camera||this.camera)?(restore.camera||this.camera):event.cameras[0];
-    this.mode=restore.mode||this.mode;this.quality=restore.quality||'low';this.rate=restore.rate||this.rate;this.playing=restore.playing||false;this.suspended=restore.suspended===true||document.hidden;
+    this.mode=restore.mode||this.mode;this.quality=restore.quality||'low';this.rate=restore.rate||this.rate;this.playing=restore.playing||false;this.suspended=restore.suspended===true||document.hidden;this.autoplayInterrupted=false;
     this.q('.player-empty').hidden=true;this.q('.player-content').hidden=false;this.q('[data-quality]').value=this.quality;this.q('[data-rate]').value=String(this.rate);
     this.q('[data-title]').textContent=`${event.category} recording`;this.q('[data-capture]').textContent=stampLabel(event.start)+' · Snapshot footage';this.q('[data-position]').max=String(event.duration-.1);
     this.q('[data-trash]').hidden=event.group==='RecentClips';this.q('[data-jump]').disabled=true;
     this.q('.camera-buttons').innerHTML=event.cameras.map(c=>`<button type="button" data-camera="${c}" aria-pressed="${c===this.camera}">${esc(CAMERAS[c])}</button>`).join('');
     this.container.querySelectorAll('[data-camera]').forEach(b=>b.onclick=()=>{this.capturePosition();this.camera=b.dataset.camera;this.loadSegment();this.renderSelection();});
-    this.q('.video-grid').replaceChildren();this.renderSelection();this.renderDetails();this.renderMarker();this.updateControls();this.loadSegment();
+    this.q('.video-grid').replaceChildren();this.renderSelection();this.renderDetails();this.renderMarker();this.renderNavigation();this.updateControls();this.loadSegment();
     if(this.suspended)this.q('[data-quality-status]').textContent='Playback is paused.';
     await this.loadMetadata(event);
   }
@@ -112,11 +145,11 @@ export class ClipPlayer {
       const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.disableRemotePlayback=true;video.setAttribute('aria-label',CAMERAS[camera]+' recording');video.playbackRate=this.rate;video.src=source;cell.insertBefore(video,label);this.videos.push(video);results.push({state:'ready'});
       if(!this.master || camera===this.camera)this.master=video;
       video.addEventListener('loadedmetadata',()=>{if(generation!==this.generation||this.suspended||document.hidden)return;const offset=this.position-this.segmentIndex*60;try{video.currentTime=Math.min(offset,Number.isFinite(video.duration)?Math.max(0,video.duration-.02):offset);}catch{};placeholder.hidden=true;if(this.playing)this.playVideo(video,generation);});
-      video.addEventListener('error',()=>{if(generation!==this.generation)return;placeholder.textContent='This segment could not be loaded. Refresh the library or try another camera.';placeholder.hidden=false;if(video===this.master)this.stopPlayback();});
+      video.addEventListener('error',()=>{if(generation!==this.generation)return;placeholder.textContent='This segment could not be loaded. Refresh the library or try another camera.';placeholder.hidden=false;this.autoplayInterrupted=true;if(video===this.master)this.stopPlayback();this.onMediaError();});
       video.addEventListener('waiting',()=>{if(generation===this.generation&&video===this.master&&this.playing&&!this.suspended&&!document.hidden){this.buffering=true;this.videos.filter(v=>v!==video).forEach(v=>this.pauseVideo(v));this.q('.player-error').textContent='Buffering… Try Low quality or Single camera on a slower connection.';this.q('.player-error').hidden=false;}});
       video.addEventListener('playing',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;this.q('.player-error').hidden=true;if(this.buffering){this.buffering=false;for(const v of this.videos)if(v!==video&&v.readyState>=1){try{v.currentTime=video.currentTime;}catch{}if(this.playing)this.playVideo(v,generation);}}});
       video.addEventListener('timeupdate',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;this.position=this.segmentIndex*60+video.currentTime;for(const v of this.videos)if(v!==video&&v.readyState>=2&&Math.abs(v.currentTime-video.currentTime)>.45){try{v.currentTime=video.currentTime;}catch{}}this.updateControls();});
-      video.addEventListener('ended',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;if(this.segmentIndex+1<event.segments.length){this.position=(this.segmentIndex+1)*60;this.loadSegment();}else this.stopPlayback();});
+      video.addEventListener('ended',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;if(this.segmentIndex+1<event.segments.length){this.position=(this.segmentIndex+1)*60;this.loadSegment();}else{if(this.finalEndGeneration===generation)return;this.finalEndGeneration=generation;if(this.playing&&!this.autoplayInterrupted&&this.q('[data-autoplay-next]').checked&&this.canNavigate(1))void this.navigateClip(1,{autoplay:true});else this.stopPlayback();}});
     }
     if(generation!==this.generation)return;
     if(this.quality==='low'){const ready=results.filter(r=>r.state==='ready').length,pending=results.filter(r=>this.previewPending(r));this.q('[data-quality-status]').textContent=ready===cameras.length?'Low preview · Original downloads remain unchanged.':pending.length?'Smaller preview is preparing. You can play the original now.':ready?`${ready} of ${cameras.length} low previews available. High quality plays the originals.`:'Low preview is unavailable. Play the original to continue.';this.q('[data-preview-retry]').hidden=ready===cameras.length;this.q('[data-use-original]').hidden=ready===cameras.length;
@@ -125,10 +158,10 @@ export class ClipPlayer {
     this.updateControls();
   }
   updateControls(){if(!this.event)return;this.q('[data-position]').value=String(Math.min(this.position,this.event.duration-.1));this.q('[data-time]').textContent=timeLabel(this.position)+' / '+timeLabel(this.event.duration);this.q('[data-play]').textContent=this.playing?'Pause':'Play';this.q('[data-play]').setAttribute('aria-label',this.playing?'Pause recording':'Play recording');this.q('[data-play]').disabled=!this.master&&!this.playing;}
-  seek(position){if(!this.event)return;position=Math.max(0,Math.min(this.event.duration-.1,position));const nextIndex=Math.floor(position/60);this.position=position;if(nextIndex!==this.segmentIndex||!this.master){this.loadSegment();}else{for(const v of this.videos){try{v.currentTime=position-nextIndex*60;}catch{}}}this.updateControls();}
-  async toggle(){if(this.suspended||document.hidden)return;if(this.playing){this.stopPlayback();return;}if(!this.master)return;this.playing=true;const generation=this.generation,intent=++this.playIntent;this.updateControls();await Promise.all(this.videos.map(video=>this.playVideo(video,generation,intent)));if(generation===this.generation)this.updateControls();}
-  suspend(){const state=this.snapshot();this.suspended=true;this.generation++;this.releaseMedia();this.metadataAbort?.abort();return state;}
-  resume(){if(!this.event||document.hidden)return;this.suspended=false;this.loadSegment();if(!this.metadata)this.loadMetadata(this.event);}
-  clear(){this.generation++;this.releaseMedia();this.metadataAbort?.abort();this.event=null;this.playing=false;this.position=0;this.q('.player-empty').hidden=false;this.q('.player-content').hidden=true;}
-  destroy(){document.removeEventListener('visibilitychange',this.visibilityHandler);this.clear();this.container.replaceChildren();}
+  seek(position){if(!this.event)return;this.finalEndGeneration=null;position=Math.max(0,Math.min(this.event.duration-.1,position));const nextIndex=Math.floor(position/60);this.position=position;if(nextIndex!==this.segmentIndex||!this.master){this.loadSegment();}else{for(const v of this.videos){try{v.currentTime=position-nextIndex*60;}catch{}}}this.updateControls();}
+  async toggle(){if(this.suspended||document.hidden)return;if(this.playing){this.stopPlayback();return;}if(!this.master)return;this.finalEndGeneration=null;this.autoplayInterrupted=false;this.playing=true;const generation=this.generation,intent=++this.playIntent;this.updateControls();await Promise.all(this.videos.map(video=>this.playVideo(video,generation,intent)));if(generation===this.generation)this.updateControls();}
+  suspend(){const state=this.snapshot();this.suspended=true;this.generation++;this.releaseMedia();this.metadataAbort?.abort();this.renderNavigation();return state;}
+  resume(){if(!this.event||document.hidden||this.destroyed)return;this.suspended=false;this.renderNavigation();this.loadSegment();if(!this.metadata)this.loadMetadata(this.event);}
+  clear(){this.generation++;this.releaseMedia();this.metadataAbort?.abort();this.event=null;this.playing=false;this.position=0;this.renderNavigation();this.q('.player-empty').hidden=false;this.q('.player-content').hidden=true;}
+  destroy(){this.destroyed=true;document.removeEventListener('visibilitychange',this.visibilityHandler);this.clear();this.container.replaceChildren();}
 }

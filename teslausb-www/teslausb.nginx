@@ -61,6 +61,14 @@ server {
         try_files $uri $uri/ =404;
     }
 
+    # Older Raspberry Pi OS MIME tables do not recognize ES modules. Scope
+    # this mapping to installed UI assets so uploaded modules remain downloads.
+    # Auth, Host validation, and security headers still inherit from the server.
+    location ~ ^/modern/.*\.mjs$ {
+        try_files $uri =404;
+        types { application/javascript mjs; }
+    }
+
     location /cgi-bin/ {
          gzip off;
          root /var/www/html;

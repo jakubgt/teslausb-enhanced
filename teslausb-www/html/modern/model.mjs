@@ -110,6 +110,12 @@ export function downloadQuery(event,camera) {
 }
 
 export const RECORDINGS_PER_PAGE=20;
+// The grid stays newest-first; viewer navigation follows recorded time.
+export function recordingNeighbors(events,currentId) {
+  const ordered=[...events].sort((a,b)=>a.start.localeCompare(b.start)||a.id.localeCompare(b.id));
+  const index=ordered.findIndex(event=>event.id===currentId);
+  return {previous:index>0?ordered[index-1]:null,next:index>=0?ordered[index+1]||null:null,index:index+1,total:ordered.length};
+}
 export function recordingPage(events,{category='all',query='',hour='latest',page=1}={}) {
   const counts=new Map();
   for(const event of events)if(event.group==='RecentClips'){

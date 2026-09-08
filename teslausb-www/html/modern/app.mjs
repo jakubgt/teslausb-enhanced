@@ -1,30 +1,34 @@
-import {resolveLibrary,validTrash,recordingPage,escapeHTML as esc,bytesLabel,stampLabel,timeLabel,downloadQuery,CAMERAS} from './model.mjs';
+import {resolveLibrary,validTrash,recordingPage,recordingNeighbors,RECORDINGS_PER_PAGE,escapeHTML as esc,bytesLabel,stampLabel,timeLabel,downloadQuery,CAMERAS} from './model.mjs';
 import {ClipPlayer} from './player.mjs';
 import {mountDevice,hasPendingPowerAction} from './device.js';
 import {mountFiles,configuredFileDrives} from './files.js';
 import {mountTrash} from './trash.js';
+import {mountConnectionBanner} from './connection.mjs';
 
 const $=s=>document.querySelector(s);
 const state={page:'recordings',events:[],paths:[],category:'all',query:'',selected:new Set(),clipPage:1,hour:'latest',day:'latest',library:null,trash:null,trashAvailable:false,config:{},inFlight:false,speedTest:false,downloadCount:0};
-let healthTimer=null,device=null,files=null,trashView=null,libraryAbort=null;
+let healthTimer=null,device=null,files=null,trashView=null,libraryAbort=null,connection=null;
 export async function api(path,options={}) {
   if(!path.startsWith('/api/v1/'))throw new Error('Unsupported API URL.');
+  const contact=connection?.beginRequest();let received=false;
   const controller=new AbortController(),parent=options.signal,abort=()=>controller.abort(parent?.reason);if(parent?.aborted)abort();else parent?.addEventListener('abort',abort,{once:true});
   const timeout=setTimeout(()=>controller.abort(new DOMException('The device did not respond in time.','TimeoutError')),options.timeout||30000);
   try{
     const method=options.method||'GET';const headers={'Accept':'application/json',...options.headers};let body=options.body;
     if(method!=='GET'){headers['X-TeslaUSB-Request']='1';if(body && typeof body==='object'){body=JSON.stringify(body);headers['Content-Type']='application/json';}}
     const response=await fetch(path,{...options,method,headers,body,signal:controller.signal,credentials:'same-origin',cache:'no-store'});
+    received=true;connection?.receivedResponse(contact);
     const text=await response.text();if(text.length>32*1024*1024)throw new Error('Response is too large. Choose a single recording day.');
     let data;try{data=JSON.parse(text);}catch{const error=new Error(response.status===401?'Sign in again to continue.':'The device returned an unexpected response.');error.status=response.status;throw error;}
     if(!data||typeof data!=='object'||Array.isArray(data))throw new Error('The device returned an invalid response.');
     if(!response.ok||data.ok===false){const error=new Error(data.error||data.message||`Request failed (HTTP ${response.status}).`);error.status=response.status;throw error;}return data;
-  }catch(error){if(controller.signal.aborted&&!parent?.aborted)throw new Error('Request timed out. Check the connection and try again.');throw error;}
+  }catch(error){if(!received&&!parent?.aborted)connection?.requestFailed(contact);if(controller.signal.aborted&&!parent?.aborted)throw new Error('Request timed out. Check the connection and try again.');throw error;}
   finally{clearTimeout(timeout);parent?.removeEventListener('abort',abort);}
 }
 function notice(message,action){$('#notice span').textContent=String(message);$('#notice').hidden=false;$('#notice-action').hidden=!action;$('#notice-action').textContent=action?.label||'';$('#notice-action').onclick=action?.run||null;}
 $('#notice-dismiss').onclick=()=>$('#notice').hidden=true;
-const player=new ClipPlayer($('#player'),{api,onDownload:prepareDownload,onTrash:confirmMove,onNotice:notice});
+connection=mountConnectionBanner($('#connection-banner'),{retry:async()=>{if(device)await device.refresh();else await refreshHealth(true);},isPaused:hasPendingPowerAction});
+const player=new ClipPlayer($('#player'),{api,onDownload:prepareDownload,onTrash:confirmMove,onNotice:notice,onNavigate:navigateClip,onMediaError:()=>void refreshHealth(true)});
 
 let theme='auto';try{theme=localStorage.getItem('teslausb-modern-theme')||'auto';}catch{}
 function applyTheme(){if(!['auto','light','dark'].includes(theme))theme='auto';document.documentElement.style.colorScheme=theme==='auto'?'light dark':theme;$('#theme-toggle').textContent='Appearance: '+theme[0].toUpperCase()+theme.slice(1);}
@@ -46,9 +50,22 @@ async function navigate(page){
 }
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>navigate(b.dataset.page));
 function currentPage(){return recordingPage(state.events,{category:state.category,query:state.query,hour:state.hour,page:state.clipPage});}
+function updateClipNavigation(view=currentPage()){
+  const neighbors=recordingNeighbors(view.events,player.event?.id);
+  const scope=state.category==='RecentClips'&&view.hour!=='all'&&view.hour?`${view.hour}:00–${view.hour}:59`:'Selected recordings';
+  player.setNavigation({...neighbors,previous:!!neighbors.previous,next:!!neighbors.next,scope,blocked:state.page!=='recordings'||state.inFlight||state.speedTest||hasPendingPowerAction()});
+}
+async function navigateClip(direction,{autoplay=false}={}){
+  if(state.page!=='recordings'||state.inFlight||state.speedTest||hasPendingPowerAction()||document.hidden||player.suspended)return;
+  const view=currentPage(),neighbors=recordingNeighbors(view.events,player.event?.id),event=direction<0?neighbors.previous:neighbors.next;
+  if(!event)return;
+  const saved=player.snapshot();state.clipPage=Math.floor(view.events.findIndex(item=>item.id===event.id)/RECORDINGS_PER_PAGE)+1;state.selected.clear();
+  const loading=player.setEvent(event,{...saved,position:0,playing:autoplay||saved.playing});renderGrid();await loading;
+}
 function renderGrid(){
   const focused=document.activeElement?.dataset.select;const view=currentPage(),events=view.events,shown=view.items;
   state.clipPage=view.page;if(state.category==='RecentClips')state.hour=view.hour||'latest';
+  updateClipNavigation(view);
   $('#hour-filter').hidden=state.category!=='RecentClips';
   const hours=$('#recording-hour');hours.replaceChildren();
   for(const {value,count} of view.hours)hours.add(new Option(`${value}:00–${value}:59 · ${count} clip${count===1?'':'s'}`,value));
@@ -80,7 +97,7 @@ function updateDayOptions(data){const select=$('#recording-day');select.replaceC
   if(state.day!=='latest'&&!days.includes(state.day))select.add(new Option(state.day,state.day));select.value=state.day;}
 async function loadLibrary(day='latest'){
   if(state.inFlight||state.speedTest){notice(state.speedTest?'Wait for the network test to finish before refreshing footage.':'A recording refresh is already running.');return;}
-  state.inFlight=true;libraryAbort=new AbortController();const saved=player.suspend();const previousDay=state.day;state.day=day;$('#refresh-recordings').disabled=true;$('#recording-day').disabled=true;$('#library-state').textContent='Refreshing the snapshot library…';
+  state.inFlight=true;libraryAbort=new AbortController();const saved=player.suspend();updateClipNavigation();const previousDay=state.day;state.day=day;$('#refresh-recordings').disabled=true;$('#recording-day').disabled=true;$('#library-state').textContent='Refreshing the snapshot library…';
   try{
     const [libraryResult,trashResult]=await Promise.allSettled([api('/api/v1/videos?'+new URLSearchParams({day}),{signal:libraryAbort.signal}),api('/api/v1/trash',{signal:libraryAbort.signal})]);
     if(trashResult.status!=='fulfilled'){state.trashAvailable=false;throw new Error('Trash status is unavailable. The library cannot refresh until hidden recordings can be verified.');}
@@ -99,21 +116,21 @@ async function loadLibrary(day='latest'){
     const same=events.find(e=>e.id===saved.id),event=same||events[0];if(state.page==='recordings'&&!document.hidden){if(event)await player.setEvent(event,same?saved:{});else player.clear();}
     renderGrid();
   }catch(error){state.day=previousDay;$('#recording-day').value=previousDay;$('#library-state').textContent=`Refresh failed: ${error.message}${state.library?' Showing the previous list; it may be out of date.':''}`;if(state.page==='recordings'&&!document.hidden)player.resume();renderGrid();}
-  finally{state.inFlight=false;$('#refresh-recordings').disabled=false;$('#recording-day').disabled=false;refreshHealth();}
+  finally{state.inFlight=false;updateClipNavigation();$('#refresh-recordings').disabled=false;$('#recording-day').disabled=false;refreshHealth();}
 }
 
-let healthInFlight=false;
-async function refreshHealth(){if(healthInFlight||document.hidden||state.speedTest||hasPendingPowerAction())return;healthInFlight=true;try{
+let healthInFlight=null;
+function refreshHealth(force=false){if(healthInFlight)return healthInFlight;if(document.hidden||(!force&&state.speedTest)||hasPendingPowerAction())return Promise.resolve();healthInFlight=(async()=>{
   const [status,maintenance]=await Promise.allSettled([api('/api/v1/status'),api('/api/v1/maintenance')]);
   if(hasPendingPowerAction())return;
   if(status.status==='fulfilled'){const s=status.value.status||status.value;$('#connection-status').textContent='USB: '+String(s.camera_drive_state||'unknown');$('#storage-text').textContent=s.free_space!=null?bytesLabel(s.free_space)+' free':'Storage not reported';const alerts=[];
     if(s.encrypted_clips?.detected)alerts.push(s.encrypted_clips.message||'Encrypted recordings detected. Built-in processing is paused.');
     const temp=Number(s.cpu_temp);if(Number.isFinite(temp)&&(temp>1000?temp/1000:temp)>=68)alerts.push('Device temperature is high. Check Device for details.');
     $('#recording-alert').textContent=alerts.join(' ');$('#recording-alert').hidden=!alerts.length;
-  }else $('#connection-status').textContent='Device status unavailable';
+  }else $('#connection-status').textContent='USB: status unavailable';
   if(maintenance.status==='fulfilled'){const health=maintenance.value.health||{};const snapshot=health.snapshots;$('#fresh-snapshot').textContent=snapshot?.available===true&&snapshot.scan_complete===true&&snapshot.last_completed?.completed_at_utc?new Date(snapshot.last_completed.completed_at_utc).toLocaleString():'Not verified';}
   else $('#fresh-snapshot').textContent='Unavailable';
-}finally{healthInFlight=false;}}
+})().finally(()=>{healthInFlight=null;});return healthInFlight;}
 
 let pendingMove=[];
 function confirmMove(events){if(!state.trashAvailable){notice('Trash is unavailable. Refresh the library before deleting recordings.');return;}pendingMove=events.filter(e=>e&&e.group!=='RecentClips');if(!pendingMove.length)return;
@@ -148,9 +165,10 @@ async function prepareDownload(event,camera){
 }
 
 window.addEventListener('teslausb:pause-media',()=>player.suspend());
-window.addEventListener('teslausb:speed-test',e=>{state.speedTest=e.detail?.active===true;$('#refresh-recordings').disabled=state.speedTest||state.inFlight;$('#recording-day').disabled=state.speedTest||state.inFlight;if(state.speedTest)player.suspend();else if(state.page==='recordings'&&!document.hidden&&!state.inFlight)player.resume();});
+window.addEventListener('teslausb:power-state',()=>{connection.setPaused();updateClipNavigation();});
+window.addEventListener('teslausb:speed-test',e=>{state.speedTest=e.detail?.active===true;$('#refresh-recordings').disabled=state.speedTest||state.inFlight;$('#recording-day').disabled=state.speedTest||state.inFlight;if(state.speedTest)player.suspend();else if(state.page==='recordings'&&!document.hidden&&!state.inFlight)player.resume();updateClipNavigation();});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){player.suspend();libraryAbort?.abort();}else if(state.page==='recordings'&&!state.inFlight&&!state.speedTest)player.resume();});
-window.addEventListener('pagehide',()=>{clearInterval(healthTimer);player.suspend();device?.destroy();device=null;files?.destroy();files=null;trashView?.destroy();trashView=null;libraryAbort?.abort();for(const t of downloadTasks)t.controller?.abort();});
+window.addEventListener('pagehide',event=>{clearInterval(healthTimer);if(!event.persisted)connection.destroy();player.suspend();device?.destroy();device=null;files?.destroy();files=null;trashView?.destroy();trashView=null;libraryAbort?.abort();for(const t of downloadTasks)t.controller?.abort();});
 window.addEventListener('pageshow',e=>{if(!e.persisted)return;if(state.page==='recordings')player.resume();else if(state.page==='device')device=mountDevice($('#device-page'),{api,onNotice:notice});else if(state.page==='files')files=mountFiles($('#files-page'),{api,onNotice:notice,config:state.config});else trashView=mountTrash($('#trash-page'),{api,onNotice:notice,onLibraryChanged:()=>loadLibrary(state.day)});startHealthTimer();});
 
 function startHealthTimer(){clearInterval(healthTimer);healthTimer=setInterval(()=>{if(!player.playing&&!state.inFlight)refreshHealth();},60000);}

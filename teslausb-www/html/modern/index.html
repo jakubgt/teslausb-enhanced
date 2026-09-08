@@ -5,6 +5,8 @@
 <meta name="theme-color" content="#101318"><meta name="referrer" content="same-origin">
 <title>TeslaUSB · Recordings</title>
 <link rel="icon" href="/icons/favicon-32x32.png"><link rel="stylesheet" href="/modern/style.css"><link rel="stylesheet" href="/modern/device.css"><link rel="stylesheet" href="/modern/trash.css">
+<link rel="stylesheet" href="/modern/connection.css">
+<link rel="stylesheet" href="/modern/player-nav.css">
 <script type="module" src="/modern/app.mjs"></script>
 </head>
 <body>
@@ -14,10 +16,11 @@
   <a class="brand" href="/modern/"><span class="brand-mark" aria-hidden="true">↗</span>TeslaUSB</a>
   <div class="sidebar-label">WORKSPACE</div>
   <nav aria-label="Main navigation"><button type="button" data-page="recordings" aria-current="page">Recordings</button><button type="button" data-page="trash">Trash <span id="trash-count"></span></button><button type="button" data-page="device">Device</button><button type="button" data-page="files" hidden>Files</button></nav>
-  <div class="sidebar-bottom"><span id="connection-status">Connecting…</span><small id="storage-text">Storage not checked</small><a href="/index.html?ui=legacy">Classic UI ↗</a></div>
+  <div class="sidebar-bottom"><span id="connection-status">USB: not checked</span><small id="storage-text">Storage not checked</small><a href="/index.html?ui=legacy">Classic UI ↗</a></div>
  </aside>
  <main id="main">
   <header class="app-header"><span>TeslaUSB Enhanced <span class="muted">/</span> <span id="breadcrumb">Recordings</span></span><div class="header-actions"><a href="/index.html?ui=legacy">Classic UI ↗</a><button type="button" id="theme-toggle" class="quiet" aria-label="Change appearance">Appearance: Auto</button></div></header>
+  <div id="connection-banner"></div>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden><span></span><button type="button" id="notice-action" hidden></button><button type="button" id="notice-dismiss" aria-label="Dismiss message">×</button></div>
   <section id="recordings-page" aria-labelledby="recordings-heading">
    <div class="page-heading"><div><h1 id="recordings-heading">Recordings</h1><p>Latest available footage from your snapshot library.</p></div><button type="button" id="refresh-recordings">Refresh</button></div>

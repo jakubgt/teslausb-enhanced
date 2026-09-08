@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildEvents,parseVideoPath,eventMarker,validLocation,resolveLibrary,validTrash,downloadQuery,recordingPage} from '../teslausb-www/html/modern/model.mjs';
+import {buildEvents,parseVideoPath,eventMarker,validLocation,resolveLibrary,validTrash,downloadQuery,recordingPage,recordingNeighbors} from '../teslausb-www/html/modern/model.mjs';
 
 const emptyTrash=()=>({items:[],restored:[],tombstones:[],hidden_media:[]});
+test('viewer neighbors follow time across grid pages without crossing filters or wrapping',()=>{
+  const events=Array.from({length:60},(_,n)=>({id:String(n),start:`2026-09-08_12-${String(n).padStart(2,'0')}-00`,group:'RecentClips'})).reverse();
+  events.push({id:'outside',start:'2026-09-08_11-59-00',group:'RecentClips'});
+  const view=recordingPage(events,{category:'RecentClips',hour:'12',page:2});
+  const neighbors=recordingNeighbors(view.events,'39');assert.equal(neighbors.previous.id,'38');assert.equal(neighbors.next.id,'40');assert.equal(neighbors.index,40);assert.equal(neighbors.total,60);
+  assert.equal(recordingNeighbors(view.events,'0').previous,null);assert.equal(recordingNeighbors(view.events,'59').next,null);
+  assert.deepEqual(recordingNeighbors(view.events,'outside'),{previous:null,next:null,index:0,total:60});
+  assert.equal(view.events[0].id,'59','Navigation does not mutate the newest-first grid');
+});
 const path=(day='2026-09-08',camera='front',group='SavedClips',minute='00')=>`${group}/${day}${group==='RecentClips'?'':'_12-00-00'}/${day}_12-${minute}-00-${camera}.mp4`;
 test('groups event segments and available cameras while keeping Recent minutes separate',()=>{
   const events=buildEvents([path(),path(undefined,'back'),path(undefined,'front',undefined,'01'),path(undefined,'front','RecentClips'),path(undefined,'front','RecentClips','01')]);
