@@ -42,6 +42,14 @@ class ModernStaticHTTPTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="teslausb-static-http-")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.base = Path(cls.temp.name)
+        # Packaged load_module directives may use paths relative to nginx's
+        # prefix. Expose their installed read-only directory in this private
+        # prefix without modifying the system service or module files.
+        module_dir = next((candidate for candidate in
+                           (Path("/usr/lib/nginx/modules"), Path("/usr/share/nginx/modules"))
+                           if candidate.is_dir()), None)
+        if module_dir is not None:
+            (cls.base / "modules").symlink_to(module_dir, target_is_directory=True)
         cls.web = cls.base / "html"
         cls.web.mkdir()
         cls.modules = {}
