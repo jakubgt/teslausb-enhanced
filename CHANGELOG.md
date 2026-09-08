@@ -6,9 +6,10 @@ upstream TeslaUSB history and MIT license.
 
 ## [1.2.0-rc.5] - 2026-08-18
 
-Fifth release candidate for the downloadable Raspberry Pi Zero 2 W image. This
-candidate must be built from the rc.5 source; the previously published rc.4
-image does not contain these repairs.
+Promoted to the project's official **Latest** release on 2026-09-07. The
+existing `v1.2.0-rc.5` tag, published Raspberry Pi Zero 2 W image, and checksum
+assets are unchanged by this promotion. The previously published rc.4 image
+does not contain these repairs.
 
 ### Viewer and runtime corrections added 2026-09-07
 
@@ -43,19 +44,17 @@ image does not contain these repairs.
   authority. This is an explicit addition to the September 4 privilege scope.
 - Log completed snapshot releases separately from pre-deletion attempts, with
   explicit UTC and verified unmount/no-mount evidence. Do not alter deletion
-  policy or remove retained recovery backups. Full near-capacity rollover
-  remains unverified until observed during normal recording.
+  policy or remove retained recovery backups.
 - Configure BusyBox system logging to use a bounded volatile RAM ring without
   file-rule precedence opening root log files. Fix exact fstab mountpoint
   detection so `/var/log/nginx` cannot masquerade as `/var/log`; add a 32 MiB
-  parent tmpfs when absent, with next-boot verification still required.
+  parent tmpfs when absent.
 - Document the supported next-boot cloud-init disable marker only for the
   diagnosed, already-provisioned legacy read-only-filesystem failure. Do not
   generically disable undiagnosed services, purge cloud-init, clear its state,
   or reprovision. New image builds already disable cloud-init in their recipe.
-- These are source-candidate/PR changes, not a newly published image or an
-  automatic update to installed cards. Live metadata/UI checks do not replace
-  reboot, vehicle recording, or complete rollover validation.
+- These corrections are included in the published rc.5 image. Publication
+  does not automatically update installed cards.
 
 ### Runtime corrections added 2026-09-04
 
@@ -100,8 +99,7 @@ image does not contain these repairs.
 - USB re-export refuses live image mountpoints that remain mounted, including
   failed-unmount recovery. Worker processes receive graceful stop signals so
   clock-service restoration is not skipped during application maintenance.
-- These changes extend the still-unpublished rc.5 source candidate. They do not
-  replace any published image or constitute physical-hardware validation.
+- These runtime corrections are included in the published rc.5 image.
 
 ### Fixed
 

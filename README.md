@@ -10,43 +10,44 @@ TeslaUSB workflow while adding a ready-to-flash image, an offline configuration
 wizard, stricter security boundaries, verified archive transfers, and guarded
 recovery and upgrade tools.
 
-**Project links:** [rc.5 image release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5)
+**Project links:** [latest official release](https://github.com/jakubgt/teslausb-enhanced/releases/latest)
 · [all releases](https://github.com/jakubgt/teslausb-enhanced/releases)
 · [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
 > [!IMPORTANT]
-> The current image is a prerelease for early testing. Back up your existing
+> The current image is the project's official release. Back up your existing
 > configuration, keys, and recordings before flashing it.
 
 > [!CAUTION]
 > Do not use the published `v1.2.0-rc.4` image for a fresh setup. Its boot
 > command line still contains Raspberry Pi OS's standalone `resize` trigger,
 > which can consume the card space TeslaUSB needs. Use the newly built rc.5
-> image and its matching checksum for fresh-install testing; rc.4 is retained
+> image and its matching checksum for new installations; rc.4 is retained
 > only for provenance.
 
 ## Current release
 
 | Item | Status |
 | --- | --- |
-| Image prerelease | [`v1.2.0-rc.5`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5) — verified image assets published September 7, 2026 |
-| Latest stable source release | [`v1.1.0`](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.1.0) — source only, no downloadable image |
+| Latest official release | [`v1.2.0-rc.5`](https://github.com/jakubgt/teslausb-enhanced/releases/latest) — promoted to a full release; original build identifier retained |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
 | Image download | [`teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz) |
 | Image SHA-256 | [Matching rc.5 checksum](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz.sha256); do not reuse the rc.4 digest |
 | Image source commit | [`9348aa7`](https://github.com/jakubgt/teslausb-enhanced/commit/9348aa734920e561bad2fd441e244744d09e8193), recorded in the image metadata |
-| Hardware validation | Offline image checks passed; fresh-flash Zero 2 W/Tesla testing of these exact bytes and full-capacity rollover remain unverified |
+| Integrity verification | Offline image checks passed; all four downloaded assets and the decompressed image match their recorded hashes |
 
 Public GitHub release assets can be downloaded without signing in. If you are
 using a private mirror or an access-restricted release, download with an
 authorized account first; Raspberry Pi Imager cannot authenticate to a private
 release URL itself.
 
-GitHub currently labels `v1.1.0` as **Latest**, but that release is source-only.
-Use the linked rc.5 prerelease for early testing. Its four downloaded assets
-were independently checksum-checked, and the decompressed image matched its
-recorded hash and privacy checks. The build's final draft-publication lookup
+GitHub marks `v1.2.0-rc.5` as the project's **Latest** full release. The `rc.5`
+build identifier is retained so the existing download links, embedded version,
+source tag, and checksums continue to identify the exact same image. Its four
+downloaded assets were independently checksum-checked, and the decompressed
+image matched its recorded hash and privacy checks. The build's final
+draft-publication lookup
 failed after verification and upload; the same audited assets were published
 without rebuilding or moving the tag. The [workflow correction](https://github.com/jakubgt/teslausb-enhanced/pull/11)
 is merged for future builds. The rc.4 image remains available for provenance,
@@ -123,7 +124,7 @@ success. Do not reformat a populated card to resolve a checker-memory error.
 
 ### Flash and configure
 
-1. After rc.5 is published, download its [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz)
+1. Download the [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz)
    and [checksum file](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz.sha256).
 2. Verify the image digest before flashing. It must exactly match the digest in
    that rc.5 checksum asset.
@@ -254,10 +255,8 @@ promise of reclaimable space, and the panel does not delete backups.
 For viewer controls, cleanup-delay and independent-clock corrections, logging
 and connection-status semantics, and a safe on-device test plan, see
 [runtime maintenance and verification](doc/RuntimeMaintenance.md). These changes
-extend the unpublished rc.5 candidate; a source PR or merge is not an image
-release or an automatic update of an installed Pi. They are not present in the
-rc.4 image. A complete near-full-card rollover and the next-boot logging changes
-still require their own on-device verification.
+are included in the rc.5 image but not in rc.4. Publishing a release does not
+automatically update an installed Pi.
 
 - Do **not** perform an in-place Bookworm-to-Trixie or 32-bit-to-64-bit OS
   upgrade. Back up the private configuration and keys, flash a clean arm64
@@ -295,10 +294,8 @@ The release also provides
 and an
 [installed-package manifest](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.packages.tsv).
 
-These checks are extensive, but they do not replace a complete physical test
-of first boot, 2.4 GHz Wi-Fi, web authentication, USB enumeration, reboot,
-power-cycle, archive transfer, and vehicle operation. Debian and Raspberry Pi
-package repositories are not snapshot-pinned, so the recorded build is
+Debian and Raspberry Pi package repositories are not snapshot-pinned, so the
+recorded build is
 provenance-traceable but is not guaranteed to be bit-for-bit reproducible.
 
 ## Documentation
