@@ -156,7 +156,7 @@ do
     response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 \
       run_recording_fixture "$entrypoint" GET "$recording_route")"
     assert_contains "$entrypoint rejects GET Trash $trash_action" "$response" 'Status: 405 Method Not Allowed'
-    response="$(HTTP_X_TESLAUSB_REQUEST= HTTP_SEC_FETCH_SITE=same-origin \
+    response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
       run_recording_fixture "$entrypoint" POST "$recording_route")"
     assert_contains "$entrypoint requires CSRF header for Trash $trash_action" "$response" 'Status: 403 Forbidden'
     response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
@@ -173,7 +173,7 @@ done
 
 for entrypoint in api-v1.sh recording-media.sh
 do
-  response="$(HTTP_X_TESLAUSB_REQUEST= HTTP_SEC_FETCH_SITE=same-origin \
+  response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
     run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
   assert_contains "$entrypoint requires CSRF header before preview generation" "$response" 'Status: 403 Forbidden'
   response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
@@ -229,7 +229,7 @@ done
 response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
   run_recording_fixture api-v1.sh POST /api/v1/recordings/preview 'path=fixture')"
 assert_contains 'protected preview POST dispatches its generation operation' "$response" 'fixture-operation: preview-request'
-response="$(HTTP_X_TESLAUSB_REQUEST= HTTP_SEC_FETCH_SITE=same-origin \
+response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
   run_recording_fixture api-v1.sh GET /api/v1/recordings/preview 'path=fixture')"
 assert_contains 'preview GET dispatches status without starting generation' "$response" 'fixture-operation: preview-status'
 response="$(HTTP_SEC_FETCH_SITE=same-origin \
