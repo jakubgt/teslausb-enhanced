@@ -28,6 +28,15 @@ async function run() {
   const showDocument=()=>page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));});
   const pageHide=()=>page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
   const pageShow=()=>page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
+  const assertCameraGrid=async(columns,rows)=>{
+    const grid=await page.locator('#player .video-cell').evaluateAll(cells=>({columns:new Set(cells.map(cell=>Math.round(cell.getBoundingClientRect().left))).size,rows:new Set(cells.map(cell=>Math.round(cell.getBoundingClientRect().top))).size}));
+    assert.deepEqual(grid,{columns,rows});
+  };
+  const zipNames=buffer=>{
+    const names=[];let offset=0;
+    while(offset+30<=buffer.length&&buffer.readUInt32LE(offset)===0x04034b50){const length=buffer.readUInt16LE(offset+26),extra=buffer.readUInt16LE(offset+28),size=buffer.readUInt32LE(offset+18);names.push(buffer.toString('utf8',offset+30,offset+30+length));offset+=30+length+extra+size;}
+    return names;
+  };
   try {
     await page.goto(fixture.url);
     await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();
@@ -47,31 +56,49 @@ async function run() {
     await page.getByRole('button',{name:'Skip back 10 seconds'}).click();assert.ok(Math.abs(await position()-15)<1);
     await page.getByRole('button',{name:'Jump to event',exact:true}).click();assert.ok(Math.abs(await position()-15)<1);
     assert.equal(await page.locator('.event-tick').isVisible(),true);
+    assert.equal(await page.locator('#player [data-camera]').count(),6,'All six recorded camera angles are offered');
+    for(const [camera,label]of [['left_pillar','Left pillar'],['right_pillar','Right pillar']]){
+      await page.getByRole('group',{name:'Focused camera'}).getByRole('button',{name:label,exact:true}).click();await waitMedia();
+      assert.equal(await page.locator('#player video').getAttribute('aria-label'),`${label} recording`);assert.ok(Math.abs(await position()-15)<1);
+      await page.getByRole('button',{name:`Download ${label}`,exact:true}).click();const row=page.locator('.download-row').last();await row.getByRole('link',{name:'Save ZIP'}).waitFor();assert.match(await row.textContent(),/2 original file/);
+      const request=fixture.state.requests.filter(request=>request.path==='/api/v1/recordings/download').at(-1);assert.equal(new URLSearchParams(request.query).get('camera'),camera);
+      const event=page.waitForEvent('download');await row.getByRole('link',{name:'Save ZIP'}).click();const result=await event;const names=zipNames(fs.readFileSync(await result.path()));assert.equal(names.length,2);assert.ok(names.every(name=>name.endsWith(`-${camera}.mp4`)),'Pillar download contains only the selected camera');await row.getByRole('button',{name:'Dismiss',exact:true}).click();await waitMedia();
+    }
     await page.getByRole('group',{name:'Focused camera'}).getByRole('button',{name:'Rear',exact:true}).click();await waitMedia();assert.ok(Math.abs(await position()-15)<1);
     assert.equal(await page.locator('#player video').getAttribute('aria-label'),'Rear recording');
-    await page.getByRole('button',{name:'All cameras',exact:true}).click();await waitMedia(4);
+    await page.getByRole('button',{name:'All cameras',exact:true}).click();await waitMedia(6);await assertCameraGrid(3,2);
     await page.getByRole('button',{name:'Play recording',exact:true}).click();await page.waitForFunction(()=>[...document.querySelectorAll('#player video')].every(video=>!video.paused&&video.currentTime>15));
     await page.getByRole('button',{name:'Pause recording',exact:true}).click();
     const times=await page.locator('#player video').evaluateAll(videos=>videos.map(video=>video.currentTime));assert.ok(Math.max(...times)-Math.min(...times)<.6,'All camera playback stays synchronized');
     await page.getByRole('combobox',{name:'Playback speed'}).selectOption('2');assert.ok((await page.locator('#player video').evaluateAll(videos=>videos.map(video=>video.playbackRate))).every(value=>value===2));
     await seek(21);
-    await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(4);
-    await pageHide();assert.equal(await page.locator('#player video[src]').count(),0);await pageShow();await waitMedia(4);assert.ok(Math.abs(await position()-21)<1,'Restoring a cached page retains the player position');
+    await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);
+    await pageHide();assert.equal(await page.locator('#player video[src]').count(),0);await pageShow();await waitMedia(6);assert.ok(Math.abs(await position()-21)<1,'Restoring a cached page retains the player position');
     assert.ok(Math.abs(await position()-21)<1,'Refresh preserves position');assert.equal(await page.locator('[data-camera="back"]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('[data-quality]').inputValue(),'high');
-    fixture.state.failVideos=true;await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'Showing the previous list'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),4);await waitMedia(4);fixture.state.failVideos=false;
-    fixture.state.previewState='ready';await page.locator('[data-quality]').selectOption('low');await waitMedia(4);await page.locator('[data-quality-status]').filter({hasText:'Low preview ·'}).waitFor();
+    fixture.state.failVideos=true;await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'Showing the previous list'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),4);await waitMedia(6);fixture.state.failVideos=false;
+    fixture.state.previewState='ready';await page.locator('[data-quality]').selectOption('low');await waitMedia(6);await page.locator('[data-quality-status]').filter({hasText:'Low preview ·'}).waitFor();
     assert.ok((await page.locator('#player video').evaluateAll(videos=>videos.map(video=>video.getAttribute('src')))).every(src=>src.startsWith('/api/v1/recordings/preview/media?')));
-    await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(4);
+    await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);
     await page.locator('#theme-toggle').click();await screenshot('recordings-desktop-dark');await noOverflow('Desktop recordings');
     console.log('PASS: latest day, low/high playback, all cameras, event navigation, and refresh continuity');
 
     await page.getByRole('button',{name:'Download Rear',exact:true}).click();await page.locator('.download-row').last().getByRole('link',{name:'Save ZIP'}).waitFor();
     assert.match(await page.locator('.download-row').last().textContent(),/2 original file/);
     const downloadEvent=page.waitForEvent('download');await page.locator('.download-row').last().getByRole('link',{name:'Save ZIP'}).click();const download=await downloadEvent;const content=fs.readFileSync(await download.path());assert.equal(content.readUInt32LE(0),0x04034b50);await page.locator('.download-row').last().getByRole('button',{name:'Dismiss',exact:true}).click();
-    await page.getByRole('button',{name:'Download all cameras',exact:true}).click();await page.locator('.download-row').last().getByRole('link',{name:'Save ZIP'}).waitFor();assert.match(await page.locator('.download-row').last().textContent(),/8 original file/);await page.locator('.download-row').last().getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.getByRole('button',{name:'Download all cameras',exact:true}).click();await page.locator('.download-row').last().getByRole('link',{name:'Save ZIP'}).waitFor();assert.match(await page.locator('.download-row').last().textContent(),/12 original file/);await page.locator('.download-row').last().getByRole('button',{name:'Cancel',exact:true}).click();
     fixture.state.downloadDelay=1200;await page.getByRole('button',{name:'Download all cameras',exact:true}).click();await page.locator('.download-row').getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await page.locator('.download-row').count(),0);fixture.state.downloadDelay=0;
     fixture.state.failDownload=true;await page.getByRole('button',{name:'Download all cameras',exact:true}).click();await page.getByRole('button',{name:'Retry',exact:true}).waitFor();fixture.state.failDownload=false;await page.getByRole('button',{name:'Retry',exact:true}).click();await page.locator('.download-row').getByRole('link',{name:'Save ZIP'}).waitFor();await page.locator('.download-row').getByRole('button',{name:'Cancel',exact:true}).click();
     console.log('PASS: original downloads, ZIP handoff, cancel, and error/retry');
+
+    const first=fixture.state.events.find(event=>event.event===FIRST_EVENT),completeFiles=[...first.files];
+    first.files=completeFiles.filter(file=>!['left_pillar','right_pillar'].includes(file.camera));
+    await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(4);assert.equal(await page.locator('#player [data-camera]').count(),4);await assertCameraGrid(2,2);
+    first.files=completeFiles.filter(file=>file.name!==`${first.stamps[1]}-right_pillar.mp4`);
+    await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);
+    await page.locator('[data-quality]').selectOption('high');await waitMedia(6);await seek(75);await waitMedia(5);
+    assert.equal(await page.locator('#player .video-cell').count(),6);assert.equal(await page.locator('#player .video-error').filter({hasText:'This camera is missing for this segment.'}).count(),1);assert.equal(await page.locator('#player [data-camera="right_pillar"]').count(),1,'A camera present in another segment remains selectable');
+    first.files=completeFiles;await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);await seek(21);await waitMedia(6);
+    console.log('PASS: left/right pillar selection and downloads, older four-camera events, and a missing segment camera');
 
     await nav('Device');assert.equal(await page.locator('#player video[src]').count(),0,'Leaving recordings releases all video sources');await page.getByText(/Status refreshed/).waitFor();
     await page.getByRole('tab',{name:'Archive',exact:true}).click();await page.getByRole('button',{name:'Sync now',exact:true}).click();await page.getByText(/Archive sync requested/).first().waitFor();
@@ -90,18 +117,18 @@ async function run() {
     await page.getByRole('combobox',{name:'Storage area'}).selectOption({label:'LightShow'});await page.getByRole('option',{name:'lightshow.fseq',exact:true}).waitFor();await screenshot('files-desktop-dark');await noOverflow('Desktop Files');
     console.log('PASS: device logs, actions, speed cancellation, and configured files');
 
-    await nav('Recordings');await waitMedia(4);await page.locator('#player [data-trash]').click();await page.locator('#move-confirm').click();await page.getByText(/1 recordings moved to Trash/).waitFor();assert.equal(fixture.state.trash.size,1);assert.equal(await page.locator('#clip-grid .clip-card').count(),3);
+    await nav('Recordings');await waitMedia(6);await page.locator('#player [data-trash]').click();await page.locator('#move-confirm').click();await page.getByText(/1 recordings moved to Trash/).waitFor();assert.equal(fixture.state.trash.size,1);assert.equal(await page.locator('#clip-grid .clip-card').count(),3);
     await page.getByRole('button',{name:'Undo',exact:true}).click();await page.getByText('Recordings restored.',{exact:true}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),4,'Undo restores the moved recording using status.items');assert.equal([...fixture.state.trash.values()][0].state,'restored');
     await page.locator(`#clip-grid [data-open="${FIRST_EVENT}"]`).first().click();await page.locator('#player [data-trash]').click();await page.locator('#move-confirm').click();await page.getByText(/1 recordings moved to Trash/).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),3);
     await nav('Trash');await page.locator('.trash-item').waitFor();assert.match(await page.locator('.trash-item').textContent(),/2026-09-08/);await page.getByRole('button',{name:'View clip',exact:true}).click();await page.locator('.trash-preview video').waitFor();await page.waitForFunction(()=>document.querySelector('.trash-preview video')?.readyState>=2);await screenshot('trash-desktop-dark');
     await hideDocument();assert.equal(await page.locator('.trash-preview video[src]').count(),0,'Hidden browser tabs release Trash preview');await showDocument();await page.getByRole('button',{name:'View clip',exact:true}).click();await page.locator('.trash-preview video[src]').waitFor();await nav('Device');assert.equal(await page.locator('.trash-preview video[src]').count(),0,'Leaving Trash releases preview');await nav('Trash');await page.getByRole('button',{name:'View clip',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.trash-preview video')?.readyState>=2);
     await page.getByRole('button',{name:'Restore',exact:true}).click();await page.getByText(/restored to the library/).first().waitFor();assert.equal([...fixture.state.trash.values()][0].state,'restored');await nav('Recordings');await page.locator('#clip-grid .clip-card').filter({hasText:'Restored'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),4);
-    await page.locator(`#clip-grid [data-open="${FIRST_EVENT}"]`).first().click();await page.locator('[data-quality-status]').filter({hasText:'Low preview is unavailable'}).waitFor();await page.getByRole('button',{name:'Play original',exact:true}).click();await waitMedia(4);await page.getByRole('button',{name:'Pause recording',exact:true}).click();
+    await page.locator(`#clip-grid [data-open="${FIRST_EVENT}"]`).first().click();await page.locator('[data-quality-status]').filter({hasText:'Low preview is unavailable'}).waitFor();await page.getByRole('button',{name:'Play original',exact:true}).click();await waitMedia(6);await page.getByRole('button',{name:'Pause recording',exact:true}).click();
     await page.reload();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').filter({hasText:'Restored'}).count(),1,'Restored fixture survives page reload');
     console.log('PASS: trash move, original preview, restore, and reload persistence');
 
-    await page.locator('#theme-toggle').click();await page.getByRole('button',{name:'Play original',exact:true}).click();await waitMedia();await page.getByRole('button',{name:'Pause recording',exact:true}).click();await screenshot('recordings-desktop-light');
-    await page.setViewportSize({width:390,height:844});await screenshot('recordings-mobile-light');await noOverflow('Mobile recordings');
+    await page.locator('#theme-toggle').click();await page.getByRole('button',{name:'Play original',exact:true}).click();await waitMedia();await page.getByRole('button',{name:'Pause recording',exact:true}).click();await page.getByRole('button',{name:'All cameras',exact:true}).click();await waitMedia(6);await assertCameraGrid(3,2);await screenshot('recordings-desktop-light');
+    await page.setViewportSize({width:390,height:844});await assertCameraGrid(2,3);await screenshot('recordings-mobile-light');await noOverflow('Mobile recordings');
     await nav('Device');await page.getByText(/Status refreshed/).waitFor();await page.getByRole('tab',{name:'Tools',exact:true}).click();await noOverflow('Mobile Device');await screenshot('device-tools-mobile-light');
     await nav('Files');await page.getByText(/Available drives:/).waitFor();await page.getByRole('option',{name:'Evening drive.wav',exact:true}).waitFor();await noOverflow('Mobile Files');await screenshot('files-mobile-light');
     await nav('Trash');await page.getByText(/Trash is empty/).waitFor();await noOverflow('Mobile Trash');

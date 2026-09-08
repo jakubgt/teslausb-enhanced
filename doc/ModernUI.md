@@ -13,6 +13,11 @@ snapshot footage**, not a live connection to Tesla cameras. The screen reports
 the newest listed recording, last verified completed snapshot, and last library
 refresh separately; USB connection alone does not prove active recording.
 
+Six exterior camera files are supported: Front, Rear, Left repeater, Right
+repeater, Left pillar, and Right pillar. The sample includes all six. Real clips
+show the cameras actually recorded, so older four-camera footage remains usable;
+a camera missing from a particular segment is identified in the All cameras view.
+
 The date filter defaults to the newest date with visible clips, including restored
 copies and skipping dates emptied by Trash. Categories, search, selection, and
 pagination operate within that day. Refresh retains the current recording,

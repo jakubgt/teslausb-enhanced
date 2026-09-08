@@ -8,10 +8,11 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
+import {CAMERAS as CAMERA_LABELS} from '../teslausb-www/html/modern/model.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../teslausb-www/html');
-const CAMERAS = ['front', 'back', 'left_repeater', 'right_repeater'];
+const CAMERAS = Object.keys(CAMERA_LABELS);
 export const NEWEST_DAY = '2026-09-08';
 export const FIRST_EVENT = 'SentryClips/2026-09-08_18-40-00';
 

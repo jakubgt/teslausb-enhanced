@@ -11,6 +11,17 @@ test('groups event segments and available cameras while keeping Recent minutes s
   assert.equal(downloadQuery(saved,'all').get('segment'),null);
   const recent=events.find(e=>e.group==='RecentClips');assert.equal(downloadQuery(recent,'front').get('segment'),recent.start);
 });
+test('recognizes all six exterior camera files and preserves missing segment availability',()=>{
+  const cameras=['front','back','left_repeater','right_repeater','left_pillar','right_pillar'];
+  const files=cameras.map(camera=>path(undefined,camera));
+  files.push(path(undefined,'front',undefined,'01'),path(undefined,'right_pillar',undefined,'01'));
+  const [event]=buildEvents(files);
+  assert.deepEqual(event.cameras,cameras);assert.equal(event.segments.length,2);
+  assert.match(event.segments[0].files.left_pillar.url,/-left_pillar\.mp4$/);
+  assert.equal(event.segments[1].files.left_pillar,undefined);
+  assert.match(event.segments[1].files.right_pillar.url,/-right_pillar\.mp4$/);
+  assert.deepEqual(buildEvents(files.filter(file=>!file.includes('_pillar')))[0].cameras,cameras.slice(0,4));
+});
 test('rejects traversal, unknown cameras, and invalid calendar paths',()=>{
   for(const value of ['../'+path(),path().replace('front','cabin'),path().replaceAll('2026-09-08','2026-02-31'),path().replace('_12-00-00/','/'),null])assert.equal(parseVideoPath(value),null);
 });

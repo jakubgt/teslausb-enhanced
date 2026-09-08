@@ -41,6 +41,9 @@ class ParsingTests(unittest.TestCase):
 
     def test_relative_filename_validation(self):
         self.assertEqual(media.file_parts(EVENT + "/" + FRONT)[-1], FRONT)
+        for camera in ("front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar"):
+            name = FRONT.replace("front", camera)
+            self.assertEqual(media.file_parts(EVENT + "/" + name)[-1], name)
         for name in ("../" + FRONT, "encryptedclips/" + FRONT, "event.json", FRONT + ".html",
                      FRONT.replace("front", "unknown"), FRONT.replace("2026-09-07", "2026-02-30")):
             with self.subTest(name=name), self.assertRaises(media.MediaError):
@@ -109,7 +112,8 @@ class DownloadTests(unittest.TestCase):
         self.assertIn("attachment", headers["Content-Disposition"])
 
     def test_multi_camera_zip_is_valid_uncompressed_originals(self):
-        contents = [(FRONT, b"front-ctts\x00\x80"), (BACK, b"rear-ctts\xff" * 100)]
+        contents = [(FRONT.replace("front", camera), camera.encode("ascii") + b"-ctts\x00\x80" * (i + 1))
+                    for i, camera in enumerate(("front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar"))]
         selection = self.selection(contents)
         output = io.BytesIO()
         media.download(selection, output)

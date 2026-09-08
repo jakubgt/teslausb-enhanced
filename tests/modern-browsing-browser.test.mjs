@@ -6,9 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {createPreviewServer, NEWEST_DAY, FIRST_EVENT} from '../tools/modern-preview-server.mjs';
+import {CAMERAS} from '../teslausb-www/html/modern/model.mjs';
 const require=createRequire(import.meta.url);
 const {chromium}=require('playwright');
-const CAMERA_NAMES=['front','back','left_repeater','right_repeater'];
+const CAMERA_NAMES=Object.keys(CAMERAS);
 
 function fixtureEvent(event,stamps) {
   return {event,stamps,files:stamps.flatMap(stamp=>CAMERA_NAMES.map(camera=>({name:`${stamp}-${camera}.mp4`,camera})))};
@@ -47,6 +48,8 @@ async function run() {
     await page.goto(fixture.url);
     await page.locator('#library-state').filter({hasText:'recordings available'}).waitFor();
     await waitMedia();
+    assert.equal(CAMERA_NAMES.length,6);
+    assert.equal(await page.locator('#player [data-camera]').count(),6,'Dense Recent fixtures include all six cameras');
     assert.equal(await page.locator('#recording-day').inputValue(),'latest');
     assert.match(await page.locator('#recording-day option:checked').textContent(),new RegExp(NEWEST_DAY));
     assert.equal(await cards().count(),20,'Initial library uses a20-event page');
