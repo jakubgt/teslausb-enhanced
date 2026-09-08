@@ -76,9 +76,18 @@ semantics](RecordingTrash.md) for exact behavior and limits.
 
 Device has Overview, Archive, Logs, and Tools panels. Archive includes Sync now,
 pending files/bytes, progress, errors, and a persistent last successful archive
-timestamp. Tools include a cancellable network speed test, restart, USB
+timestamp. Tools include a cancellable network speed test, Power controls, USB
 connect/disconnect, USB repair, and SSH help. Playback pauses for the speed test.
 Storage, temperature, power/throttling, and encrypted-recording alerts are retained.
+
+The Power card groups Reboot and Shut down TeslaUSB. Both require confirmation
+and pause playback. Shutdown takes the Pi offline; starting it again requires
+disconnecting and reconnecting power after it finishes shutting down. The API
+acknowledges that the action was queued, not that the device completed it. Device
+polling and action buttons pause until a manual status check receives a response;
+failed or lost power requests are never retried automatically. A successful status
+check confirms connectivity only. The local preview simulates both actions and
+never issues a host power command.
 
 Logs separate diagnostics, archive, setup, and maintenance. Each supports refresh,
 search, line wrapping, full captured text, and download. Bounded log tails clearly

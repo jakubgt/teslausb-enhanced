@@ -148,6 +148,20 @@ run_reboot() {
   exit 127
 }
 
+run_shutdown() {
+  local candidate
+
+  for candidate in /usr/bin/systemctl /bin/systemctl
+  do
+    if [[ -x "$candidate" ]]
+    then
+      exec "$candidate" --no-block poweroff
+    fi
+  done
+  printf 'teslausb-web-sudo: shutdown is unavailable\n' >&2
+  exit 127
+}
+
 (( $# == 1 )) || usage_error
 
 case "$1" in
@@ -175,6 +189,9 @@ case "$1" in
     ;;
   reboot)
     run_reboot
+    ;;
+  shutdown)
+    run_shutdown
     ;;
   gadget-enable)
     unset TESLAUSB_GADGET_LOCK_HELD

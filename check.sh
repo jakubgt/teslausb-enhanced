@@ -93,6 +93,7 @@ shellcheck --exclude=SC1091 \
            ./teslausb-www/html/cgi-bin/pairBLEkey.sh \
            ./teslausb-www/html/cgi-bin/randomdata.sh \
            ./teslausb-www/html/cgi-bin/reboot.sh \
+           ./teslausb-www/html/cgi-bin/shutdown.sh \
            ./teslausb-www/html/cgi-bin/repairgadget.sh \
            ./teslausb-www/html/cgi-bin/reload.sh \
            ./teslausb-www/html/cgi-bin/recording-media.sh \

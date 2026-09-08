@@ -117,7 +117,7 @@ function element(tag, className, text) {
 }
 
 export function mountDevice(container, {api, onNotice = () => {}}) {
-  let destroyed = false, busy = false, status = null, maintenance = null, poll = null, refreshing = null, logGeneration = 0;
+  let destroyed = false, busy = false, powerPending = false, statusGeneration = 0, status = null, maintenance = null, poll = null, refreshing = null, logGeneration = 0;
   let selectedLog = 'diagnostics', selectedPanel = 'overview', speedController = null, speedTimer = null;
   const controllers = new Set(), logCache = new Map();
   const root = element('div', 'device-root');
@@ -138,7 +138,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     <section id="device-panel-tools" role="tabpanel" aria-labelledby="device-tab-tools" data-section="tools" hidden>
       <div class="device-tools-grid"><div class="device-card"><h2>Network speed test</h2><p>Measure the connection from TeslaUSB to this browser. Playback pauses for the test.</p><button type="button" data-device="speed">Run 15-second test</button><p class="device-status" data-device="speed-status" role="status">Ready when you are.</p></div>
       <div class="device-card"><h2>USB drives</h2><p data-device="drive-state">Checking USB connection…</p><p>Pause Dashcam in your vehicle before disconnecting or repairing the drives.</p><div class="device-actions"><button type="button" data-action="toggle" disabled>Check USB status first</button><button type="button" data-action="repair">Repair USB</button></div></div>
-      <div class="device-card"><h2>Restart device</h2><p>Restarting interrupts recording access, file transfers, and archive work.</p><button type="button" class="device-danger" data-action="reboot">Restart TeslaUSB</button></div>
+      <div class="device-card"><h2>Power</h2><p>Pause Dashcam and finish file transfers or archive work before either action.</p><p>Reboot restarts TeslaUSB. Shutdown takes it offline; turning it on again requires a power cycle.</p><div class="device-actions"><button type="button" data-action="reboot">Reboot TeslaUSB</button><button type="button" class="device-danger" data-action="shutdown">Shut down TeslaUSB</button></div><p class="device-status" data-device="power-status" role="status" aria-live="polite"></p></div>
       <div class="device-card"><h2>SSH help</h2><p data-device="ssh-status">SSH service status has not been checked.</p><p>Build a command to run in your own terminal. These fields stay in this page and are never stored.</p>
         <div class="device-ssh-fields"><label>Username<input data-ssh="user" value="pi" autocomplete="off" spellcheck="false"></label><label>Hostname or IP<input data-ssh="host" autocomplete="off" spellcheck="false"></label><label>Port<input data-ssh="port" value="22" inputmode="numeric" autocomplete="off"></label><label>Local key path (optional)<input data-ssh="key" placeholder="/home/me/.ssh/id_ed25519" autocomplete="off" spellcheck="false"></label></div>
         <label class="device-command">Terminal command<input data-device="ssh-command" readonly spellcheck="false"></label><button type="button" data-device="ssh-copy">Copy command</button><p data-device="ssh-help" class="device-status" role="status"></p>
@@ -174,7 +174,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     const driveLabels = {disabled: 'USB drives are disabled.', prepared: 'USB prepared; no host connection.', paused: 'Camera image is temporarily detached.', unavailable: 'Camera image is not attached.', connected: 'Camera drive is connected to the host.', suspended: 'The host suspended the USB connection.', disconnected: 'Waiting for a USB host.', connecting: 'USB connection is in progress.', unknown: 'USB connection status is unavailable.'};
     say('drive-state', driveLabels[s.camera_drive_state] || driveLabels.unknown);
     const toggle = root.querySelector('[data-action="toggle"]');
-    toggle.disabled = busy || !['yes', 'no'].includes(s.drives_active);
+    toggle.disabled = busy || powerPending || !['yes', 'no'].includes(s.drives_active);
     toggle.textContent = s.drives_active === 'yes' ? 'Disconnect USB drives' : s.drives_active === 'no' ? 'Connect USB drives' : 'Check USB status first';
     const archive = archiveDeviceView(status), holder = find('archive');
     holder.replaceChildren(element('h3', archive.state === 'error' ? 'device-error' : '', archive.summary));
@@ -188,7 +188,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
       if (!archive.lastSuccess && archive.lastFinished) holder.append(element('p', 'device-muted', `Last attempt finished ${timestamp(archive.lastFinished)}. Earlier success is not reported by this service.`));
     }
     if (archive.message) holder.append(element('p', archive.state === 'error' ? 'device-error' : 'device-muted', archive.message));
-    root.querySelector('[data-action="sync"]').disabled = busy || archive.state === 'running';
+    root.querySelector('[data-action="sync"]').disabled = busy || powerPending || archive.state === 'running';
   }
   function showMaintenance() {
     const health = maintenance?.health;
@@ -223,23 +223,25 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     }
   }
   async function refresh() {
-    if (destroyed) return;
+    if (destroyed || (busy && powerPending)) return;
     if (refreshing) return refreshing;
+    const generation = statusGeneration;
     find('refresh').disabled = true;
     say('status', 'Refreshing device and maintenance status…');
     refreshing = (async () => {
       const results = await Promise.allSettled([request('/api/v1/status'), request('/api/v1/maintenance')]);
-      if (destroyed) return;
+      if (destroyed || generation !== statusGeneration) return;
       const errors = [];
       status = results[0].status === 'fulfilled' ? results[0].value : null;
+      if (status && powerPending) { powerPending = false; say('power-status', 'The device responded to this status check. Power-action completion is not verified.'); }
       maintenance = results[1].status === 'fulfilled' && results[1].value?.schema_version === 1 ? results[1].value : null;
       if (!status) errors.push(`Device status unavailable: ${results[0].reason?.message || 'invalid response'}`);
       if (!maintenance) errors.push(`Maintenance status unavailable: ${results[1].reason?.message || 'invalid response'}`);
-      showStatus(); showMaintenance();
+      updateBusy(); showMaintenance();
       say('status', errors.length ? errors.join(' · ') : `Status refreshed ${new Date().toLocaleTimeString()} (this browser).`, errors.length > 0);
     })().finally(() => {
       refreshing = null;
-      if (!destroyed) { find('refresh').disabled = false; clearTimeout(poll); poll = setTimeout(() => { if (selectedPanel === 'archive' || selectedPanel === 'overview') void refresh(); }, 30000); }
+      if (!destroyed) { updateBusy(); clearTimeout(poll); if (!powerPending) poll = setTimeout(() => { if (selectedPanel === 'archive' || selectedPanel === 'overview') void refresh(); }, 30000); }
     });
     return refreshing;
   }
@@ -283,7 +285,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     } catch (error) { if (!destroyed && generation === logGeneration) say('log-status', error.name === 'AbortError' ? 'Log request timed out or was cancelled. Use Refresh saved file to retry.' : error.message, true); }
   }
   async function generateDiagnostics() {
-    if (busy) return;
+    if (busy || powerPending) return;
     busy = true; updateBusy();
     say('log-status', 'Generating fresh diagnostics. This can take up to two minutes…');
     try {
@@ -334,6 +336,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     window.dispatchEvent(new CustomEvent('teslausb:speed-test', {detail: {active: false}}));
   }
   async function speedTest() {
+    if (powerPending || busy) return;
     if (speedController) { stopSpeed('Speed test cancelled.'); return; }
     window.dispatchEvent(new CustomEvent('teslausb:pause-media'));
     window.dispatchEvent(new CustomEvent('teslausb:speed-test', {detail: {active: true}}));
@@ -358,31 +361,37 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     } catch (error) { if (speedController === controller) stopSpeed(error.name === 'AbortError' ? 'Speed test cancelled.' : `Speed test failed: ${error.message}`); }
   }
   function updateBusy() {
-    root.querySelectorAll('[data-action]').forEach(button => { button.disabled = busy; });
-    find('generate').disabled = busy;
+    root.querySelectorAll('[data-action]').forEach(button => { button.disabled = busy || powerPending; });
+    find('generate').disabled = busy || powerPending;
+    find('speed').disabled = busy || powerPending;
+    find('refresh').disabled = busy || !!refreshing;
     showStatus();
   }
   async function action(id) {
-    if (busy) return;
+    if (busy || powerPending) return;
+    const isPower = id === 'reboot' || id === 'shutdown';
     const settings = {
       sync: {path: 'sync', message: 'Archive sync requested. Transfer progress will appear when the archive service starts.'},
       toggle: {path: 'drives/toggle', confirm: status?.drives_active === 'yes' ? 'Disconnect all USB drives? Pause Dashcam in your vehicle first. Recording to these drives stops until they reconnect.' : 'Connect USB drives to the vehicle?', message: 'USB action completed. Checking the actual connection state…'},
       repair: {path: 'drives/repair', confirm: 'Repair the USB connection? Pause Dashcam first. This briefly disconnects every virtual drive while the USB gadget is rebuilt and verified.', message: 'USB gadget rebuilt and verified.'},
-      reboot: {path: 'reboot', confirm: 'Restart TeslaUSB? Pause Dashcam first. Recording access, playback, uploads, and archive work will be interrupted.', message: 'Restart accepted. The device may be unreachable for a moment. Use Refresh status after it returns.'}
+      reboot: {path: 'reboot', confirm: 'Reboot TeslaUSB? Pause Dashcam first. Recording access, playback, uploads, and archive work will be interrupted. The device will restart.', message: 'Reboot queued. The device may be unreachable for a moment. Use Refresh status after it returns.'},
+      shutdown: {path: 'shutdown', confirm: 'Shut down TeslaUSB? Pause Dashcam first and finish file transfers or archive work. Recording access will stop. Turning the Pi on again requires a power cycle; this page cannot turn it back on. Continue?', message: 'Shutdown queued. Wait for the Pi to finish shutting down before disconnecting power. Turning it on again requires a power cycle.'}
     }[id];
     if (!settings || id === 'toggle' && !['yes', 'no'].includes(status?.drives_active)) return;
     if (settings.confirm && !window.confirm(settings.confirm)) return;
-    busy = true; updateBusy(); stopSpeed('Speed test stopped for device action.');
+    busy = true;
+    if (isPower) { powerPending = true; statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
+    updateBusy(); stopSpeed('Speed test stopped for device action.');
     if (id !== 'sync') window.dispatchEvent(new CustomEvent('teslausb:pause-media'));
-    const key = id === 'sync' ? 'sync-status' : 'action-status'; say(key, 'Request in progress…');
+    const key = isPower ? 'power-status' : id === 'sync' ? 'sync-status' : 'action-status'; say(key, 'Request in progress…');
     try {
       const result = await request(`/api/v1/actions/${settings.path}`, {method: 'POST', headers: {'X-TeslaUSB-Request': '1'}}, id === 'repair' ? 60000 : 30000);
       if (result?.ok === false) throw new Error(result.error || 'The device rejected the action.');
       if (destroyed) return;
       say(key, settings.message); onNotice(settings.message);
-      if (id !== 'reboot') await refresh();
-      else { status = null; maintenance = null; showStatus(); showMaintenance(); say('status', 'Restart requested. Current device status is unknown until refreshed.'); }
-    } catch (error) { if (!destroyed) say(key, `Action could not be confirmed: ${error.message}. Refresh status before retrying.`, true); }
+      if (!isPower) await refresh();
+      else { status = null; maintenance = null; showStatus(); showMaintenance(); say('status', `${id === 'shutdown' ? 'Shutdown' : 'Reboot'} requested. Current device status is unknown until refreshed.`); }
+    } catch (error) { if (!destroyed) { say(key, `Action could not be confirmed: ${error.message}. Refresh status before retrying.`, true); if (isPower) { status = null; maintenance = null; showStatus(); showMaintenance(); say('status', 'Power-action result is unknown. Use Refresh status to check the connection before retrying.', true); } } }
     finally { busy = false; if (!destroyed) updateBusy(); }
   }
   function updateSsh() {

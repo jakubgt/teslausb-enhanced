@@ -23,7 +23,7 @@ fi
 # each legacy-compatible implementation. This keeps a newly added route from
 # accidentally inheriting the historical GET behavior.
 case "$route" in
-  /actions/sync|/actions/reboot|/actions/drives/toggle|/actions/drives/repair|/actions/diagnostics|/actions/ble/pair|\
+  /actions/sync|/actions/reboot|/actions/shutdown|/actions/drives/toggle|/actions/drives/repair|/actions/diagnostics|/actions/ble/pair|\
   /files/upload|/files/copy|/files/move|/files/delete|/files/mkdir|\
   /trash/move|/trash/restore|/trash/delete)
     cgi_require_method POST
@@ -52,7 +52,7 @@ case "$route" in
     "trash": "/api/v1/trash",
     "speed_test": "/api/v1/speed-test",
     "ble_status": "/api/v1/ble/status",
-    "actions": ["sync", "reboot", "drives/toggle", "drives/repair", "diagnostics", "ble/pair"],
+    "actions": ["sync", "reboot", "shutdown", "drives/toggle", "drives/repair", "diagnostics", "ble/pair"],
     "files": ["list", "download", "download-zip", "upload", "copy", "move", "delete", "mkdir"]
   }
 }
@@ -89,6 +89,10 @@ EOF
   /actions/reboot)
     cgi_require_method POST
     exec "$script_dir/reboot.sh"
+    ;;
+  /actions/shutdown)
+    cgi_require_method POST
+    exec "$script_dir/shutdown.sh"
     ;;
   /actions/drives/toggle)
     cgi_require_method POST

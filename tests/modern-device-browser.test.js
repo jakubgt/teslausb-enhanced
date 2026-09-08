@@ -23,18 +23,28 @@ async function run() {
   try {
     browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true});
     const page = await browser.newPage({viewport: {width: 1440, height: 1080}, acceptDownloads: true});
-    const errors = [], mutations = [];
-    let failStatus = false;
+    const errors = [], mutations = [], requests = [];
+    let failStatus = false, powerResponse = 'accepted';
+    await page.clock.install();
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/api/v1/**', async route => {
       const request = route.request(), pathname = new URL(request.url()).pathname;
+      requests.push({path: pathname, method: request.method()});
       if (pathname === '/api/v1/status') {
         if (failStatus) return route.fulfill({status: 503, body: 'Offline'});
         return route.fulfill({json: {uptime: '90061', total_space: 100000000000, free_space: 20000000000, cpu_temp: '53000', fan_speed: '1200', camera_drive_state: 'connected', drives_active: 'yes', wifi_ssid: 'Garage', wifi_ip: '192.0.2.42', throttled: '0x10000', archive_status: {schema_version: 1, last_result: 'running', pending_files: 3, pending_bytes: 3000, transferred_files: 2, transferred_bytes: 2000}}});
       }
       if (pathname === '/api/v1/maintenance') return route.fulfill({json: {schema_version: 1, ssh: {service_state: 'active', enabled_state: 'enabled'}, health: {schema_version: 1, snapshots: {available: true, scan_complete: true, completed_count: 8, last_completed: {completed_at_utc: '2026-09-08T15:00:00Z'}}, storage: {}, read_only: {root: true, boot: true}}, logs: {diagnostics: {available: true, size_bytes: 24}, archiveloop: {available: true, truncated: true, size_bytes: 10000000}}}});
       if (pathname.startsWith('/api/v1/maintenance/logs/')) return route.fulfill({status: 200, contentType: 'text/plain;charset=utf-8', headers: {'X-TeslaUSB-Truncated': pathname.endsWith('archiveloop') ? 'true' : 'false', 'X-TeslaUSB-Original-Size': pathname.endsWith('archiveloop') ? '10000000' : '24'}, body: 'first line\nERROR useful\nlast line\n'});
-      if (pathname.startsWith('/api/v1/actions/')) { mutations.push({path: pathname, method: request.method(), csrf: request.headers()['x-teslausb-request']}); return route.fulfill({json: {ok: true}}); }
+      if (pathname.startsWith('/api/v1/actions/')) {
+        mutations.push({path: pathname, method: request.method(), csrf: request.headers()['x-teslausb-request']});
+        if (['/api/v1/actions/shutdown', '/api/v1/actions/reboot'].includes(pathname)) {
+          if (powerResponse === 'lost') return route.abort('connectionreset');
+          if (powerResponse === 'error') return route.fulfill({status: 503, json: {ok: false, error: 'Fixture could not queue power action'}});
+          return route.fulfill({status: 202, json: {ok: true, message: 'Fixture power action queued; completion is not verified'}});
+        }
+        return route.fulfill({json: {ok: true}});
+      }
       if (pathname === '/api/v1/speed-test') return route.fulfill({body: Buffer.alloc(1024), contentType: 'application/octet-stream'});
       if (pathname === '/api/v1/files/list') return route.fulfill({contentType: 'text/plain', body: 'd:Albums\nf:Song & title.mp3:12345\nf:LockChime.wav:400\ns:100000:200000\n'});
       if (pathname === '/api/v1/files/mkdir') { mutations.push({path: pathname, method: request.method(), csrf: request.headers()['x-teslausb-request']}); return route.fulfill({json: {ok: true}}); }
@@ -68,6 +78,77 @@ async function run() {
     page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', {name: 'Repair USB', exact: true}).click();
     await page.getByText('USB gadget rebuilt and verified.', {exact: true}).waitFor();
     assert.deepEqual(mutations[0], {path: '/api/v1/actions/drives/repair', method: 'POST', csrf: '1'});
+    await page.waitForFunction(() => !document.querySelector('[data-device="refresh"]').disabled);
+    const powerButton = label => page.getByRole('button', {name: label, exact: true});
+    const statusRequests = () => requests.filter(request => request.path === '/api/v1/status').length;
+    const actionStatus = () => page.locator('[data-device="power-status"]');
+    async function confirmPower(label, accept) {
+      const dialogEvent = page.waitForEvent('dialog'), click = powerButton(label).click();
+      const dialog = await dialogEvent, text = dialog.message();
+      assert.match(text, /Pause Dashcam/i);
+      if (label === 'Shut down TeslaUSB') assert.match(text, /power cycle/i);
+      await (accept ? dialog.accept() : dialog.dismiss()); await click;
+      return text;
+    }
+    async function assertPowerBlocked(blocked) {
+      for (const label of ['Reboot TeslaUSB', 'Shut down TeslaUSB', 'Repair USB', 'Run 15-second test']) {
+        assert.equal(await powerButton(label).isDisabled(), blocked, `${label} ${blocked ? 'waits for' : 'is available after'} a manual status check`);
+      }
+    }
+    async function checkManualStatus(success = true) {
+      failStatus = !success;
+      const before = statusRequests();
+      await powerButton('Refresh status').click();
+      await page.waitForFunction(() => !document.querySelector('[data-device="refresh"]').disabled);
+      assert.equal(statusRequests(), before + 1, 'The manual refresh makes one device status request');
+      await assertPowerBlocked(!success);
+    }
+
+    const beforeCancel = mutations.length;
+    await confirmPower('Shut down TeslaUSB', false);
+    await confirmPower('Reboot TeslaUSB', false);
+    assert.equal(mutations.length, beforeCancel, 'Cancelling either power confirmation sends no mutation');
+    await assertPowerBlocked(false);
+
+    const beforeShutdownStatus = statusRequests(), beforeShutdownPauses = await page.evaluate(() => window.pauses);
+    await confirmPower('Shut down TeslaUSB', true);
+    await actionStatus().filter({hasText: /requested|accepted|queued/i}).waitFor();
+    await assertPowerBlocked(true);
+    assert.deepEqual(mutations.at(-1), {path: '/api/v1/actions/shutdown', method: 'POST', csrf: '1'});
+    assert.ok(await page.evaluate(() => window.pauses) > beforeShutdownPauses, 'Shutdown request releases active media');
+    assert.equal(statusRequests(), beforeShutdownStatus, 'Queueing shutdown does not immediately probe device status');
+    assert.match(await actionStatus().textContent(), /power cycle/i);
+    assert.match(await page.locator('[data-device="status"]').textContent(), /unknown|not verified|not confirmed/i);
+    assert.doesNotMatch(await actionStatus().textContent(), /shutdown succeeded|shutdown completed|device (?:is|has) (?:shut down|powered off)/i);
+    await page.getByRole('tab', {name: 'Overview', exact: true}).click();
+    await page.clock.fastForward(35000);
+    assert.equal(statusRequests(), beforeShutdownStatus, 'Polling stays stopped after shutdown, including on Overview');
+    await page.getByRole('tab', {name: 'Tools', exact: true}).click();
+    await checkManualStatus(false);
+    await checkManualStatus(true);
+    const powerCard = page.locator('.device-card').filter({has: page.getByRole('heading', {name: /^Power/})});
+    await powerCard.screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-modern-device-power-desktop.png')});
+
+    for (const failure of ['error', 'lost']) {
+      powerResponse = failure;
+      const before = statusRequests();
+      await confirmPower('Shut down TeslaUSB', true);
+      await actionStatus().filter({hasText: /could not be confirmed|could not confirm|not confirmed/i}).waitFor();
+      assert.match(await actionStatus().textContent(), /refresh|check/i);
+      assert.doesNotMatch(await actionStatus().textContent(), /shutdown succeeded|shutdown completed|device (?:is|has) (?:shut down|powered off)/i);
+      await assertPowerBlocked(true);
+      assert.equal(statusRequests(), before, `${failure} response must wait for a manual check`);
+      await checkManualStatus(true);
+    }
+    powerResponse = 'accepted';
+    const beforeReboot = statusRequests();
+    await confirmPower('Reboot TeslaUSB', true);
+    await actionStatus().filter({hasText: /requested|accepted|queued/i}).waitFor();
+    assert.deepEqual(mutations.at(-1), {path: '/api/v1/actions/reboot', method: 'POST', csrf: '1'});
+    await assertPowerBlocked(true);
+    assert.equal(statusRequests(), beforeReboot, 'Reboot also waits for manual status verification');
+    await checkManualStatus(true);
+    console.log('Power controls passed: cancel, queued shutdown/reboot, CSRF/media pause, no polling, failed/lost response, and manual recovery.');
     await page.screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-modern-device-tools.png'), fullPage: true});
     failStatus = true;
     await page.getByRole('button', {name: 'Refresh status', exact: true}).click();
@@ -86,6 +167,7 @@ async function run() {
     await page.getByText(/Device status unavailable/).waitFor();
     await page.getByRole('tab', {name: 'Tools', exact: true}).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Tools must fit a phone viewport');
+    await page.locator('.device-card').filter({has: page.getByRole('heading', {name: /^Power/})}).screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-modern-device-power-mobile.png')});
     await page.evaluate(() => window.active.destroy());
     assert.deepEqual(errors, []);
     console.log('Modern Device/Files browser integration passed (desktop and 390px mobile).');
