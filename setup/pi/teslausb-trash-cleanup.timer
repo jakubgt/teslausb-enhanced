@@ -2,8 +2,11 @@
 Description=Check TeslaUSB recording Trash expiration hourly
 
 [Timer]
+OnBootSec=5min
 OnCalendar=hourly
-Persistent=true
+# Root is read-only. Catch up after boot without a writable timestamp in
+# /var/lib/systemd/timers; the helper verifies network time before expiration.
+Persistent=false
 RandomizedDelaySec=300
 Unit=teslausb-trash-cleanup.service
 

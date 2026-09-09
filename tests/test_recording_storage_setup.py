@@ -63,6 +63,8 @@ class StorageContractTests(unittest.TestCase):
         self.assertEqual(service['Service']['ExecStart'], '/usr/bin/python3 -I /var/www/html/cgi-bin/recording-trash.py cleanup')
         self.assertEqual(timer['Timer']['Unit'], 'teslausb-trash-cleanup.service')
         self.assertEqual(timer['Timer']['OnCalendar'], 'hourly')
+        self.assertEqual(timer['Timer']['OnBootSec'], '5min')
+        self.assertFalse(timer['Timer'].getboolean('Persistent'))
 
     def test_storage_preflight_runs_before_web_changes(self):
         call = SETUP.index('\nvalidate_recording_storage\n')

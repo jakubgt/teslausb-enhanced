@@ -1,5 +1,9 @@
 # Recording Trash
 
+Expiration is checked hourly and five minutes after boot. The timer does not
+write a persistent timestamp on the read-only system partition; the helper
+checks verified network time before expiring anything after the Pi wakes.
+
 The modern library can preserve a SavedClips or SentryClips event in private Trash,
 restore it, or permanently delete its preserved copy. The retention period is 30
 days from the successful copy, using verified UTC time on the Pi.
