@@ -9,7 +9,7 @@ then
 fi
 
 recording_encoder_available() {
-  local encoder_list flags encoder description
+  local encoder_list flags encoder
 
   [ -x /usr/bin/ffmpeg ] || return 1
   if ! encoder_list="$(timeout 10 /usr/bin/ffmpeg -hide_banner -encoders 2>/dev/null)"
