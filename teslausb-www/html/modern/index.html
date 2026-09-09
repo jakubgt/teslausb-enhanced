@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101318"><meta name="referrer" content="same-origin">
+<title>TeslaUSB · Recordings</title>
+<link rel="icon" href="/icons/favicon-32x32.png"><link rel="stylesheet" href="/modern/style.css"><link rel="stylesheet" href="/modern/device.css"><link rel="stylesheet" href="/modern/trash.css">
+<link rel="stylesheet" href="/modern/connection.css">
+<link rel="stylesheet" href="/modern/player-nav.css">
+<script type="module" src="/modern/app.mjs"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app-shell">
+ <aside class="sidebar">
+  <a class="brand" href="/modern/"><span class="brand-mark" aria-hidden="true">↗</span>TeslaUSB</a>
+  <div class="sidebar-label">WORKSPACE</div>
+  <nav aria-label="Main navigation"><button type="button" data-page="recordings" aria-current="page">Recordings</button><button type="button" data-page="trash">Trash <span id="trash-count"></span></button><button type="button" data-page="device">Device</button><button type="button" data-page="files" hidden>Files</button></nav>
+  <div class="sidebar-bottom"><span id="connection-status">USB: not checked</span><small id="storage-text">Storage not checked</small><a href="/index.html?ui=legacy">Classic UI ↗</a></div>
+ </aside>
+ <main id="main">
+  <header class="app-header"><span>TeslaUSB Enhanced <span class="muted">/</span> <span id="breadcrumb">Recordings</span></span><div class="header-actions"><a href="/index.html?ui=legacy">Classic UI ↗</a><button type="button" id="theme-toggle" class="quiet" aria-label="Change appearance">Appearance: Auto</button></div></header>
+  <div id="connection-banner"></div>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden><span></span><button type="button" id="notice-action" hidden></button><button type="button" id="notice-dismiss" aria-label="Dismiss message">×</button></div>
+  <section id="recordings-page" aria-labelledby="recordings-heading">
+   <div class="page-heading"><div><h1 id="recordings-heading">Recordings</h1><p>Latest available footage from your snapshot library.</p></div><button type="button" id="refresh-recordings">Refresh</button></div>
+   <div class="freshness" aria-label="Recording freshness"><span>Newest recording <strong id="fresh-recording">Not checked</strong></span><span>Completed snapshot <strong id="fresh-snapshot">Not checked</strong></span><span>List refreshed <strong id="fresh-refresh">Not checked</strong></span></div>
+   <div id="library-state" class="status-line" role="status" aria-live="polite">Loading the newest date with recordings…</div>
+   <div id="recording-alert" class="alert" role="alert" hidden></div>
+   <div id="player"></div>
+   <div class="library-toolbar"><div class="category-filters" role="group" aria-label="Recording category"><button type="button" data-category="all" aria-pressed="true">All clips</button><button type="button" data-category="SentryClips" aria-pressed="false">Sentry</button><button type="button" data-category="SavedClips" aria-pressed="false">Saved</button><button type="button" data-category="RecentClips" aria-pressed="false">Recent</button></div><label class="date-field">Recording date<select id="recording-day"><option value="latest">Latest available day</option></select></label></div>
+   <div id="hour-filter" class="hour-filter" hidden><label for="recording-hour">Recording hour<select id="recording-hour"></select></label><p>Recent clips are grouped by their recorded hour. Up to 20 clips per page.</p></div>
+   <div class="library-toolbar secondary"><label class="select-all"><input type="checkbox" id="select-all" aria-label="Select Saved and Sentry recordings on this page"> <span id="selection-count">0 recordings</span></label><button type="button" id="bulk-trash" class="danger-text" hidden>Move selection to Trash</button><label class="search-field"><input type="search" id="recording-search" aria-label="Search recordings in the selected day" placeholder="Search this day"></label></div>
+   <div id="clip-grid" class="clip-grid"></div>
+   <nav id="clip-pagination" class="clip-pagination" aria-label="Recording pages" hidden><span id="page-status" role="status" aria-live="polite"></span><div><button type="button" id="page-prev">Previous</button><label>Page<select id="page-jump" aria-label="Recording page"></select></label><button type="button" id="page-next">Next</button></div></nav>
+   <p class="library-note">New footage appears after a completed snapshot. USB connection alone does not confirm active recording.</p>
+  </section>
+  <section id="trash-page" aria-label="Trash" hidden></section><section id="device-page" aria-label="Device" hidden></section><section id="files-page" aria-label="Files" hidden></section>
+  <section id="downloads" class="downloads" aria-labelledby="downloads-heading" hidden><div class="section-heading"><h2 id="downloads-heading">Downloads</h2><span class="muted">Original quality</span></div><div id="download-list"></div></section>
+ </main>
+</div>
+<dialog id="move-dialog" aria-labelledby="move-title"><form method="dialog"><div class="dialog-heading"><h2 id="move-title">Move to Trash?</h2></div><p id="move-copy"></p><p class="muted">A recoverable copy is kept for 30 days. This needs available storage. Car recordings, snapshots, and archived copies are unchanged.</p><p id="move-progress" role="status" aria-live="polite"></p><div class="dialog-actions"><button type="submit" id="move-cancel">Cancel</button><button type="button" id="move-confirm" class="primary">Move to Trash</button></div></form></dialog>
+<noscript>This interface requires JavaScript. <a href="/index.html?ui=legacy">Open Classic UI</a>.</noscript>
+</body></html>

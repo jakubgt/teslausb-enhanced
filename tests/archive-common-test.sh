@@ -130,6 +130,7 @@ assert set(status) == {
     "last_result",
     "last_started",
     "last_finished",
+    "last_successful_at",
     "pending_files",
     "pending_bytes",
     "transferred_files",
@@ -138,11 +139,34 @@ assert set(status) == {
 }
 assert status["schema_version"] == 1
 assert status["last_result"] == "success"
+assert status["last_successful_at"] == "2026-08-02T00:00:01Z"
 assert status["pending_files"] == 3
 assert status["pending_bytes"] == 400
 assert status["transferred_files"] == 2
 assert status["transferred_bytes"] == 300
 assert status["message"] == sys.argv[2]
+PY
+archive_status_write running '2026-08-03T00:00:00Z' '' 3 400 0 0 'Next attempt'
+archive_status_write error '2026-08-03T00:00:00Z' '2026-08-03T00:00:01Z' 3 400 0 0 'Failed attempt'
+archive_status_write idle '' '2026-08-04T00:00:00Z' 0 0 0 0 'Service restarted'
+python3 - "$ARCHIVE_STATUS_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert status["last_result"] == "idle"
+assert status["last_finished"] == "2026-08-04T00:00:00Z"
+assert status["last_successful_at"] == "2026-08-02T00:00:01Z"
+PY
+archive_status_write success '2026-08-05T00:00:00Z' '2026-08-05T00:00:01Z' 0 0 3 400 'Verified again'
+python3 - "$ARCHIVE_STATUS_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert status["last_successful_at"] == "2026-08-05T00:00:01Z"
 PY
 if compgen -G "$ARCHIVE_STATE_DIR/.archive-status.*" > /dev/null
 then

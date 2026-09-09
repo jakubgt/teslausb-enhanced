@@ -1,6 +1,10 @@
+import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -18,14 +22,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.workflow = workflow
         start = workflow.index(
-            "      - name: Create or validate VERSION-push draft release"
+            "      - name: Create or validate unpublished draft release"
         )
         end = workflow.index(
-            "      - name: Confirm matching GitHub release exists", start
+            "      - name: Confirm matching GitHub draft exists", start
         )
         cls.draft_step = workflow[start:end]
-        cls.publish_step = workflow[workflow.index(
-            "      - name: Publish verified VERSION-push release"
+        cls.handoff_step = workflow[workflow.index(
+            "      - name: Verify uploaded draft and record hardware-test handoff"
         ):]
 
     def test_release_create_retries_are_bounded(self):
@@ -173,18 +177,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('type == "number" and . > 0 and . <= 9007199254740991',
                       self.draft_step)
 
-    def test_final_publish_fetches_and_patches_only_the_captured_id(self):
+    def test_final_handoff_reads_only_the_captured_id_and_keeps_draft(self):
         self.assertIn(
             "RELEASE_ID: ${{ steps.draft_release.outputs.release_id }}",
-            self.publish_step,
+            self.handoff_step,
         )
-        self.assertIn('[[ "${RELEASE_ID}" =~ ^[1-9][0-9]*$ ]]', self.publish_step)
+        self.assertIn('[[ "${RELEASE_ID}" =~ ^[1-9][0-9]*$ ]]', self.handoff_step)
         self.assertEqual(
-            self.publish_step.count(
+            self.handoff_step.count(
                 '"repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"'
-            ), 2,
+            ), 1,
         )
-        self.assertEqual(self.publish_step.count(".id == $release_id"), 2)
+        self.assertEqual(self.handoff_step.count(".id == $release_id"), 1)
         for guard in (
             ".tag_name == $tag", ".name == $title", ".draft == true",
             ".target_commitish == $source_commit", ".prerelease == $prerelease",
@@ -192,8 +196,177 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "Remote release digest does not match verified asset",
         ):
             with self.subTest(guard=guard):
-                self.assertIn(guard, self.publish_step)
+                self.assertIn(guard, self.handoff_step)
         self.assertNotIn("--clobber", self.workflow)
+
+    def test_all_build_triggers_are_draft_only(self):
+        triggers = self.workflow.split("permissions:", 1)[0]
+        self.assertIn("  push:", triggers)
+        self.assertIn("  workflow_dispatch:", triggers)
+        self.assertNotIn("  release:", triggers)
+        self.assertNotIn("types: [published]", triggers)
+        self.assertNotIn("        if:", self.draft_step)
+        self.assertNotIn("        if:", self.handoff_step)
+        self.assertIn("draft: true", self.draft_step)
+        self.assertIn("make_latest: \"false\"", self.draft_step)
+        self.assertNotIn("draft: false", self.workflow)
+        self.assertNotIn("gh api --method PATCH", self.workflow)
+        self.assertNotIn("gh release edit", self.workflow)
+
+    def test_manual_build_must_be_validated_main_dev_source(self):
+        self.assertIn('"${GITHUB_EVENT_NAME}" = workflow_dispatch', self.workflow)
+        self.assertIn('git merge-base --is-ancestor "${source_commit}" '
+                      'refs/remotes/origin/main-dev', self.workflow)
+        start = self.workflow.index("      - name: Require successful Validate run")
+        validate = self.workflow[start:self.workflow.index(
+            "      - name: Create or validate unpublished draft release", start)]
+        self.assertNotIn("        if:", validate)
+        self.assertIn('.workflow_runs[0].head_sha == $source_commit', validate)
+        self.assertIn('[ "${conclusion}" = success ]', validate)
+
+    def test_upload_refuses_a_published_or_replaced_draft(self):
+        start = self.workflow.index("      - name: Upload verified assets")
+        upload = self.workflow[start:self.workflow.index(
+            "      - name: Verify uploaded draft", start)]
+        guard = upload.index("Refusing to upload to a changed or published release")
+        self.assertLess(guard, upload.index("gh release upload"))
+        for expected in (".id == $release_id", ".tag_name == $tag",
+                         ".draft == true", ".target_commitish == $source_commit"):
+            self.assertIn(expected, upload[:guard])
+        self.assertNotIn("--clobber", upload)
+
+    def test_handoff_records_exact_image_and_pending_hardware_gate(self):
+        for expected in ('"${SOURCE_COMMIT}"', '"${image_sha256}"',
+                         '"${GITHUB_STEP_SUMMARY}"',
+                         "still require hardware acceptance",
+                         "Do not rebuild or replace the tested image"):
+            self.assertIn(expected, self.handoff_step)
+
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash") and shutil.which("jq"),
+                     "Actual workflow shell needs POSIX bash and jq")
+class DraftHandoffExecutionTests(unittest.TestCase):
+    """Execute the real final workflow step against isolated, offline GitHub replies."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="release-handoff-")
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        step = workflow[workflow.index(
+            "      - name: Verify uploaded draft and record hardware-test handoff"):]
+        self.script = self.directory / "handoff.sh"
+        self.script.write_text(textwrap.dedent(step.split("        run: |\n", 1)[1]))
+        self.commit = "a" * 40
+        self.tag = "v2.0.0"
+        self.release = {
+            "id": 123, "tag_name": self.tag, "draft": True,
+            "name": "TeslaUSB Enhanced " + self.tag,
+            "target_commitish": self.commit, "body": "Release notes\n",
+            "prerelease": False, "assets": [],
+        }
+        self.environment = dict(os.environ)
+        self.environment.pop("GH_TOKEN", None)
+        self.environment.pop("GITHUB_TOKEN", None)
+        self.environment.update({
+            "PATH": str(self.directory) + os.pathsep + os.environ["PATH"],
+            "GITHUB_REPOSITORY": "example/teslausb", "RELEASE_TAG": self.tag,
+            "SOURCE_COMMIT": self.commit, "RELEASE_ID": "123", "VERSION": "2.0.0",
+            "GITHUB_STEP_SUMMARY": str(self.directory / "summary.md"),
+            "RELEASE_NOTES_PATH": str(self.directory / "notes.md"),
+            "FIXTURE_DIRECTORY": str(self.directory),
+        })
+        Path(self.environment["RELEASE_NOTES_PATH"]).write_text("Release notes\n")
+        for key, name in (("IMAGE_ASSET", "image.img.xz"),
+                          ("CHECKSUM_ASSET", "image.img.xz.sha256"),
+                          ("METADATA_ASSET", "metadata.json"),
+                          ("PACKAGES_ASSET", "packages.tsv")):
+            data = ("verified fixture " + name).encode()
+            asset = self.directory / name
+            asset.write_bytes(data)
+            self.environment[key] = str(asset)
+            self.release["assets"].append({
+                "name": name, "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+            })
+        self.tag_commit = self.commit
+        fake_gh = self.directory / "gh"
+        fake_gh.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, sys\n"
+            "root = pathlib.Path(os.environ['FIXTURE_DIRECTORY'])\n"
+            "with (root / 'calls.jsonl').open('a') as out:\n"
+            "    out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "assert len(sys.argv) == 3 and sys.argv[1] == 'api', sys.argv\n"
+            "fixture = json.loads((root / 'replies.json').read_text())\n"
+            "assert sys.argv[2] in fixture, sys.argv\n"
+            "print(json.dumps(fixture[sys.argv[2]]))\n"
+        )
+        fake_gh.chmod(0o755)
+
+    def execute(self):
+        replies = {
+            "repos/example/teslausb/git/ref/tags/" + self.tag: {
+                "object": {"type": "commit", "sha": self.tag_commit},
+            },
+            "repos/example/teslausb/releases/123": self.release,
+        }
+        (self.directory / "replies.json").write_text(json.dumps(replies))
+        return subprocess.run(["bash", "--noprofile", "--norc", str(self.script)],
+                              env=self.environment, cwd=self.directory,
+                              capture_output=True, text=True, timeout=15)
+
+    def test_stable_verified_image_remains_draft_and_records_checksum(self):
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary = Path(self.environment["GITHUB_STEP_SUMMARY"]).read_text()
+        self.assertIn(self.commit, summary)
+        self.assertIn(self.tag, summary)
+        self.assertIn(self.release["assets"][0]["digest"][7:], summary)
+        self.assertIn("unpublished", summary)
+        self.assertIn("still require hardware acceptance", summary)
+        calls = [json.loads(line) for line in
+                 (self.directory / "calls.jsonl").read_text().splitlines()]
+        self.assertEqual(calls, [
+            ["api", "repos/example/teslausb/git/ref/tags/" + self.tag],
+            ["api", "repos/example/teslausb/releases/123"],
+        ])
+
+    def test_release_candidates_also_remain_drafts(self):
+        self.tag = "v2.0.0-rc.1"
+        self.environment.update(RELEASE_TAG=self.tag, VERSION="2.0.0-rc.1")
+        self.release.update(tag_name=self.tag, name="TeslaUSB Enhanced " + self.tag,
+                            prerelease=True)
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unpublished", Path(self.environment["GITHUB_STEP_SUMMARY"]).read_text())
+
+    def test_changed_release_identity_or_notes_fails_before_handoff(self):
+        original = dict(self.release)
+        for change in ({"draft": False}, {"id": 456}, {"tag_name": "v9.0.0"},
+                       {"target_commitish": "b" * 40}, {"prerelease": True},
+                       {"body": "Replaced notes"}):
+            with self.subTest(change=change):
+                self.release = dict(original, **change)
+                result = self.execute()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(Path(self.environment["GITHUB_STEP_SUMMARY"]).exists())
+
+    def test_changed_source_tag_fails_before_handoff(self):
+        self.tag_commit = "b" * 40
+        result = self.execute()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Release tag changed", result.stderr)
+        self.assertFalse(Path(self.environment["GITHUB_STEP_SUMMARY"]).exists())
+
+    def test_changed_missing_or_duplicate_remote_asset_fails(self):
+        original = list(self.release["assets"])
+        for assets in ([dict(original[0], digest="sha256:" + "0" * 64), *original[1:]],
+                       original[1:], [*original, original[0]]):
+            with self.subTest(assets=assets):
+                self.release["assets"] = assets
+                result = self.execute()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(Path(self.environment["GITHUB_STEP_SUMMARY"]).exists())
 
 
 class DraftReleaseLookupTests(unittest.TestCase):

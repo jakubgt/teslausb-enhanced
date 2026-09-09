@@ -67,6 +67,7 @@ shellcheck --exclude=SC1091 \
            ./run/mountimage \
            ./run/mountoptsforimage \
            ./run/repair_gadget.sh \
+           ./run/recording-trash-cleanup.sh \
            ./run/snapshot_contains_encrypted_clips.sh \
            ./run/remountfs_rw \
            ./run/send-push-message \
@@ -92,8 +93,11 @@ shellcheck --exclude=SC1091 \
            ./teslausb-www/html/cgi-bin/pairBLEkey.sh \
            ./teslausb-www/html/cgi-bin/randomdata.sh \
            ./teslausb-www/html/cgi-bin/reboot.sh \
+           ./teslausb-www/html/cgi-bin/shutdown.sh \
            ./teslausb-www/html/cgi-bin/repairgadget.sh \
            ./teslausb-www/html/cgi-bin/reload.sh \
+           ./teslausb-www/html/cgi-bin/recording-media.sh \
+           ./teslausb-www/html/cgi-bin/recording-trash.sh \
            ./teslausb-www/html/cgi-bin/rm.sh \
            ./teslausb-www/html/cgi-bin/status.sh \
            ./teslausb-www/html/cgi-bin/toggledrives.sh \

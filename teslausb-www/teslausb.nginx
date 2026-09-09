@@ -51,8 +51,22 @@ server {
     add_header Cross-Origin-Resource-Policy "same-origin" always;
     add_header Content-Security-Policy "frame-ancestors 'self'; object-src 'none'; base-uri 'self'" always;
 
+    # The built-in modern interface is the landing page. The existing root
+    # index remains reachable as /index.html?ui=legacy for a direct fallback.
+    location = / {
+        try_files /modern/index.html =404;
+    }
+
     location / {
         try_files $uri $uri/ =404;
+    }
+
+    # Older Raspberry Pi OS MIME tables do not recognize ES modules. Scope
+    # this mapping to installed UI assets so uploaded modules remain downloads.
+    # Auth, Host validation, and security headers still inherit from the server.
+    location ~ ^/modern/.*\.mjs$ {
+        try_files $uri =404;
+        types { application/javascript mjs; }
     }
 
     location /cgi-bin/ {
@@ -68,6 +82,9 @@ server {
          deny all;
     }
     location = /cgi-bin/api-v1.sh {
+         deny all;
+    }
+    location ~ ^/cgi-bin/.*\.py(?:/|$) {
          deny all;
     }
 

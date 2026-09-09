@@ -1,6 +1,7 @@
 Cmnd_Alias TESLAUSB_WEB = /usr/local/sbin/teslausb-web-sudo diagnose, \
     /usr/local/sbin/teslausb-web-sudo maintenance-health, \
     /usr/local/sbin/teslausb-web-sudo reboot, \
+    /usr/local/sbin/teslausb-web-sudo shutdown, \
     /usr/local/sbin/teslausb-web-sudo gadget-enable, \
     /usr/local/sbin/teslausb-web-sudo gadget-disable, \
     /usr/local/sbin/teslausb-web-sudo gadget-repair, \

@@ -4,6 +4,28 @@ All notable changes to this TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
+## [2.0.0] - Unreleased
+
+The version-2 image is prepared as an unpublished draft until the exact build
+passes its spare-card hardware test. Historical release tags and asset hashes
+remain intact.
+
+- Add the modern six-camera UI, latest-day/hour navigation, event controls,
+  recording freshness, download feedback, and Device tools without BLE pairing.
+- Replace recording-card placeholders with lazy first-frame stills. Keep
+  single-camera original playback as the default, add bounded browser loading
+  before playback, and use small stills for the six-camera overview.
+- Remove the modern viewer's on-device Low video option, which exceeded the
+  Zero 2 W's processing budget. Preserve explicit original playback and
+  clear still-image fallbacks without endless smaller-preview preparation.
+- Add 30-day Trash and restoration for Saved/Sentry clips, permanent deletion,
+  and separate Trash/restored-copy storage reporting.
+- Preserve the Classic UI, optional media-drive file tools, archive controls,
+  diagnostics and log downloads, and explicit power/USB confirmations.
+- Make both automatic and manual release-image builds draft-only, require
+  validated main-dev source, and verify tag identity and uploaded digests.
+  Publication is a separate deliberate step after exact-image hardware testing.
+
 ## [1.2.0-rc.5] - 2026-08-18
 
 Promoted to the project's official **Latest** release on 2026-09-07. The

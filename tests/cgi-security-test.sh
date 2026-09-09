@@ -116,6 +116,325 @@ assert_contains 'the v1 capability endpoint is available' "$response" 'Status: 2
 assert_contains 'v1 responses advertise their version' "$response" 'X-TeslaUSB-API-Version: 1'
 assert_contains 'the capability document requires POST mutations' "$response" '"mutations": "POST"'
 assert_contains 'the capability document advertises manual gadget repair' "$response" '"drives/repair"'
+assert_contains 'the capability document advertises recording Trash' "$response" '"trash": "/api/v1/trash"'
+assert_contains 'the capability document advertises preview requests' "$response" '"recording_previews": "/api/v1/recordings/preview"'
+assert_contains 'the capability document advertises thumbnail requests' "$response" '"recording_thumbnails": "/api/v1/recordings/thumbnail"'
+assert_contains 'the capability document advertises safe shutdown' "$response" '"shutdown"'
+
+# Power-action tests always substitute inert sudo before invoking a CGI. Even
+# a method/CSRF regression cannot reach the host's actual shutdown command.
+shutdown_fixture="$test_dir/shutdown"
+mkdir -p "$shutdown_fixture/bin"
+cat > "$shutdown_fixture/bin/sudo" <<'SHUTDOWN_SUDO'
+#!/bin/sh
+[ "$*" = '-n /usr/local/sbin/teslausb-web-sudo shutdown' ] || exit 99
+printf '%s\n' "$*" > "$SHUTDOWN_FIXTURE_LOG"
+exit "${SHUTDOWN_FIXTURE_RESULT:-0}"
+SHUTDOWN_SUDO
+chmod +x "$shutdown_fixture/bin/sudo"
+
+run_shutdown_fixture() {
+  local script="$1"
+  local method="$2"
+  local query="${3:-}"
+
+  PATH="$shutdown_fixture/bin:$PATH" SHUTDOWN_FIXTURE_LOG="$shutdown_fixture/sudo-called" \
+    DOCUMENT_ROOT="$document_root" GATEWAY_INTERFACE=CGI/1.1 HTTP_HOST=teslausb.local \
+    REQUEST_METHOD="$method" PATH_INFO=/api/v1/actions/shutdown QUERY_STRING="$query" \
+    bash "$cgi_dir/$script"
+}
+
+for entrypoint in api-v1.sh shutdown.sh
+do
+  response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 \
+    run_shutdown_fixture "$entrypoint" GET)"
+  assert_contains "$entrypoint rejects GET shutdown" "$response" 'Status: 405 Method Not Allowed'
+  response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST='' \
+    run_shutdown_fixture "$entrypoint" POST)"
+  assert_contains "$entrypoint requires CSRF before shutdown" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_SEC_FETCH_SITE=cross-site HTTP_X_TESLAUSB_REQUEST=1 \
+    run_shutdown_fixture "$entrypoint" POST)"
+  assert_contains "$entrypoint rejects cross-site shutdown" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_ORIGIN=http://other.local HTTP_X_TESLAUSB_REQUEST=1 \
+    run_shutdown_fixture "$entrypoint" POST)"
+  assert_contains "$entrypoint rejects a mismatched shutdown Origin" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 \
+    run_shutdown_fixture "$entrypoint" POST 'command=anything')"
+  assert_contains "$entrypoint rejects shutdown query arguments" "$response" 'Status: 400 Bad Request'
+done
+if [[ ! -e "$shutdown_fixture/sudo-called" ]]
+then
+  pass 'rejected shutdown requests never invoke sudo'
+else
+  fail 'a rejected shutdown request invoked sudo'
+fi
+response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 SHUTDOWN_FIXTURE_RESULT=0 \
+  run_shutdown_fixture api-v1.sh POST)"
+assert_contains 'protected shutdown queues the fixed mocked action' "$response" 'Status: 202 Accepted'
+assert_contains 'accepted shutdown returns structured success' "$response" '"ok":true'
+assert_contains 'accepted shutdown explains how to start the Pi again' "$response" 'Disconnect and reconnect power'
+assert_file_content 'shutdown forwards exactly the fixed sudo action' "$shutdown_fixture/sudo-called" '-n /usr/local/sbin/teslausb-web-sudo shutdown'
+response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 SHUTDOWN_FIXTURE_RESULT=23 \
+  run_shutdown_fixture api-v1.sh POST)"
+assert_contains 'shutdown fails closed when the privileged action fails' "$response" 'Status: 500 Internal Server Error'
+assert_contains 'failed shutdown never reports queued success' "$response" '"ok":false'
+
+# Validate the production privilege boundary, then exercise only a copied
+# run_shutdown function whose two absolute executable paths point into this
+# private fixture. The copied program contains no real host power command.
+if python3 - "$sudo_helper" "$cgi_dir/../../teslausb-web-sudoers" "$shutdown_fixture" <<'SHUTDOWN_PYTHON'
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+policy = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8')
+fixture = pathlib.Path(sys.argv[3])
+match = re.search(r'(?m)^run_shutdown\(\) \{\n(.*?)^\}\n', source, re.S)
+assert match, 'Missing fixed shutdown function'
+function = match.group(0)
+assert 'for candidate in /usr/bin/systemctl /bin/systemctl' in function
+assert 'exec "$candidate" --no-block poweroff' in function
+assert 'exit 127' in function
+assert all(token not in function for token in ('$@', 'eval ', 'source ', '${', '/sbin/poweroff', '/sbin/shutdown'))
+assert '(( $# == 1 )) || usage_error' in source
+assert 'readonly PATH' in source
+assert '  shutdown)\n    run_shutdown\n    ;;' in source
+assert policy.count('/usr/local/sbin/teslausb-web-sudo shutdown,') == 1
+assert 'NOSETENV: TESLAUSB_WEB' in policy
+assert '/usr/bin/systemctl' not in policy and '/bin/systemctl' not in policy
+assert '/sbin/poweroff' not in policy and '/sbin/shutdown' not in policy
+assert not re.search(r'teslausb-web-sudo\s+shutdown\s*\*', policy)
+for name in ('/usr/bin/systemctl', '/bin/systemctl'):
+    target = str(fixture / ('first-systemctl' if name.startswith('/usr/') else 'second-systemctl'))
+    function = function.replace(name, "'" + target.replace("'", "'\\''") + "'")
+assert '/usr/bin/systemctl' not in function and '/bin/systemctl' not in function
+(fixture / 'dispatcher-copy.sh').write_text('#!/bin/bash\n' + function + '\nrun_shutdown\n', encoding='utf-8')
+SHUTDOWN_PYTHON
+then
+  pass 'shutdown uses fixed root candidates and one exact sudoers action'
+else
+  fail 'shutdown uses fixed root candidates and one exact sudoers action'
+fi
+if bash "$shutdown_fixture/dispatcher-copy.sh" > "$shutdown_fixture/output" 2>&1
+then
+  fail 'shutdown refuses to proceed without systemctl'
+else
+  shutdown_status=$?
+  if [[ "$shutdown_status" == 127 ]]
+  then
+    pass 'shutdown refuses to proceed without systemctl'
+  else
+    fail 'shutdown missing-executable result is explicit'
+  fi
+fi
+cat > "$shutdown_fixture/first-systemctl" <<'SHUTDOWN_SYSTEMCTL'
+#!/bin/sh
+printf '%s\n' "$0" "$@" > "$SHUTDOWN_FIXTURE_LOG"
+exit "${SHUTDOWN_FIXTURE_RESULT:-0}"
+SHUTDOWN_SYSTEMCTL
+chmod +x "$shutdown_fixture/first-systemctl"
+if SHUTDOWN_FIXTURE_LOG="$shutdown_fixture/dispatch-called" SHUTDOWN_FIXTURE_RESULT=0 \
+  bash "$shutdown_fixture/dispatcher-copy.sh"
+then
+  pass 'fixed shutdown function propagates mocked queue success'
+else
+  fail 'fixed shutdown function propagates mocked queue success'
+fi
+assert_file_content 'shutdown uses only no-block poweroff arguments' "$shutdown_fixture/dispatch-called" \
+  "$shutdown_fixture/first-systemctl"$'\n--no-block\npoweroff'
+if SHUTDOWN_FIXTURE_LOG="$shutdown_fixture/dispatch-called" SHUTDOWN_FIXTURE_RESULT=23 \
+  bash "$shutdown_fixture/dispatcher-copy.sh"
+then
+  fail 'fixed shutdown function must not hide systemctl failure'
+else
+  shutdown_status=$?
+  if [[ "$shutdown_status" == 23 ]]
+  then
+    pass 'fixed shutdown function propagates systemctl failure'
+  else
+    fail 'fixed shutdown function preserves the actual failure code'
+  fi
+fi
+mv "$shutdown_fixture/first-systemctl" "$shutdown_fixture/second-systemctl"
+if SHUTDOWN_FIXTURE_LOG="$shutdown_fixture/dispatch-called" SHUTDOWN_FIXTURE_RESULT=0 \
+  bash "$shutdown_fixture/dispatcher-copy.sh"
+then
+  pass 'shutdown supports the second fixed systemctl location'
+else
+  fail 'shutdown supports the second fixed systemctl location'
+fi
+assert_file_content 'second candidate still receives only no-block poweroff' "$shutdown_fixture/dispatch-called" \
+  "$shutdown_fixture/second-systemctl"$'\n--no-block\npoweroff'
+if bash "$sudo_helper" shutdown extra-argument > /dev/null 2>&1
+then
+  fail 'shutdown privilege dispatcher rejects extra arguments'
+else
+  pass 'shutdown privilege dispatcher rejects extra arguments'
+fi
+
+# Exercise the actual dispatcher and recording wrappers with inert Python
+# implementations. An accepted request can only create a marker in this fixture;
+# these tests never open /mutable, recordings, a preview encoder, or a Pi service.
+recording_fixture="$test_dir/recording-cgi"
+mkdir -p "$recording_fixture"
+cp "$cgi_dir/api-v1.sh" "$cgi_dir/cgi-common.sh" \
+  "$cgi_dir/recording-trash.sh" "$cgi_dir/recording-media.sh" "$recording_fixture/"
+chmod +x "$recording_fixture/"*.sh
+cat > "$recording_fixture/recording-trash.py" <<'PYTHON'
+import pathlib
+import sys
+
+operation = sys.argv[1]
+pathlib.Path(__file__).with_suffix('.called').write_text(operation, encoding='ascii')
+print('Status: 200 OK\r\nContent-Type: text/plain\r\n\r\nfixture-operation: ' + operation)
+PYTHON
+cp "$recording_fixture/recording-trash.py" "$recording_fixture/recording-media.py"
+
+run_recording_fixture() {
+  local script="$1"
+  local method="$2"
+  local route="$3"
+  local query="${4:-}"
+
+  DOCUMENT_ROOT="$document_root" GATEWAY_INTERFACE=CGI/1.1 \
+    HTTP_HOST=teslausb.local REQUEST_METHOD="$method" PATH_INFO="$route" \
+    QUERY_STRING="$query" bash "$recording_fixture/$script"
+}
+
+for trash_action in move restore delete
+do
+  recording_route="/api/v1/trash/$trash_action"
+  for entrypoint in api-v1.sh recording-trash.sh
+  do
+    response="$(HTTP_SEC_FETCH_SITE=same-origin HTTP_X_TESLAUSB_REQUEST=1 \
+      run_recording_fixture "$entrypoint" GET "$recording_route")"
+    assert_contains "$entrypoint rejects GET Trash $trash_action" "$response" 'Status: 405 Method Not Allowed'
+    response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+      run_recording_fixture "$entrypoint" POST "$recording_route")"
+    assert_contains "$entrypoint requires CSRF header for Trash $trash_action" "$response" 'Status: 403 Forbidden'
+    response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
+      run_recording_fixture "$entrypoint" POST "$recording_route")"
+    assert_contains "$entrypoint rejects cross-site Trash $trash_action" "$response" 'Status: 403 Forbidden'
+    response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-site HTTP_ORIGIN=http://other.local \
+      run_recording_fixture "$entrypoint" POST "$recording_route")"
+    assert_contains "$entrypoint rejects another origin for Trash $trash_action" "$response" 'Status: 403 Forbidden'
+    response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+      run_recording_fixture "$entrypoint" POST "$recording_route" 'event=ignored-query')"
+    assert_contains "$entrypoint rejects query parameters for Trash $trash_action" "$response" 'Status: 400 Bad Request'
+  done
+done
+
+for entrypoint in api-v1.sh recording-media.sh
+do
+  for media_profile in preview thumbnail
+  do
+  response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture "$entrypoint" POST "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint requires CSRF header before $media_profile generation" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
+    run_recording_fixture "$entrypoint" POST "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects cross-site $media_profile generation" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin HTTP_ORIGIN=http://teslausb.local:8080 \
+    run_recording_fixture "$entrypoint" POST "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects a different origin port for $media_profile" "$response" 'Status: 403 Forbidden'
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture "$entrypoint" DELETE "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects unsupported $media_profile mutation methods" "$response" 'Status: 405 Method Not Allowed'
+  response="$(HTTP_SEC_FETCH_SITE=cross-site \
+    run_recording_fixture "$entrypoint" GET "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects cross-site $media_profile status reads" "$response" 'Status: 403 Forbidden'
+  done
+done
+
+for recording_route in /api/v1/trash /api/v1/trash/media \
+  /api/v1/trash/download /api/v1/recordings/download /api/v1/recordings/preview/media \
+  /api/v1/recordings/thumbnail/media
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture api-v1.sh POST "$recording_route")"
+  assert_contains "$recording_route rejects POST on its read-only route" "$response" 'Status: 405 Method Not Allowed'
+  response="$(HTTP_SEC_FETCH_SITE=cross-site \
+    run_recording_fixture api-v1.sh GET "$recording_route")"
+  assert_contains "$recording_route rejects cross-site reads" "$response" 'Status: 403 Forbidden'
+done
+
+for recording_route in /api/v1/trash/cleanup /api/v1/trash/purge /api/v1/trash/media/extra \
+  /api/v1/recordings/preview/worker /api/v1/recordings/preview/request \
+  /api/v1/recordings/thumbnail/worker /api/v1/recordings/thumbnail/request
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+    run_recording_fixture api-v1.sh POST "$recording_route")"
+  assert_contains "$recording_route is not an exposed API action" "$response" 'Status: 404 Not Found'
+done
+
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture recording-trash.sh POST /cgi-bin/recording-trash.sh)"
+assert_contains 'direct Trash wrapper URL cannot choose a mutation' "$response" 'Status: 404 Not Found'
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture recording-media.sh POST /cgi-bin/recording-media.sh)"
+assert_contains 'direct recording wrapper URL cannot choose a worker operation' "$response" 'Status: 404 Not Found'
+
+if [[ ! -e "$recording_fixture/recording-trash.called" && ! -e "$recording_fixture/recording-media.called" ]]
+then
+  pass 'all rejected recording requests stop before the Python helper boundary'
+else
+  fail 'a rejected recording request reached the Python helper boundary'
+fi
+
+for trash_action in move restore delete
+do
+  response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin HTTP_ORIGIN=http://teslausb.local \
+    run_recording_fixture api-v1.sh POST "/api/v1/trash/$trash_action")"
+  assert_contains "protected Trash POST dispatches only $trash_action" "$response" "fixture-operation: $trash_action"
+done
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh POST /api/v1/recordings/preview 'path=fixture')"
+assert_contains 'protected preview POST dispatches its generation operation' "$response" 'fixture-operation: preview-request'
+response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/recordings/preview 'path=fixture')"
+assert_contains 'preview GET dispatches status without starting generation' "$response" 'fixture-operation: preview-status'
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh POST /api/v1/recordings/thumbnail 'path=fixture')"
+assert_contains 'protected thumbnail POST dispatches only its first-frame generation operation' "$response" 'fixture-operation: thumbnail-request'
+response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/recordings/thumbnail 'path=fixture')"
+assert_contains 'thumbnail GET reads state without starting generation' "$response" 'fixture-operation: thumbnail-status'
+response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/recordings/thumbnail/media 'path=fixture')"
+assert_contains 'thumbnail media GET dispatches only the JPEG response' "$response" 'fixture-operation: thumbnail-media'
+response="$(HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/trash/download 'id=fixture&camera=all')"
+assert_contains 'Trash downloads reach the original media helper' "$response" 'fixture-operation: trash-download'
+response="$(HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/trash/media 'id=fixture&file=fixture')"
+assert_contains 'Trash playback reaches the private playback helper' "$response" 'fixture-operation: media'
+
+# Direct Python helpers have no HTTP method/origin boundary of their own. Nginx
+# must deny both the exact helper URL and every path-info suffix before fcgiwrap.
+if python3 - "$cgi_dir/../../teslausb.nginx" <<'PYTHON'
+import pathlib
+import re
+import sys
+
+config = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+marker = 'location ~ ^/cgi-bin/.*\\.py(?:/|$) {'
+assert marker in config, 'Python helper deny rule must cover path-info suffixes'
+block = config.split(marker, 1)[1].split('}', 1)[0]
+assert 'deny all;' in block
+assert 'location ^~ /cgi-bin/' not in config, 'A priority prefix must not bypass regex denial'
+pattern = re.compile(r'^/cgi-bin/.*\.py(?:/|$)')
+for name in ('recording-trash.py', 'recording-media.py', 'maintenance.py'):
+    for suffix in ('', '/cleanup', '/preview-worker'):
+        assert pattern.search('/cgi-bin/' + name + suffix)
+assert 'fastcgi_param SCRIPT_FILENAME /var/www/html/cgi-bin/api-v1.sh;' in config
+assert 'fastcgi_param PATH_INFO $uri;' in config
+PYTHON
+then
+  pass 'nginx blocks direct Python helpers and pins the versioned dispatcher'
+else
+  fail 'nginx blocks direct Python helpers and pins the versioned dispatcher'
+fi
 
 response="$(run_api GET '/api/v1/actions/drives/repair')"
 assert_contains 'manual gadget repair rejects GET requests' "$response" 'Status: 405 Method Not Allowed'

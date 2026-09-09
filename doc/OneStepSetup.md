@@ -118,7 +118,7 @@ Given that the Pi contains sensitive information like your home wifi password an
 
 ### Troubleshooting
 
-- TeslaUSB has two web interfaces. The bundled legacy interface is `/` and the separately downloaded newer interface is `/new/`. If a saved preference redirects to a broken interface, open `http://teslausb.local/?ui=legacy` to force and remember the legacy interface, or open `http://teslausb.local/new/` directly. Clear the browser's site data for `teslausb.local` if a redirect loop remains. Trying the Pi's IP address can distinguish name-resolution problems from web-server problems.
+- TeslaUSB opens the built-in modern interface at `/`, also available directly at `/modern/`. Open `http://teslausb.local/index.html?ui=legacy` to force Classic and clear its saved preference for the older optional interface at `/new/`. That optional interface is available only if separately installed. Clear the browser's site data for `teslausb.local` if a redirect loop remains. Trying the Pi's IP address can distinguish name-resolution problems from web-server problems.
 - If everything seems to be working, but you still don't see the USB drive(s) either on your local machine, or in the car, check that you are indeed using a USB data cable, and not a charge-only cable. Also ensure you are plugged into the USB port on the Raspberry PI, and not the power port.
 - `ssh` to `pi@teslausb.local` (assuming Wifi came up, or your Pi is connected to your computer via USB) and look at the `/teslausb/teslausb-headless-setup.log`.
 - Try `sudo -i` and then run `/etc/rc.local`. The scripts are fairly resilient to restarting and not re-running previous steps, and will tell you about progress/failure.

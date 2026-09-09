@@ -8,6 +8,45 @@ then
   export -n WEB_PASSWORD
 fi
 
+recording_encoder_available() {
+  local encoder_list flags encoder
+
+  [ -x /usr/bin/ffmpeg ] || return 1
+  if ! encoder_list="$(timeout 10 /usr/bin/ffmpeg -hide_banner -encoders 2>/dev/null)"
+  then
+    return 1
+  fi
+  while read -r flags encoder _
+  do
+    if [[ "$flags" =~ ^V[A-Z.]{5}$ ]] && [ "$encoder" = mjpeg ]
+    then
+      return 0
+    fi
+  done <<< "$encoder_list"
+  return 1
+}
+
+configure_optional_recording_encoder() {
+  # Release images already contain the verified distro encoder. Older images
+  # may install it here, but unavailable optional packages must not prevent
+  # authenticated web access, Trash cleanup, or original-quality playback.
+  if recording_encoder_available
+  then
+    return 0
+  fi
+  setup_progress "Installing optional recording thumbnail encoder"
+  if DEBIAN_FRONTEND=noninteractive apt-get -y install ffmpeg
+  then
+    if ! recording_encoder_available
+    then
+      setup_progress "WARNING: recording thumbnail encoder is unavailable after package installation. Original-quality playback and downloads remain available."
+    fi
+  else
+    setup_progress "WARNING: optional ffmpeg installation failed. Recording thumbnails may be unavailable; continuing web and Trash setup. Original-quality playback and downloads remain available."
+  fi
+  return 0
+}
+
 validate_webui_archive() {
   local archive="$1"
   local listing_file="$2"
@@ -529,6 +568,47 @@ valid_existing_webui() {
   fi
 }
 
+validate_recording_storage() {
+  local legacy_store=/mutable/teslausb-recording-trash
+  local legacy_entry
+
+  if [ -L /backingfiles ] || ! mountpoint -q /backingfiles
+  then
+    echo "Recording storage requires the real mounted /backingfiles filesystem" >&2
+    return 1
+  fi
+  if [ -L "$legacy_store" ] || { [ -e "$legacy_store" ] && ! [ -d "$legacy_store" ]; }
+  then
+    echo "Legacy recording Trash requires manual migration before web setup" >&2
+    return 1
+  fi
+  if [ -d "$legacy_store" ]
+  then
+    # Empty scaffolding is harmless; manifests, recovery copies, staging files,
+    # and unexpected entries must never be abandoned by a root change.
+    legacy_entry=$(find "$legacy_store" -mindepth 1 -maxdepth 1 \
+      ! -name lock ! -name objects -print -quit) || return 1
+    if [ -n "$legacy_entry" ] || [ -L "$legacy_store/objects" ] ||
+       { [ -e "$legacy_store/objects" ] && ! [ -d "$legacy_store/objects" ]; } ||
+       [ -L "$legacy_store/lock" ] ||
+       { [ -e "$legacy_store/lock" ] && ! [ -f "$legacy_store/lock" ]; }
+    then
+      echo "Legacy recording Trash requires manual migration before web setup" >&2
+      return 1
+    fi
+    if [ -d "$legacy_store/objects" ]
+    then
+      legacy_entry=$(find "$legacy_store/objects" -mindepth 1 -maxdepth 1 -print -quit) || return 1
+      if [ -n "$legacy_entry" ]
+      then
+        echo "Legacy recording Trash contains preserved data; migrate it before web setup" >&2
+        return 1
+      fi
+    fi
+  fi
+}
+
+validate_recording_storage
 prepare_web_auth_config
 validate_web_auth_config
 prepare_allowed_web_hosts
@@ -636,6 +716,25 @@ chmod +x /sbin/mount.ctts
 sed -i '/mount.ctts/d' /etc/fstab
 echo "mount.ctts#/mutable/TeslaCam /var/www/html/TeslaCam fuse defaults,nofail,x-systemd.requires=/mutable 0 0" >> /etc/fstab
 mkdir -p /mutable/TeslaCam
+
+# Recording recovery copies and disposable previews must never be served as
+# static files. Validate existing paths before changing their ownership.
+for recording_store in /backingfiles/teslausb-recording-trash /backingfiles/teslausb-previews
+do
+  if [ -L "$recording_store" ] || { [ -e "$recording_store" ] && ! [ -d "$recording_store" ]; }
+  then
+    echo "Unsafe recording store path: $recording_store" >&2
+    exit 1
+  fi
+  install -d -o www-data -g www-data -m 0700 "$recording_store"
+done
+# Thumbnails use an optional encoder; full-quality playback and downloads work
+# without it. Fresh release images already include the verified distro package.
+configure_optional_recording_encoder
+install -o root -g root -m 0644 "$SOURCE_DIR/setup/pi/teslausb-trash-cleanup.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$SOURCE_DIR/setup/pi/teslausb-trash-cleanup.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now teslausb-trash-cleanup.timer
 
 sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 

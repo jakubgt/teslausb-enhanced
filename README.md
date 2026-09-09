@@ -15,56 +15,66 @@ recovery and upgrade tools.
 · [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
 > [!IMPORTANT]
-> The current image is the project's official release. Back up your existing
-> configuration, keys, and recordings before flashing it.
+> **Version 2.0.0 is being prepared for release.** Its new image stays an
+> unpublished draft until the exact build passes testing on a spare card.
+> Back up configuration, keys, and recordings before flashing any image.
 
-> [!CAUTION]
-> Do not use the published `v1.2.0-rc.4` image for a fresh setup. Its boot
-> command line still contains Raspberry Pi OS's standalone `resize` trigger,
-> which can consume the card space TeslaUSB needs. Use the newly built rc.5
-> image and its matching checksum for new installations; rc.4 is retained
-> only for provenance.
+## Version 2.0.0: the modern interface
 
-## Modern interface preview
+The modern dashboard brings together date and hour browsing, front-camera
+thumbnails, six-camera navigation, original-quality downloads, recording
+freshness, and recoverable Trash. **Load clip first** helps playback on slower
+connections, while **Camera overview** uses lightweight stills. Original-quality
+playback is the default; the modern viewer no longer offers slow on-device
+Low video conversion. [Interface guide](doc/ModernUI.md) · [Version 2.0 changes](https://github.com/jakubgt/teslausb-enhanced/pull/14)
 
-The modern dashboard is being developed in [pull request #14](https://github.com/jakubgt/teslausb-enhanced/pull/14).
-It brings together date and hour browsing, six-camera navigation, original-quality
-downloads, recording freshness, and recoverable Trash. **Load clip first** helps
-playback on slower connections, while **Camera overview** uses lightweight stills.
+![Real TeslaUSB recording displayed in the modern interface with Front, Rear, Left repeater, Right repeater, Left pillar, and Right pillar cameras](doc/images/modern-ui-preview.png)
 
-![TeslaUSB Enhanced modern interface showing six camera stills, clip navigation, downloads, and the recordings library](doc/images/modern-ui-preview.png)
+*Real six-camera footage from a working installation, shown in All cameras view.
+These are recorded frames, not a live camera feed. The screenshot preserves the
+original capture; version 2.0 uses original quality without the older quality
+selector shown here.*
 
-*Development preview with fictional demonstration footage. The six panels show
-recorded stills, not a live camera feed. This interface is not yet merged or
-included in the current rc.5 image.*
-
-## Current release
+## Version and image status
 
 | Item | Status |
 | --- | --- |
-| Latest official release | [`v1.2.0-rc.5`](https://github.com/jakubgt/teslausb-enhanced/releases/latest) — promoted to a full release; original build identifier retained |
+| Source version | **2.0.0** |
+| New image | Draft build and spare-card acceptance; publication pending |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
-| Image download | [`teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz) |
-| Image SHA-256 | [Matching rc.5 checksum](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz.sha256); do not reuse the rc.4 digest |
-| Image source commit | [`9348aa7`](https://github.com/jakubgt/teslausb-enhanced/commit/9348aa734920e561bad2fd441e244744d09e8193), recorded in the image metadata |
-| Integrity verification | Offline image checks passed; all four downloaded assets and the decompressed image match their recorded hashes |
+| Version 2 image filename | `teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz` |
+| Image integrity | Use the matching `.img.xz.sha256`, `.image-metadata.json`, and `.packages.tsv` assets from the same release |
+| Available public downloads | [Published releases](https://github.com/jakubgt/teslausb-enhanced/releases) |
 
-Public GitHub release assets can be downloaded without signing in. If you are
-using a private mirror or an access-restricted release, download with an
+Both automatic and manual image builds stay **drafts**. The workflow checks the
+source, image, and uploaded checksums, then records the exact image SHA-256 for
+a spare-card test. Publication follows successful setup, car recording, Sentry,
+archiving, downloads, and recovery checks of that same image. Rebuilding it
+requires testing the new build again.
+
+Draft assets require an authorized signed-in account. Published GitHub release
+assets are publicly downloadable. For a private mirror, download through an
 authorized account first; Raspberry Pi Imager cannot authenticate to a private
 release URL itself.
 
-GitHub marks `v1.2.0-rc.5` as the project's **Latest** full release. The `rc.5`
-build identifier is retained so the existing download links, embedded version,
-source tag, and checksums continue to identify the exact same image. Its four
-downloaded assets were independently checksum-checked, and the decompressed
-image matched its recorded hash and privacy checks. The build's final
-draft-publication lookup
-failed after verification and upload; the same audited assets were published
-without rebuilding or moving the tag. The [workflow correction](https://github.com/jakubgt/teslausb-enhanced/pull/11)
-is merged for future builds. The rc.4 image remains available for provenance,
-not for a fresh flash.
+<details>
+<summary>Earlier images and retained build identifiers</summary>
+
+The earlier [`v1.2.0-rc.5` image](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5)
+was promoted to a full release without changing its tag, filenames, embedded
+version, or checksums. Its source commit is
+[`9348aa7`](https://github.com/jakubgt/teslausb-enhanced/commit/9348aa734920e561bad2fd441e244744d09e8193).
+All four downloaded assets and the decompressed image were independently
+checksum-checked. Its final publication lookup failed after upload; those same
+audited assets were published without rebuilding or moving the tag, and the
+[workflow correction](https://github.com/jakubgt/teslausb-enhanced/pull/11) followed.
+
+Do not use `v1.2.0-rc.4` for fresh setup: its standalone `resize` boot trigger
+can consume space TeslaUSB needs. It is retained only for provenance. Version
+2.0.0 is a new build, not an older image renamed to remove its release label.
+
+</details>
 
 ## What this fork adds
 
@@ -137,16 +147,19 @@ success. Do not reformat a populated card to resolve a checker-memory error.
 
 ### Flash and configure
 
-1. Download the [`.img.xz` image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz)
-   and [checksum file](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz.sha256).
+1. Download the image and matching checksum from the same
+   [release](https://github.com/jakubgt/teslausb-enhanced/releases). Version 2.0.0
+   testers use the authenticated draft until hardware acceptance is complete;
+   public users should use a published image.
 2. Verify the image digest before flashing. It must exactly match the digest in
-   that rc.5 checksum asset.
-
-   On Windows PowerShell:
+   that image's `.img.xz.sha256` file. For the version 2.0.0 image, use Windows
+   PowerShell:
 
    ```powershell
-   Get-FileHash .\teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
+   Get-FileHash .\teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
    ```
+
+   When testing another release, use its exact downloaded filename and checksum.
 
 3. In Raspberry Pi Imager, choose **Use custom**, select the downloaded
    `.img.xz` file directly, and write it to the card. Do not extract it first.
@@ -170,7 +183,7 @@ LED stages, troubleshooting, and what happens during first boot.
 ## Offline configuration wizard
 
 The recommended helper is `teslausb_config_wizard.html`, included on the
-rc.5 image's boot partition. It:
+image's boot partition. It:
 
 - runs entirely in the browser with no network requests, analytics, remote
   scripts, form submission, or browser storage;
@@ -268,8 +281,8 @@ promise of reclaimable space, and the panel does not delete backups.
 For viewer controls, cleanup-delay and independent-clock corrections, logging
 and connection-status semantics, and a safe on-device test plan, see
 [runtime maintenance and verification](doc/RuntimeMaintenance.md). These changes
-are included in the rc.5 image but not in rc.4. Publishing a release does not
-automatically update an installed Pi.
+are retained in version 2.0.0 alongside the modern interface. Publishing a
+release does not automatically update an installed Pi.
 
 - Do **not** perform an in-place Bookworm-to-Trixie or 32-bit-to-64-bit OS
   upgrade. Back up the private configuration and keys, flash a clean arm64
@@ -302,10 +315,11 @@ Before publication, the release pipeline checks:
   module tokens, and disabled resize, swap, and package-backup services;
 - XZ stream integrity, SHA-256 manifests, and uploaded GitHub asset digests.
 
-The release also provides
-[build metadata](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.image-metadata.json)
-and an
-[installed-package manifest](https://github.com/jakubgt/teslausb-enhanced/releases/download/v1.2.0-rc.5/teslausb-enhanced-v1.2.0-rc.5-pi-zero-2w-arm64-trixie.packages.tsv).
+Each release's matching assets include `.image-metadata.json` build provenance
+and a `.packages.tsv` installed-package manifest. The build also verifies the
+bundled FFmpeg tools and JPEG encoder used by recording thumbnails. Automated
+checks do not replace spare-card testing; the image remains a draft until the
+exact downloaded build passes hardware acceptance.
 
 Debian and Raspberry Pi package repositories are not snapshot-pinned, so the
 recorded build is
