@@ -16,7 +16,7 @@ recording_encoder_available() {
   then
     return 1
   fi
-  while read -r flags encoder description
+  while read -r flags encoder _
   do
     if [[ "$flags" =~ ^V[A-Z.]{5}$ ]] && [ "$encoder" = mjpeg ]
     then
