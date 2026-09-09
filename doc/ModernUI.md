@@ -1,4 +1,4 @@
-# Modern TeslaUSB interface
+# Modern TeslaUSB interface — version 2.0.0
 
 The normal `/` landing page now opens the built-in modern interface. The same
 interface is available at `/modern/`. **Classic UI** links remain available on
@@ -7,7 +7,8 @@ and Classic files remain installed. No BLE controls are added to the modern UI.
 
 ## Recordings
 
-The first screen opens the newest available recording in **Single camera / High**.
+The first screen opens the newest available recording in **Single camera**
+with original quality.
 Use **Camera overview** for small stills from all six angles, or **All cameras**
 for synchronized original videos. This is the latest **completed
 snapshot footage**, not a live connection to Tesla cameras. The screen reports
@@ -22,7 +23,7 @@ a camera missing from a particular segment is identified in the All cameras view
 The date filter defaults to the newest date with visible clips, including restored
 copies and skipping dates emptied by Trash. Categories, search, selection, and
 pagination operate within that day. Refresh retains the current recording,
-camera, timeline position, layout, quality, speed, and playback intention when
+camera, timeline position, layout, speed, and playback intention when
 the event is still available. Leaving or hiding the viewer releases video
 sources. A failed refresh keeps the previous list and labels it stale.
 
@@ -41,19 +42,29 @@ and clears when changing pages or filters.
 The viewer's **Previous clip / Next clip** controls follow recorded time (earlier
 and later) across all pages of the current category, hour, and search results.
 The grid remains newest-first and follows the selected clip's page. Switching
-clips preserves camera, layout, quality, speed, and play/pause intent, starting
+clips preserves camera, layout, speed, and play/pause intent, starting
 the new clip at zero. **Play next automatically** is off on every fresh page
 load. When enabled, it advances after the final segment and stops at the end of
 the filtered selection. Changing filters leaves the current clip intact; if it
 falls outside the selection, navigation is disabled until a matching clip is
 selected. No hidden-tab or paused-player autoplay is triggered.
 
-Playback starts with the original file and makes no automatic Low encoding requests.
-Low is an optional smaller H.264 encode,
-prepared on demand one segment at a time. Availability, preparation, failure,
-and retry are explicit. **Play original** switches to High; original files are
-never quietly represented as Low. Restored copies currently support High only.
-See [media constraints and APIs](ModernMedia.md) for the encoder's resource limits.
+The modern player uses **Original quality** only. It does not request on-device
+Low video conversion or display an indefinite smaller-preview preparation state.
+Use **Load clip first** when streaming buffers, or **Camera overview** to inspect
+small stills before choosing one original camera video. Downloads retain the
+original source bytes. The older Low API remains available for compatibility,
+but the modern interface does not call it. See [media constraints and APIs](ModernMedia.md).
+
+Recording cards show the front camera's first available keyframe from the first
+recorded minute, with the play icon overlaid. They request only visible cards,
+wait briefly before starting to avoid work during quick scrolling, and cancel
+when a card or page is left. Card and overview requests share a sequential queue,
+with the active viewer taking priority. Temporary delivery failures have bounded
+retries; a failed or missing frame keeps a playable fallback instead of silently
+using a later minute. When the first front camera is absent, an existing recording
+thumbnail may be used; otherwise the card identifies the unavailable still.
+Restored copies use an existing thumbnail when one was preserved.
 
 **Load clip first** pauses streaming and loads the current recorded minute, for
 the selected camera or all available cameras in the All cameras layout. It shows
@@ -63,7 +74,7 @@ to 64 MiB per camera and 256 MiB total, with a 30-second inactivity timeout and
 ten-minute overall limit. Oversized, failed, or incomplete transfers offer retry
 or normal streaming; they never claim to be ready. The playable URL is used so
 Tesla timestamp compatibility adjustments are retained. Original downloads still
-preserve the exact source bytes. Changing camera, layout, quality, minute, clip,
+preserve the exact source bytes. Changing camera, layout, minute, clip,
 or leaving/hiding the viewer cancels transfers and releases loaded copies. Seeking
 within the loaded minute retains its copy. A multi-minute event's next minute
 streams normally unless loaded separately. Preloading addresses network waiting;
@@ -71,8 +82,8 @@ decoding six original videos still depends on the browser device's capabilities.
 
 **Camera overview** requests small cached JPEGs only when selected. These are
 stills near the start of the selected recorded minute, not live views or smooth
-Low video. Clicking a tile opens Single camera / High playback. Missing cameras
-and unavailable stills are labelled. Status and image requests run sequentially
+video playback. Clicking a tile opens Single camera with original quality.
+Missing cameras and unavailable stills are labelled. Status and image requests run sequentially
 to avoid competing for the recording store. Temporary delivery failures retry up
 to three attempts; failed generation requires explicit Check overview.
 In-progress work is checked for up to two minutes. Leaving the overview stops its
@@ -156,10 +167,13 @@ appearance and adapts to phone widths without horizontal scrolling.
 
 ## Setup and validation
 
-Normal web setup installs modern assets, exact API routes, optional ffmpeg/ffprobe,
-private www-data-owned directories on `/backingfiles` (mode 0700), and the hourly
-Trash timer. The small `/mutable` partition is reserved for existing runtime
-state; it is not used for preserved recording copies or Low previews. The
+The version 2.0.0 image bundles FFmpeg and verifies its JPEG encoder before
+release. Normal web setup installs modern assets, exact API routes, private
+www-data-owned directories on `/backingfiles` (mode 0700), and the hourly Trash
+timer. On existing systems, optional FFmpeg installation failure leaves the web
+interface usable with clear still-image fallbacks. The small `/mutable` partition
+is reserved for existing runtime state; recording copies and media caches use
+`/backingfiles`. The
 web server explicitly serves trusted modern JavaScript modules with their script
 content type; uploaded modules remain downloads. Device requests share the API's
 timeout handling so a stalled connection is distinguished from cancellation. The
@@ -183,4 +197,6 @@ The server binds only `127.0.0.1` and clearly labels fixture mode. Chrome is the
 default; `PLAYWRIGHT_CHANNEL=chromium` uses an installed Playwright Chromium.
 Run `node tests/modern-browser.test.mjs` for end-to-end checks and screenshots.
 Deployment still requires device validation of actual snapshot/FUSE permissions,
-the retention timer, and preview performance on the target hardware.
+the retention timer, and still-image performance on the target hardware. A new
+release image stays an unpublished draft until its exact checksum has completed
+the spare-card setup, recording, archive, download, and recovery acceptance test.

@@ -8,6 +8,45 @@ then
   export -n WEB_PASSWORD
 fi
 
+recording_encoder_available() {
+  local encoder_list flags encoder description
+
+  [ -x /usr/bin/ffmpeg ] || return 1
+  if ! encoder_list="$(timeout 10 /usr/bin/ffmpeg -hide_banner -encoders 2>/dev/null)"
+  then
+    return 1
+  fi
+  while read -r flags encoder description
+  do
+    if [[ "$flags" =~ ^V[A-Z.]{5}$ ]] && [ "$encoder" = mjpeg ]
+    then
+      return 0
+    fi
+  done <<< "$encoder_list"
+  return 1
+}
+
+configure_optional_recording_encoder() {
+  # Release images already contain the verified distro encoder. Older images
+  # may install it here, but unavailable optional packages must not prevent
+  # authenticated web access, Trash cleanup, or original-quality playback.
+  if recording_encoder_available
+  then
+    return 0
+  fi
+  setup_progress "Installing optional recording thumbnail encoder"
+  if DEBIAN_FRONTEND=noninteractive apt-get -y install ffmpeg
+  then
+    if ! recording_encoder_available
+    then
+      setup_progress "WARNING: recording thumbnail encoder is unavailable after package installation. Original-quality playback and downloads remain available."
+    fi
+  else
+    setup_progress "WARNING: optional ffmpeg installation failed. Recording thumbnails may be unavailable; continuing web and Trash setup. Original-quality playback and downloads remain available."
+  fi
+  return 0
+}
+
 validate_webui_archive() {
   local archive="$1"
   local listing_file="$2"
@@ -689,9 +728,9 @@ do
   fi
   install -d -o www-data -g www-data -m 0700 "$recording_store"
 done
-# Low previews use a bounded optional encoder; High and original downloads work
-# without it. The normal image/setup path installs the distribution's encoder.
-DEBIAN_FRONTEND=noninteractive apt-get -y install ffmpeg
+# Thumbnails use an optional encoder; full-quality playback and downloads work
+# without it. Fresh release images already include the verified distro package.
+configure_optional_recording_encoder
 install -o root -g root -m 0644 "$SOURCE_DIR/setup/pi/teslausb-trash-cleanup.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$SOURCE_DIR/setup/pi/teslausb-trash-cleanup.timer" /etc/systemd/system/
 systemctl daemon-reload

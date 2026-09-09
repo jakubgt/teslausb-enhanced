@@ -1,4 +1,5 @@
 import {CAMERAS,escapeHTML as esc,timeLabel,stampLabel,bytesLabel,eventMarker,validLocation} from './model.mjs';
+import {queueThumbnailRequest} from './thumbnail-loader.mjs';
 
 const BUFFER_FILE_LIMIT=64*1024*1024, BUFFER_TOTAL_LIMIT=256*1024*1024;
 
@@ -9,8 +10,8 @@ export class ClipPlayer {
     this.clipBuffer=null;this.bufferAbort=null;this.bufferMessage='';
     this.navigation={previous:false,next:false,index:0,total:0,scope:'Current filter',blocked:false};this.navigating=false;this.destroyed=false;this.finalEndGeneration=null;
     container.innerHTML=`<section class="player" aria-label="Recording viewer"><div class="player-empty">Select a recording to view its camera angles.</div><div class="player-content" hidden>
-      <div class="player-header"><div><h2 data-title>Latest available recording</h2><p data-capture></p></div><div class="player-options"><div class="mode-group" role="group" aria-label="Camera layout"><button type="button" data-mode="single" aria-pressed="true">Single camera</button><button type="button" data-mode="overview" aria-pressed="false">Camera overview</button><button type="button" data-mode="all" aria-pressed="false">All cameras</button></div><label>Quality <select data-quality><option value="high">High · original</option><option value="low">Low · less data</option></select></label></div></div>
-      <div class="quality-status" role="status" aria-live="polite"><span data-quality-status>Original-quality playback</span><button type="button" data-preview-retry hidden>Check preview</button><button type="button" data-use-original hidden>Play original</button><button type="button" data-overview-retry hidden>Check overview</button></div>
+      <div class="player-header"><div><h2 data-title>Latest available recording</h2><p data-capture></p></div><div class="player-options"><div class="mode-group" role="group" aria-label="Camera layout"><button type="button" data-mode="single" aria-pressed="true">Single camera</button><button type="button" data-mode="overview" aria-pressed="false">Camera overview</button><button type="button" data-mode="all" aria-pressed="false">All cameras</button></div><span class="small" data-quality>Original quality</span></div></div>
+      <div class="quality-status" role="status" aria-live="polite"><span data-quality-status>Original-quality playback</span><button type="button" data-overview-retry hidden>Check overview</button></div>
       <div class="clip-buffer"><div class="buffer-actions"><button type="button" data-buffer>Load clip first</button><button type="button" data-buffer-cancel hidden>Cancel loading</button></div><p data-buffer-status role="status" aria-live="polite"></p><progress aria-label="Clip loading progress" hidden></progress></div>
       <div class="video-grid"></div><div class="player-error" role="status" aria-live="polite" hidden></div>
       <div class="player-controls"><button type="button" data-play aria-label="Play recording">Play</button><button type="button" data-back aria-label="Skip back 10 seconds">−10s</button><button type="button" data-forward aria-label="Skip forward 10 seconds">+10s</button><button type="button" data-jump disabled>Jump to event</button><span class="timecode" data-time>0:00 / 0:00</span><select data-rate aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select><button type="button" data-fullscreen>Fullscreen</button></div>
@@ -25,9 +26,6 @@ export class ClipPlayer {
     this.q('[data-position]').oninput=e=>this.seek(Number(e.target.value));this.q('[data-rate]').onchange=e=>{this.rate=Number(e.target.value);this.videos.forEach(v=>v.playbackRate=this.rate);};
     this.q('[data-jump]').onclick=()=>{if(this.marker!==null)this.seek(this.marker);};
     container.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{if(this.mode===b.dataset.mode)return;this.capturePosition();this.mode=b.dataset.mode;this.loadSegment();this.renderSelection();});
-    this.q('[data-quality]').onchange=e=>{this.capturePosition();this.quality=e.target.value;this.loadSegment();};
-    this.q('[data-use-original]').onclick=()=>{this.capturePosition();this.quality='high';this.q('[data-quality]').value='high';this.playing=true;this.loadSegment();};
-    this.q('[data-preview-retry]').onclick=()=>{this.capturePosition();this.loadSegment({retryFailed:true});};
     this.q('[data-overview-retry]').onclick=()=>this.loadSegment({retryFailed:true});
     this.q('[data-buffer]').onclick=()=>void this.loadClipFirst();
     this.q('[data-buffer-cancel]').onclick=()=>{this.loadSegment();this.bufferMessage='Loading cancelled. You can stream the original or try again.';this.renderBuffer();};
@@ -73,12 +71,12 @@ export class ClipPlayer {
     if(!event){this.clear();return;}
     this.generation++;this.playIntent++;this.releaseMedia();this.metadataAbort?.abort();this.metadata=null;this.marker=null;
     this.event=event;this.position=Math.min(Math.max(0,restore.position||0),Math.max(0,event.duration-.1));this.camera=event.cameras.includes(restore.camera||this.camera)?(restore.camera||this.camera):event.cameras[0];
-    this.mode=restore.mode||this.mode;this.quality=restore.quality||'high';this.rate=restore.rate||this.rate;this.playing=restore.playing||false;this.suspended=restore.suspended===true||document.hidden;this.autoplayInterrupted=false;
-    this.q('.player-empty').hidden=true;this.q('.player-content').hidden=false;this.q('[data-quality]').value=this.quality;this.q('[data-rate]').value=String(this.rate);
+    this.mode=restore.mode||this.mode;this.quality='high';this.rate=restore.rate||this.rate;this.playing=restore.playing||false;this.suspended=restore.suspended===true||document.hidden;this.autoplayInterrupted=false;
+    this.q('.player-empty').hidden=true;this.q('.player-content').hidden=false;this.q('[data-rate]').value=String(this.rate);
     this.q('[data-title]').textContent=`${event.category} recording`;this.q('[data-capture]').textContent=stampLabel(event.start)+' · Snapshot footage';this.q('[data-position]').max=String(event.duration-.1);
     this.q('[data-trash]').hidden=event.group==='RecentClips';this.q('[data-jump]').disabled=true;
     this.q('.camera-buttons').innerHTML=event.cameras.map(c=>`<button type="button" data-camera="${c}" aria-pressed="${c===this.camera}">${esc(CAMERAS[c])}</button>`).join('');
-    this.container.querySelectorAll('[data-camera]').forEach(b=>b.onclick=()=>{this.capturePosition();this.camera=b.dataset.camera;if(this.mode==='overview'){this.mode='single';this.quality='high';this.q('[data-quality]').value='high';}this.loadSegment();this.renderSelection();});
+    this.container.querySelectorAll('[data-camera]').forEach(b=>b.onclick=()=>{this.capturePosition();this.camera=b.dataset.camera;if(this.mode==='overview')this.mode='single';this.loadSegment();this.renderSelection();});
     this.q('.video-grid').replaceChildren();this.renderSelection();this.renderDetails();this.renderMarker();this.renderNavigation();this.updateControls();this.loadSegment();
     if(this.suspended)this.q('[data-quality-status]').textContent='Playback is paused.';
     await this.loadMetadata(event);
@@ -96,7 +94,7 @@ export class ClipPlayer {
       this.metadata=data;this.marker=eventMarker(event,data);this.renderDetails();this.renderMarker();this.updateControls();
     }catch(e){if(!signal.aborted&&this.event===event)this.renderDetails();}finally{clearTimeout(timeout);}
   }
-  renderSelection(){this.container.querySelectorAll('[data-camera]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.camera===this.camera)));this.container.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===this.mode)));this.q('[data-download-camera]').textContent='Download '+CAMERAS[this.camera];this.q('.video-grid').classList.toggle('all',this.mode!=='single');this.q('[data-quality]').disabled=this.mode==='overview';this.renderBuffer();this.renderNavigation();}
+  renderSelection(){this.container.querySelectorAll('[data-camera]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.camera===this.camera)));this.container.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===this.mode)));this.q('[data-download-camera]').textContent='Download '+CAMERAS[this.camera];this.q('.video-grid').classList.toggle('all',this.mode!=='single');this.renderBuffer();this.renderNavigation();}
   renderMarker(){const marker=this.q('.event-tick');marker.hidden=this.marker===null;if(this.marker!==null)marker.style.left=`calc(18px + (100% - 36px) * ${this.marker/this.event.duration})`;}
   renderDetails(){
     const e=this.event,meta=this.metadata,location=validLocation(meta);
@@ -106,10 +104,10 @@ export class ClipPlayer {
     if(location){const map=document.createElement('div');map.className='map-content';const load=document.createElement('button');load.type='button';load.textContent='Load location map';const hint=document.createElement('p');hint.textContent='Opens map data from OpenStreetMap using this event’s location.';hint.className='small';map.append(load,hint);details.append(map);load.onclick=()=>{const {lat,lon}=location;const frame=document.createElement('iframe');frame.title='Recording location map';frame.loading='lazy';frame.referrerPolicy='no-referrer';const params=new URLSearchParams({bbox:[Math.max(-180,lon-.004),Math.max(-90,lat-.004),Math.min(180,lon+.004),Math.min(90,lat+.004)].join(','),layer:'mapnik',marker:lat+','+lon});frame.src='https://www.openstreetmap.org/export/embed.html?'+params;map.replaceChildren(frame);};}
   }
   pauseVideo(video){this.videoIntent.set(video,(this.videoIntent.get(video)||0)+1);video.pause();}
-  releaseMedia({keepBuffer=false}={}){this.loadAbort?.abort();clearTimeout(this.previewTimer);clearTimeout(this.overviewTimer);this.bufferAbort?.abort();this.bufferAbort=null;for(const video of this.videos){this.pauseVideo(video);video.removeAttribute('src');video.load();}for(const image of this.container.querySelectorAll('.overview-tile img')){image.onload=image.onerror=null;image.removeAttribute('src');}this.videos=[];this.master=null;this.buffering=false;if(!keepBuffer){this.dropBuffer();this.bufferMessage='';}this.q('[data-overview-retry]').hidden=true;this.renderBuffer();}
+  releaseMedia({keepBuffer=false}={}){this.loadAbort?.abort();clearTimeout(this.overviewTimer);this.bufferAbort?.abort();this.bufferAbort=null;for(const video of this.videos){this.pauseVideo(video);video.removeAttribute('src');video.load();}for(const image of this.container.querySelectorAll('.overview-tile img')){image.onload=image.onerror=null;image.removeAttribute('src');}this.videos=[];this.master=null;this.buffering=false;if(!keepBuffer){this.dropBuffer();this.bufferMessage='';}this.q('[data-overview-retry]').hidden=true;this.renderBuffer();}
   dropBuffer(){if(this.clipBuffer)for(const item of this.clipBuffer.values())URL.revokeObjectURL(item.url);this.clipBuffer=null;}
   renderBuffer(progress=null){
-    this.q('.clip-buffer').hidden=this.mode==='overview'||this.quality!=='high';
+    this.q('.clip-buffer').hidden=this.mode==='overview';
     const loading=!!this.bufferAbort,loaded=!!this.clipBuffer;
     this.q('[data-buffer]').textContent=loaded?'Loaded for playback':'Load clip first';
     this.q('[data-buffer]').disabled=!this.event||loading||loaded||this.suspended||document.hidden;
@@ -119,7 +117,7 @@ export class ClipPlayer {
     if(progress?.total){bar.max=progress.total;bar.value=progress.received;}else bar.removeAttribute('value');
   }
   async loadClipFirst(){
-    if(!this.event||this.suspended||document.hidden||this.mode==='overview'||this.quality!=='high'||this.bufferAbort)return;
+    if(!this.event||this.suspended||document.hidden||this.mode==='overview'||this.bufferAbort)return;
     this.capturePosition();this.stopPlayback();this.releaseMedia();
     const generation=this.generation,event=this.event,segment=event.segments[this.segmentIndex];
     const files=(this.mode==='all'?event.cameras:[this.camera]).filter(camera=>segment.files[camera]).map(camera=>({camera,...segment.files[camera]}));
@@ -177,21 +175,15 @@ export class ClipPlayer {
     try{await video.play();if(generation!==this.generation||!this.playing||this.suspended||document.hidden)this.pauseVideo(video);}
     catch{if(generation===this.generation&&intent===this.playIntent&&revision===this.videoIntent.get(video)&&this.playing&&!this.suspended&&!document.hidden)this.stopPlayback('Playback could not start. Try a single camera or refresh the recording.');}
   }
-  async fetchPreview(path,signal,retryFailed=false){
-    const route='/api/v1/recordings/preview?'+new URLSearchParams({path});let preview=await this.api(route,{signal});
-    if(preview.state==='not_requested'||(retryFailed&&preview.state==='failed'))preview=await this.api(route,{method:'POST',signal});
-    return {...preview,retryFailed:retryFailed&&preview.reason==='preview_worker_busy'};
-  }
   async loadOverview(segment,generation,signal,{retryFailed=false}={}){
     this.playing=false;const grid=this.q('.video-grid'),tiles=new Map();
     this.q('[data-quality-status]').textContent=`Small stills near the start of ${stampLabel(segment.stamp)}. Choose a camera to play its original video.`;
-    this.q('[data-use-original]').hidden=true;this.q('[data-preview-retry]').hidden=true;
     for(const [camera,label] of Object.entries(CAMERAS)){
       const file=segment.files[camera],tile=document.createElement('button');tile.type='button';tile.className='video-cell overview-tile';tile.dataset.overviewCamera=camera;tile.setAttribute('aria-label','Play '+label+' camera');tile.disabled=!file;
       const placeholder=document.createElement('span');placeholder.className='video-error';placeholder.textContent=!file?'No recording for this camera.':this.event.owned?'Still unavailable for this restored copy. Choose to play video.':'Preparing a small still…';
       const name=document.createElement('span');name.className='video-label';name.textContent=label;
       const hint=document.createElement('span');hint.className='overview-open';hint.textContent=file?'Play camera →':'Unavailable';tile.append(placeholder,name,hint);grid.append(tile);
-      tile.onclick=()=>{if(!file||generation!==this.generation)return;this.camera=camera;this.mode='single';this.quality='high';this.q('[data-quality]').value='high';this.playing=true;this.loadSegment();this.renderSelection();};
+      tile.onclick=()=>{if(!file||generation!==this.generation)return;this.camera=camera;this.mode='single';this.playing=true;this.loadSegment();this.renderSelection();};
       if(file&&!this.event.owned)tiles.set(file.path,{tile,placeholder,label,state:'pending',deliveryFailures:0});
     }
     this.updateControls();this.renderSelection();
@@ -217,13 +209,16 @@ export class ClipPlayer {
       for(const [path,item] of tiles){
         if(item.state!=='pending')continue;
         try{
-          const route='/api/v1/recordings/thumbnail?'+new URLSearchParams({path});let result=await this.api(route,{signal});if(!alive())return;
-          if(result.state==='not_requested'||(retryFailed&&result.state==='failed')){result=await this.api(route,{method:'POST',signal});if(!alive())return;}
-          if(result.state==='ready'&&typeof result.thumbnail_url==='string'&&result.thumbnail_url.startsWith('/api/v1/recordings/thumbnail/media?')){
-            const loaded=await loadImage(item,result.thumbnail_url);if(!alive())return;
-            if(loaded){item.placeholder.hidden=true;item.state='ready';}else deliveryFailed(item);
-          }else if(this.previewPending(result)){item.placeholder.textContent='Small still is preparing…';}
-          else{item.state='failed';item.placeholder.textContent='Still unavailable. Choose to play video.';}
+          await queueThumbnailRequest(async()=>{
+            if(!alive())return;
+            const route='/api/v1/recordings/thumbnail?'+new URLSearchParams({path});let result=await this.api(route,{signal});if(!alive())return;
+            if(result.state==='not_requested'||(retryFailed&&result.state==='failed')){result=await this.api(route,{method:'POST',signal});if(!alive())return;}
+            if(result.state==='ready'&&typeof result.thumbnail_url==='string'&&result.thumbnail_url.startsWith('/api/v1/recordings/thumbnail/media?')){
+              const loaded=await loadImage(item,result.thumbnail_url);if(!alive())return;
+              if(loaded){item.placeholder.hidden=true;item.state='ready';}else deliveryFailed(item);
+            }else if(this.thumbnailPending(result)){item.placeholder.textContent='Small still is preparing…';}
+            else{item.state='failed';item.placeholder.textContent='Still unavailable. Choose to play video.';}
+          },{signal,priority:10});
         }catch{if(!alive())return;deliveryFailed(item);}
       }
       if(!alive())return;
@@ -236,38 +231,20 @@ export class ClipPlayer {
     };
     await check();
   }
-  previewPending(result){return result.state==='preparing'||result.reason==='preview_worker_busy';}
-  schedulePreviews(generation,pending){
-    clearTimeout(this.previewTimer);if(!pending.length)return;
-    this.previewTimer=setTimeout(async()=>{
-      if(generation!==this.generation||this.suspended||document.hidden)return;
-      try{
-        const next=[];let changed=false;
-        for(const item of pending){const preview=await this.fetchPreview(item.path,this.loadAbort.signal,item.retryFailed);if(generation!==this.generation||this.suspended||document.hidden)return;const value={...preview,path:item.path};if(preview.state!==item.state||preview.reason!==item.reason)changed=true;if(this.previewPending(value))next.push(value);}
-        if(changed){this.capturePosition();this.loadSegment({retryPaths:new Set(next.filter(item=>item.retryFailed).map(item=>item.path))});}else this.schedulePreviews(generation,next);
-      }catch{if(generation!==this.generation||this.suspended||document.hidden)return;this.q('[data-quality-status]').textContent='Could not check the Low preview. Check again or play the original.';this.q('[data-preview-retry]').hidden=false;}
-    },5000);
-  }
-  async loadSegment({retryFailed=false,retryPaths=new Set(),keepBuffer=false}={}){
+  thumbnailPending(result){return result.state==='preparing'||result.reason==='preview_worker_busy';}
+  async loadSegment({retryFailed=false,keepBuffer=false}={}){
     if(!this.event||this.suspended||document.hidden)return;const generation=++this.generation;this.releaseMedia({keepBuffer});this.loadAbort=new AbortController();const signal=this.loadAbort.signal;
     const event=this.event;this.segmentIndex=Math.min(event.segments.length-1,Math.floor(this.position/60));const segment=event.segments[this.segmentIndex];
     const cameras=this.mode==='all'?event.cameras:[this.camera];const grid=this.q('.video-grid');grid.replaceChildren();this.q('.player-error').hidden=true;
     if(this.mode==='overview'){await this.loadOverview(segment,generation,signal,{retryFailed});return;}
-    this.q('[data-quality-status]').textContent=this.quality==='low'?'Checking smaller previews…':this.clipBuffer?'Original-quality playback from the loaded copy.':this.mode==='all'?'All original camera streams use more data. Load this minute first if playback buffers.':'Original-quality camera file · Single camera uses less data.';this.q('[data-preview-retry]').hidden=true;this.q('[data-use-original]').hidden=this.quality!=='low';
-    const results=[];
+    this.quality='high';
+    this.q('[data-quality-status]').textContent=this.clipBuffer?'Original-quality playback from the loaded copy.':this.mode==='all'?'All original camera streams use more data. Load this minute first if playback buffers.':'Original-quality camera file · Single camera uses less data.';
     for(const camera of cameras){
       const cell=document.createElement('div');cell.className='video-cell';const label=document.createElement('span');label.className='video-label';label.textContent=CAMERAS[camera];const placeholder=document.createElement('div');placeholder.className='video-error';placeholder.textContent='Loading…';cell.append(placeholder,label);grid.append(cell);
-      const file=segment.files[camera];if(!file){placeholder.textContent='This camera is missing for this segment.';results.push({state:'missing'});continue;}
-      let source=this.quality==='high'&&this.clipBuffer?.get(file.path)?.url||file.url,state='ready';
-      if(this.quality==='low'){
-        if(event.owned){placeholder.textContent='Low preview unavailable for this restored copy.';results.push({state:'unavailable'});continue;}
-        try{const preview=await this.fetchPreview(file.path,signal,retryFailed||retryPaths.has(file.path));if(generation!==this.generation||this.suspended||document.hidden)return;state=preview.state;
-          if(state==='ready' && typeof preview.preview_url==='string' && preview.preview_url.startsWith('/api/v1/recordings/preview/media?'))source=preview.preview_url;
-          else{placeholder.textContent=state==='preparing'?'Smaller preview is preparing.':preview.reason==='preview_worker_busy'?'Another smaller preview is preparing. This camera will be checked shortly.':'Low preview is unavailable. Check again or choose High to play the original.';results.push({...preview,state:state==='ready'?'unavailable':state,path:file.path});continue;}
-        }catch(error){if(signal.aborted)return;placeholder.textContent='Low preview unavailable. Choose High to play the original.';results.push({state:'unavailable'});continue;}
-      }
+      const file=segment.files[camera];if(!file){placeholder.textContent='This camera is missing for this segment.';continue;}
+      const source=this.clipBuffer?.get(file.path)?.url||file.url;
       if(generation!==this.generation||this.suspended||document.hidden)return;
-      const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.disableRemotePlayback=true;video.setAttribute('aria-label',CAMERAS[camera]+' recording');video.playbackRate=this.rate;video.src=source;cell.insertBefore(video,label);this.videos.push(video);results.push({state:'ready'});
+      const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.disableRemotePlayback=true;video.setAttribute('aria-label',CAMERAS[camera]+' recording');video.playbackRate=this.rate;video.src=source;cell.insertBefore(video,label);this.videos.push(video);
       if(!this.master || camera===this.camera)this.master=video;
       video.addEventListener('loadedmetadata',()=>{if(generation!==this.generation||this.suspended||document.hidden)return;const offset=this.position-this.segmentIndex*60;try{video.currentTime=Math.min(offset,Number.isFinite(video.duration)?Math.max(0,video.duration-.02):offset);}catch{};placeholder.hidden=true;if(this.playing)this.playVideo(video,generation);});
       video.addEventListener('error',()=>{if(generation!==this.generation)return;placeholder.textContent='This segment could not be loaded. Refresh the library or try another camera.';placeholder.hidden=false;this.autoplayInterrupted=true;if(video===this.master)this.stopPlayback();this.onMediaError();});
@@ -277,9 +254,6 @@ export class ClipPlayer {
       video.addEventListener('ended',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;if(this.segmentIndex+1<event.segments.length){this.position=(this.segmentIndex+1)*60;this.loadSegment();}else{if(this.finalEndGeneration===generation)return;this.finalEndGeneration=generation;if(this.playing&&!this.autoplayInterrupted&&this.q('[data-autoplay-next]').checked&&this.canNavigate(1))void this.navigateClip(1,{autoplay:true});else this.stopPlayback();}});
     }
     if(generation!==this.generation)return;
-    if(this.quality==='low'){const ready=results.filter(r=>r.state==='ready').length,pending=results.filter(r=>this.previewPending(r));this.q('[data-quality-status]').textContent=ready===cameras.length?'Low preview · Original downloads remain unchanged.':pending.length?'Smaller preview is preparing. You can play the original now.':ready?`${ready} of ${cameras.length} low previews available. High quality plays the originals.`:'Low preview is unavailable. Play the original to continue.';this.q('[data-preview-retry]').hidden=ready===cameras.length;this.q('[data-use-original]').hidden=ready===cameras.length;
-      this.schedulePreviews(generation,pending);
-    }
     this.updateControls();
   }
   updateControls(){if(!this.event)return;const blocked=this.mode==='overview'||!!this.bufferAbort||this.suspended;this.q('[data-position]').value=String(Math.min(this.position,this.event.duration-.1));this.q('[data-time]').textContent=timeLabel(this.position)+' / '+timeLabel(this.event.duration);this.q('[data-play]').textContent=this.playing?'Pause':'Play';this.q('[data-play]').setAttribute('aria-label',this.playing?'Pause recording':'Play recording');this.q('[data-play]').disabled=blocked||(!this.master&&!this.playing);for(const key of ['position','back','forward','rate'])this.q('[data-'+key+']').disabled=blocked;this.q('[data-jump]').disabled=blocked||this.marker===null;}

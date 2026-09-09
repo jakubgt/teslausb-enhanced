@@ -42,7 +42,7 @@ ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C",
 DESTINATIONS = {"/var/www/html/modern/" + name: 0o644 for name in (
     "app.mjs", "connection.css", "connection.mjs", "device.css", "device.js",
     "files.js", "index.html", "model.mjs", "player-nav.css", "player.mjs",
-    "style.css", "trash.css", "trash.js")}
+    "style.css", "thumbnail-loader.mjs", "trash.css", "trash.js")}
 DESTINATIONS.update({"/var/www/html/cgi-bin/" + name: mode for name, mode in (
     ("api-v1.sh", 0o755), ("recording-media.py", 0o644),
     ("recording-media.sh", 0o755), ("recording-trash.py", 0o644),

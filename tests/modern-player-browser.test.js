@@ -39,7 +39,7 @@ async function run() {
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url, 'http://localhost').pathname;
     if (pathname === '/') { response.setHeader('Content-Type', 'text/html'); response.end(harness); return; }
-    if (!['/player.mjs', '/model.mjs'].includes(pathname)) { response.writeHead(404); response.end(); return; }
+    if (!['/player.mjs', '/model.mjs', '/thumbnail-loader.mjs'].includes(pathname)) { response.writeHead(404); response.end(); return; }
     response.setHeader('Content-Type', 'text/javascript');
     fs.createReadStream(path.join(root, pathname.slice(1))).pipe(response);
   });
@@ -54,53 +54,20 @@ async function run() {
     await page.waitForFunction(() => window.harnessReady);
 
     await page.evaluate(async () => {
-      reset();window.secondReady=false;
-      reply=path=>path.includes('_14-30-00-front')&&!secondReady?{state:'preparing',reason:'preview_preparing'}:ready(path);
-      await player.setEvent(structuredClone(fixture),{quality:'low',playing:true});
+      reset();await player.setEvent(structuredClone(fixture),{quality:'low',playing:true});metadata();
     });
-    await page.waitForFunction(() => player.videos.length===1);
-    await page.evaluate(() => {metadata();player.master.currentTime=60;player.master.dispatchEvent(new Event('ended'));});
-    await page.waitForFunction(() => player.segmentIndex===1&&polls.size===1&&!player.master);
-    assert.equal(await page.evaluate(() => player.playing), true, 'Desired playback survives a preparing next segment');
-    assert.equal(await page.locator('[data-play]').isDisabled(), false, 'Pending playback can still be paused');
-    await page.evaluate(async () => {secondReady=true;await firePoll();});
-    await page.waitForFunction(() => player.segmentIndex===1&&player.videos.length===1);
-    await page.evaluate(() => metadata());
-    assert.equal(await page.evaluate(() => player.playing&&!player.master.paused), true, 'Ready next segment resumes playback automatically');
-
+    assert.equal(await page.evaluate(() => player.quality), 'high', 'Old Low preferences migrate to original playback');
+    assert.equal(await page.locator('[data-quality]').textContent(), 'Original quality');
+    assert.equal(await page.locator('select[data-quality], [data-preview-retry], [data-use-original]').count(), 0);
+    assert.equal(await page.evaluate(() => player.master.src.startsWith('/TeslaCam/')&&!player.master.paused), true);
+    await page.evaluate(() => {player.master.currentTime=60;player.master.dispatchEvent(new Event('ended'));metadata();});
+    assert.equal(await page.evaluate(() => player.segmentIndex===1&&player.playing&&!player.master.paused), true, 'Next minute uses original footage without a preparation wait');
+    assert.equal(await page.evaluate(() => calls.length+polls.size), 0, 'Original playback never probes or starts smaller video jobs');
     await page.evaluate(async () => {
-      reset();window.busy=true;reply=(path,options)=>busy?(options.method==='POST'?{state:'unavailable',reason:'preview_worker_busy'}:{state:'not_requested',reason:'preview_not_requested'}):ready(path);
-      await player.setEvent(structuredClone(fixture),{quality:'low',playing:true});
+      reset();await player.setEvent(structuredClone(fixture),{quality:'low',mode:'all',playing:true,position:27});metadata();
     });
-    await page.waitForFunction(() => polls.size===1);
-    await page.evaluate(async () => {busy=false;await firePoll();});
-    await page.waitForFunction(() => player.videos.length===1);
-    assert.equal(await page.evaluate(() => player.playing), true, 'A busy worker is checked again without losing desired playback');
-
-    await page.evaluate(async () => {
-      reset();window.job='failed';reply=(_path,options)=>options.method==='POST'?(job='preparing',{state:job,reason:'preview_preparing'}):{state:job,reason:'preview_'+job};
-      await player.setEvent(structuredClone(fixture),{quality:'low'});
-    });
-    await page.waitForFunction(() => calls.length===1);
-    assert.equal(await page.evaluate(() => calls.filter(c=>c.method==='POST').length), 0, 'Failed encoding must not automatically loop');
-    await page.locator('[data-preview-retry]').click();
-    await page.waitForFunction(() => polls.size===1);
-    assert.equal(await page.evaluate(() => calls.filter(c=>c.method==='POST').length), 1, 'Explicit Retry restarts a failed job');
-    await page.evaluate(async () => {job='failed';await firePoll();});
-    await page.waitForFunction(() => polls.size===0);
-    assert.equal(await page.evaluate(() => calls.filter(c=>c.method==='POST').length), 1, 'A second encoding failure waits for another explicit retry');
-
-    await page.evaluate(async () => {
-      reset();window.backReady=false;reply=path=>path.endsWith('-back.mp4')&&!backReady?{state:'preparing',reason:'preview_preparing'}:ready(path);
-      await player.setEvent(structuredClone(fixture),{quality:'low',mode:'all',playing:true});
-    });
-    await page.waitForFunction(() => player.videos.length===1&&polls.size===1);
-    await page.evaluate(async () => {metadata();player.master.currentTime=27;window.originalMaster=player.master;await firePoll();});
-    assert.equal(await page.evaluate(() => player.master===originalMaster), true, 'Unchanged preparation does not reload an already playing camera');
-    await page.evaluate(async () => {backReady=true;await firePoll();});
-    await page.waitForFunction(() => player.videos.length===2);
-    await page.evaluate(() => metadata());
-    assert.deepEqual(await page.evaluate(() => player.videos.map(video=>video.currentTime)), [27,27], 'New ready camera joins at the preserved playback position');
+    assert.deepEqual(await page.evaluate(() => player.videos.map(video=>video.currentTime)), [27,27]);
+    assert.equal(await page.evaluate(() => player.videos.every(video=>video.src.startsWith('/TeslaCam/')&&!video.paused)&&calls.length===0&&polls.size===0), true, 'All cameras restore aligned originals, with no encoding requests');
 
     await page.evaluate(async () => {reset();await player.setEvent(structuredClone(fixture),{quality:'high',mode:'all',playing:true});metadata();});
     await page.evaluate(() => {player.master.currentTime=19;player.master.dispatchEvent(new Event('waiting'));});
@@ -144,12 +111,11 @@ async function run() {
     });
     assert.equal(await page.evaluate(() => calls.length===0&&player.videos.length===0&&player.suspended), true, 'Suspended restoration never starts API or media traffic');
     await page.evaluate(async () => {
-      reset();reply=path=>new Promise(resolve=>{window.latePreview=()=>resolve(ready(path));});
-      await player.setEvent(structuredClone(fixture),{quality:'low',playing:true});
-      testHidden=true;document.dispatchEvent(new Event('visibilitychange'));latePreview();
+      reset();await player.setEvent(structuredClone(fixture),{quality:'low',playing:true});
+      window.lateVideo=player.master;testHidden=true;document.dispatchEvent(new Event('visibilitychange'));
+      videoState(lateVideo).readyState=2;lateVideo.dispatchEvent(new Event('loadedmetadata'));
     });
-    await page.waitForFunction(() => calls.length===1&&calls[0].signal.aborted);
-    assert.equal(await page.evaluate(() => player.suspended&&player.videos.length===0&&polls.size===0), true, 'Hidden tabs abort pending checks and cannot attach a late video');
+    assert.equal(await page.evaluate(() => player.suspended&&player.videos.length===0&&lateVideo.paused&&!lateVideo.src&&calls.length===0), true, 'Hidden tabs release the source and stale metadata cannot resume playback');
 
     await page.evaluate(async () => {
       reset();await player.setEvent(structuredClone(fixture),{quality:'high',playing:true});metadata();

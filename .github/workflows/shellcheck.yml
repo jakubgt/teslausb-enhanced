@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            bash dash ffmpeg g++ libfuse-dev libnginx-mod-http-fancyindex nginx \
+            bash dash ffmpeg g++ jq libfuse-dev libnginx-mod-http-fancyindex nginx \
             pkg-config python3 rsync shellcheck sudo
       - name: Run ShellCheck
         shell: bash
@@ -101,3 +101,4 @@ jobs:
           node ./tests/modern-trash-storage.test.mjs --browser
           node ./tests/modern-polish-browser.test.mjs
           node ./tests/modern-efficient-playback-browser.test.mjs
+          node ./tests/modern-card-thumbnails-browser.test.mjs

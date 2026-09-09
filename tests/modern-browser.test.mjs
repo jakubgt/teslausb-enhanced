@@ -45,11 +45,9 @@ async function run() {
     assert.equal(await page.locator('#clip-grid .clip-card').count(),4);
     assert.equal(await page.locator('#clip-grid').textContent().then(text=>text.includes('2026-09-06')),false);
     await page.getByText(/Local test fixtures/).waitFor();
-    assert.equal(await page.locator('[data-quality]').inputValue(),'high','Original playback is the default');
-    await page.locator('[data-quality]').selectOption('low');
-    await page.locator('[data-quality-status]').filter({hasText:'Low preview is unavailable'}).waitFor();
-    assert.equal(await page.locator('#player video').count(),0);
-    await page.getByRole('button',{name:'Play original',exact:true}).click();await waitMedia();
+    assert.equal(await page.locator('[data-quality]').textContent(),'Original quality','Original playback is the default');
+    assert.equal(await page.locator('select[data-quality]').count(),0,'No smaller-preview selector');
+    await waitMedia();await page.getByRole('button',{name:'Play recording',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#player video')?.currentTime>0);
     const duration=await page.locator('#player video').evaluate(video=>video.duration);
     assert.ok(duration>=60,'Synthetic recording must cover a full 60-second segment; actual duration '+duration);
@@ -76,13 +74,13 @@ async function run() {
     await seek(21);
     await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);
     await pageHide();assert.equal(await page.locator('#player video[src]').count(),0);await pageShow();await waitMedia(6);assert.ok(Math.abs(await position()-21)<1,'Restoring a cached page retains the player position');
-    assert.ok(Math.abs(await position()-21)<1,'Refresh preserves position');assert.equal(await page.locator('[data-camera="back"]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('[data-quality]').inputValue(),'high');
+    assert.ok(Math.abs(await position()-21)<1,'Refresh preserves position');assert.equal(await page.locator('[data-camera="back"]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('[data-quality]').textContent(),'Original quality');
     fixture.state.failVideos=true;await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'Showing the previous list'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),4);await waitMedia(6);fixture.state.failVideos=false;
-    fixture.state.previewState='ready';await page.locator('[data-quality]').selectOption('low');await waitMedia(6);await page.locator('[data-quality-status]').filter({hasText:'Low preview ·'}).waitFor();
-    assert.ok((await page.locator('#player video').evaluateAll(videos=>videos.map(video=>video.getAttribute('src')))).every(src=>src.startsWith('/api/v1/recordings/preview/media?')));
+    assert.ok((await page.locator('#player video').evaluateAll(videos=>videos.map(video=>video.getAttribute('src')))).every(src=>src.startsWith('/TeslaCam/')));
+    assert.equal(fixture.state.requests.some(request=>request.path.startsWith('/api/v1/recordings/preview')),false,'Navigation and refresh never request smaller video encodes');
     await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);
     await page.locator('#theme-toggle').click();await screenshot('recordings-desktop-dark');await noOverflow('Desktop recordings');
-    console.log('PASS: latest day, low/high playback, all cameras, event navigation, and refresh continuity');
+    console.log('PASS: latest day, original playback, all cameras, event navigation, and refresh continuity');
 
     await page.getByRole('button',{name:'Download Rear',exact:true}).click();await page.locator('.download-row').last().getByRole('link',{name:'Save ZIP'}).waitFor();
     assert.match(await page.locator('.download-row').last().textContent(),/2 original file/);
@@ -97,7 +95,7 @@ async function run() {
     await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(4);assert.equal(await page.locator('#player [data-camera]').count(),4);await assertCameraGrid(2,2);
     first.files=completeFiles.filter(file=>file.name!==`${first.stamps[1]}-right_pillar.mp4`);
     await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);
-    await page.locator('[data-quality]').selectOption('high');await waitMedia(6);await seek(75);await waitMedia(5);
+    await waitMedia(6);await seek(75);await waitMedia(5);
     assert.equal(await page.locator('#player .video-cell').count(),6);assert.equal(await page.locator('#player .video-error').filter({hasText:'This camera is missing for this segment.'}).count(),1);assert.equal(await page.locator('#player [data-camera="right_pillar"]').count(),1,'A camera present in another segment remains selectable');
     first.files=completeFiles;await page.locator('#refresh-recordings').click();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();await waitMedia(6);await seek(21);await waitMedia(6);
     console.log('PASS: left/right pillar selection and downloads, older four-camera events, and a missing segment camera');
@@ -132,7 +130,7 @@ async function run() {
     await nav('Trash');await page.locator('.trash-item').waitFor();assert.match(await page.locator('.trash-item').textContent(),/2026-09-08/);await page.getByRole('button',{name:'View clip',exact:true}).click();await page.locator('.trash-preview video').waitFor();await page.waitForFunction(()=>document.querySelector('.trash-preview video')?.readyState>=2);await screenshot('trash-desktop-dark');
     await hideDocument();assert.equal(await page.locator('.trash-preview video[src]').count(),0,'Hidden browser tabs release Trash preview');await showDocument();await page.getByRole('button',{name:'View clip',exact:true}).click();await page.locator('.trash-preview video[src]').waitFor();await nav('Device');assert.equal(await page.locator('.trash-preview video[src]').count(),0,'Leaving Trash releases preview');await nav('Trash');await page.getByRole('button',{name:'View clip',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.trash-preview video')?.readyState>=2);
     await page.getByRole('button',{name:'Restore',exact:true}).click();await page.getByText(/restored to the library/).first().waitFor();assert.equal([...fixture.state.trash.values()][0].state,'restored');await nav('Recordings');await page.locator('#clip-grid .clip-card').filter({hasText:'Restored'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').count(),4);
-    await page.locator(`#clip-grid [data-open="${FIRST_EVENT}"]`).first().click();await page.locator('[data-quality]').selectOption('low');await page.locator('[data-quality-status]').filter({hasText:'Low preview is unavailable'}).waitFor();await page.getByRole('button',{name:'Play original',exact:true}).click();await waitMedia(6);await page.getByRole('button',{name:'Pause recording',exact:true}).click();
+    await page.locator(`#clip-grid [data-open="${FIRST_EVENT}"]`).first().click();await waitMedia(6);await page.getByRole('button',{name:'Play recording',exact:true}).click();await page.getByRole('button',{name:'Pause recording',exact:true}).click();
     await page.reload();await page.locator('#library-state').filter({hasText:'4 recordings available'}).waitFor();assert.equal(await page.locator('#clip-grid .clip-card').filter({hasText:'Restored'}).count(),1,'Restored fixture survives page reload');
     console.log('PASS: trash move, original preview, restore, and reload persistence');
 

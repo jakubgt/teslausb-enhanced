@@ -67,6 +67,63 @@ find_enabled_systemd_unit() {
     -print -quit
 }
 
+verify_image_encoders() {
+  local image_root="$1"
+  local binary
+  local encoder
+  local encoders
+  local file_info
+  local flags
+  local package_state
+
+  # The release pipeline builds and verifies natively on ARM64. Never rely on
+  # host binfmt registrations to execute an image of another architecture.
+  [ "$(uname -m)" = aarch64 ] ||
+    fail "recording encoder verification requires a native aarch64 host"
+  for binary in usr usr/bin
+  do
+    if [ ! -d "$image_root/$binary" ] || [ -L "$image_root/$binary" ]
+    then
+      fail "recording encoder directory is missing or symbolic: $binary"
+    fi
+  done
+  package_state=$(dpkg-query --admindir="$image_root/var/lib/dpkg" \
+    --show --showformat='${db:Status-Status}\t${Architecture}' ffmpeg 2> /dev/null) ||
+    fail "release image is missing the ffmpeg package"
+  [ "$package_state" = $'installed\tarm64' ] ||
+    fail "release image must contain an installed arm64 ffmpeg package"
+  for binary in ffmpeg ffprobe
+  do
+    if [ ! -f "$image_root/usr/bin/$binary" ] ||
+       [ -L "$image_root/usr/bin/$binary" ] ||
+       [ ! -x "$image_root/usr/bin/$binary" ]
+    then
+      fail "recording encoder executable is missing, symbolic, or not executable: $binary"
+    fi
+    file_info=$(file -- "$image_root/usr/bin/$binary") ||
+      fail "unable to inspect recording encoder executable: $binary"
+    [[ "$file_info" =~ ELF\ 64-bit\ LSB.*ARM\ aarch64 ]] ||
+      fail "recording encoder executable is not arm64: $binary"
+  done
+
+  # Use the image's own loader and libraries, with no writable image mounts or
+  # host /dev or /proc bindings. Numeric credentials avoid account lookups;
+  # listing encoders neither decodes recordings nor creates media files.
+  encoders=$(sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C \
+    timeout --signal=TERM --kill-after=5s 20s \
+    chroot --userspec=65534:65534 --groups=65534 "$image_root" \
+    /usr/bin/ffmpeg -hide_banner -encoders 2> /dev/null) ||
+    fail "unable to list image recording encoders in the bounded unprivileged chroot"
+  while read -r flags encoder _
+  do
+    if [[ "$flags" =~ ^V[.A-Z]+$ ]] && [ "$encoder" = mjpeg ]
+    then
+      return
+    fi
+  done <<< "$encoders"
+  fail "release image ffmpeg does not provide the MJPEG thumbnail encoder"
+}
+
 verify_boot_cmdline() {
   local cmdline_file="$1"
   local expected_root_token="$2"
@@ -181,9 +238,9 @@ METADATA_OUTPUT=$(prepare_output_path "$METADATA_INPUT")
 readonly METADATA_OUTPUT
 [ "$PACKAGES_OUTPUT" != "$METADATA_OUTPUT" ] || fail "output paths must be different"
 
-for required_command in awk basename blkid chmod cmp dirname dpkg-query e2fsck \
+for required_command in awk basename blkid chmod chroot cmp dirname dpkg-query e2fsck env \
   file find fsck.vfat grep jq losetup lsblk mkdir mktemp mount mountpoint mv \
-  readlink rm rmdir sfdisk sha256sum sleep sort stat sudo tr udevadm umount
+  readlink rm rmdir sfdisk sha256sum sleep sort stat sudo timeout tr udevadm umount uname
 do
   command -v "$required_command" > /dev/null ||
     fail "required verification command is unavailable: $required_command"
@@ -349,6 +406,7 @@ codename=$(awk -F= '
   }
 ' "$ROOT_MOUNT/etc/os-release") || fail "unable to read one OS codename"
 [ "$codename" = trixie ] || fail "root filesystem is not Debian Trixie"
+verify_image_encoders "$ROOT_MOUNT"
 [ "$(tr -d '\r\n' < "$ROOT_MOUNT/etc/hostname")" = teslausb ] ||
   fail "image hostname is not teslausb"
 
@@ -590,6 +648,12 @@ jq -S -n \
       first_user_locked: true,
       active_setup_config_present: false,
       offline_config_wizard_present: true,
+      recording_encoders: {
+        ffmpeg_installed: true,
+        ffprobe_present: true,
+        mjpeg_encoder_verified: true,
+        verification: "native-unprivileged-chroot"
+      },
       machine_id_initialized: false,
       ssh_host_keys_present: false,
       random_seed_present: false,

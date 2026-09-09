@@ -1,8 +1,13 @@
-# Recording downloads and Low previews
+# Recording downloads and lightweight stills
 
 These endpoints use the normal nginx authentication/allowed-host boundary and
 the shared CGI origin checks. Requests are same-origin. None accepts a device
 path, shell command, URL to fetch, or configurable filesystem root.
+
+Version 2.0.0's modern player streams original-quality video and uses bounded
+browser preloading for slow connections. Its overview and recording cards use
+single-frame JPEGs. The modern interface never requests full Low video encoding;
+the older preview API remains documented below for compatibility clients.
 
 ## Original downloads
 
@@ -44,58 +49,20 @@ Live camera mounts, disk image files, arbitrary aliases, traversal, nonregular
 files, and literal or resolved aliases into EncryptedClips are rejected.
 
 Original downloads bypass the playback FUSE ctts adjustment and preserve actual
-source bytes. Ordinary browser High playback continues to use protected FUSE.
+source bytes. Ordinary original-quality playback continues to use protected FUSE.
 Trash tombstones are checked before source access. Restored events download
 their private owned copies; hidden/deleted events are refused. Already opened
 downloads may complete if the event is moved to Trash concurrently.
 Timestamp-camera filenames in Trash's `hidden_media` set also suppress duplicate
 Recent and other snapshot aliases, including after an owned copy is restored.
 
-## Optional Low previews
-
-`GET /api/v1/recordings/preview?path=SentryClips/<event>/<filename>.mp4`
-returns `state`, `reason`, `original_url`, and `preview_url` (only when ready).
-States are `not_requested`, `preparing`, `ready`, `failed`, or `unavailable`.
-
-`POST` to the same URL, with `X-TeslaUSB-Request: 1`, requests generation. No body
-is required. Preparation returns HTTP 202. A busy worker returns
-`state:unavailable`, `reason:preview_worker_busy`, and `retry_after_seconds:5`;
-clients may retry later or offer High. Nothing is queued in an unbounded queue.
-
-`GET /api/v1/recordings/preview/media?path=...` serves a ready preview with single
-HTTP byte-range support for seeking. The path is revalidated against the current
-source and Trash state on every request. Cache identity includes file inode,
-size and modification timestamp; old source identities cannot reuse a preview.
-
-Low is actual H.264 transcoding: maximum 640-pixel width and 12 frames/second,
-CRF 30, one thread, no audio. It is intended for individual Tesla minute files.
-Segments over 65 seconds or 512 MiB are unavailable. The worker verifies output
-duration and rejects incomplete output instead of serving an unlabeled excerpt.
-Restored copies currently return `restored_original_only`, with their proper
-owned original media URL. They are never mislabeled as Low.
-
-Generation is optional and may take longer than playback duration on a small Pi.
-Without `/usr/bin/ffmpeg`, `/usr/bin/ffprobe`, a usable encoder, or safe cache
-storage, the API explicitly reports unavailable. The UI should offer High and
-show preparation/error state rather than display original footage as Low.
-
-Provision `/backingfiles/teslausb-previews` with owner `www-data:www-data` and mode
-`0700`. Do not expose the cache as an nginx static directory. Files are mode
-`0600`; a nonblocking inherited flock permits one worker. The cache is bounded
-to 256 MiB with 32 MiB reserved per preview and seven-day eviction. Generation
-requires at least 64 MiB free beyond the reserved output. ffmpeg is constrained
-to 90 CPU seconds, a wall timeout below three minutes, 512 MiB address space,
-32 MiB output, one thread, no external tracks and no network protocols. It is
-launched without a shell, with fixed binaries and inherited approved source and
-output descriptors. Source files and camera disk images are never modified.
-
-## Lightweight camera overview
+## Camera overview and recording-card stills
 
 `GET /api/v1/recordings/thumbnail?path=SentryClips/<event>/<filename>.mp4`
 returns `state`, `reason`, `original_url`, and `thumbnail_url` (only when ready).
 `POST` to the same endpoint with `X-TeslaUSB-Request: 1` requests a cached JPEG;
-GET never starts an encoder. Preparing returns HTTP 202. The same state names as
-Low previews apply: `not_requested`, `preparing`, `ready`, `failed`, `unavailable`.
+GET never starts an encoder. Preparing returns HTTP 202. States are
+`not_requested`, `preparing`, `ready`, `failed`, and `unavailable`.
 The payload labels the image as the first available keyframe of the recorded
 minute, with `max_width:480`, `quality:"thumbnail"`, and `live:false`. It represents
 completed recording footage, not a live camera or a continuously updated view.
@@ -122,10 +89,20 @@ space, and 1 MiB output. External tracks and network protocols remain disabled.
 The helper verifies the bounded JPEG header, dimensions, and end marker before
 publishing it; malformed, oversized, or timed-out output never becomes ready.
 
-Clients should request overview images only when the overview is selected, work
-through cameras sequentially, and stop polling when the view is left or hidden.
-Selecting one camera can open its original-quality video separately. Thumbnails
-do not change the existing Low preview or original-download APIs.
+The overview requests these images only when selected. Recording cards use the
+same API for the first minute's front camera, and only while the card is visible.
+The modern UI serializes a complete status/image transaction across both views,
+prioritizes the active viewer, and cancels pending work on navigation or hiding.
+Delivery retries and preparation polling are bounded. A missing first front
+camera uses an existing recording thumbnail or a labelled fallback; a later
+minute is never presented as the beginning of the clip. Restored copies can use
+an already preserved thumbnail without generating one from a snapshot alias.
+
+Selecting a camera or recording opens original-quality video separately. The
+stills do not require loading a full MP4 or encoding an entire minute. The
+version 2.0.0 image includes FFmpeg and checks that its JPEG encoder is present;
+on older installations with unavailable tools, cards and playback remain usable
+with an explicit fallback.
 
 The cache uses the large backing-files filesystem because `/mutable` may be only
 a few hundred MiB. The fixed production root must be a real directory, not a
@@ -137,6 +114,49 @@ automatically.
 The relevant ffmpeg options are documented in the official
 [command documentation](https://ffmpeg.org/ffmpeg.html) and
 [MOV/MP4 format documentation](https://ffmpeg.org/ffmpeg-formats.html).
+
+## Compatibility API: Low video previews
+
+This API is retained for existing clients. The version 2.0.0 modern interface
+has removed its Low option because full-minute encoding exceeded the tested
+Zero 2 W's processing budget. No smaller-preview job is started by that UI.
+
+`GET /api/v1/recordings/preview?path=SentryClips/<event>/<filename>.mp4`
+returns `state`, `reason`, `original_url`, and `preview_url` (only when ready).
+States are `not_requested`, `preparing`, `ready`, `failed`, or `unavailable`.
+
+`POST` to the same URL, with `X-TeslaUSB-Request: 1`, requests generation. No body
+is required. Preparation returns HTTP 202. A busy worker returns
+`state:unavailable`, `reason:preview_worker_busy`, and `retry_after_seconds:5`;
+clients may retry later or offer original playback. Nothing is queued in an unbounded queue.
+
+`GET /api/v1/recordings/preview/media?path=...` serves a ready preview with single
+HTTP byte-range support for seeking. The path is revalidated against the current
+source and Trash state on every request. Cache identity includes file inode,
+size and modification timestamp; old source identities cannot reuse a preview.
+
+Low is actual H.264 transcoding: maximum 640-pixel width and 12 frames/second,
+CRF 30, one thread, no audio. It is intended for individual Tesla minute files.
+Segments over 65 seconds or 512 MiB are unavailable. The worker verifies output
+duration and rejects incomplete output instead of serving an unlabeled excerpt.
+Restored copies currently return `restored_original_only`, with their proper
+owned original media URL. They are never mislabeled as Low.
+
+Generation is optional and may take longer than playback duration on a small Pi.
+Without `/usr/bin/ffmpeg`, `/usr/bin/ffprobe`, a usable encoder, or safe cache
+storage, the API explicitly reports unavailable. A compatibility client must
+offer original playback and report a bounded preparation/error state, rather
+than label original footage as Low or wait indefinitely.
+
+Provision `/backingfiles/teslausb-previews` with owner `www-data:www-data` and mode
+`0700`. Do not expose the cache as an nginx static directory. Files are mode
+`0600`; a nonblocking inherited flock permits one worker. The cache is bounded
+to 256 MiB with 32 MiB reserved per preview and seven-day eviction. Generation
+requires at least 64 MiB free beyond the reserved output. ffmpeg is constrained
+to 90 CPU seconds, a wall timeout below three minutes, 512 MiB address space,
+32 MiB output, one thread, no external tracks and no network protocols. It is
+launched without a shell, with fixed binaries and inherited approved source and
+output descriptors. Source files and camera disk images are never modified.
 
 ## Integration and validation
 

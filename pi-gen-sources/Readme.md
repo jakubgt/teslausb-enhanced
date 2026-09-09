@@ -1,4 +1,4 @@
-### Downloading a verified TeslaUSB image
+### Downloading a verified TeslaUSB image — version 2.0.0
 
 Image releases include an arm64 Raspberry Pi OS Lite (Debian Trixie) `.img.xz`
 for Raspberry Pi Zero 2 W, its SHA-256 file, a machine-readable provenance
@@ -12,9 +12,23 @@ The release workflow builds on a native arm64 runner, verifies the image through
 read-only FAT/ext4 mounts, confirms Trixie/arm64/Zero 2 W boot artifacts, checks
 the locked image account and absence of active configuration or generated
 device identity, validates the embedded source manifest, tests the compressed
-stream, and uploads only the checked assets to the matching tag. A release
-candidate has passed those automated checks but is not a stable hardware claim
-until the exact asset has completed the documented Pi Zero 2 W smoke test.
+stream, and uploads only checked assets to the matching unpublished draft.
+FFmpeg is bundled in version 2.0.0, and its installed tools and JPEG encoder are
+verified for first-frame recording cards and the lightweight six-camera overview.
+
+Both a `VERSION` push and a manual tag build leave the release in draft state.
+Manual builds use the `main-dev` workflow and validated `main-dev` source; a
+successful build does not publish the release. The job summary records the
+source commit and compressed image SHA-256 for handoff to hardware testing.
+
+An authorized tester downloads the draft's four matching assets while signed in,
+checks the compressed image hash, and flashes a spare card. Record fresh setup,
+vehicle USB recognition, new daily and Sentry recordings, completed snapshots,
+archiving, downloads, and recovery results against that exact image. Only then
+publish it deliberately, after rechecking the tag/source and all asset digests.
+Do not rebuild or replace the accepted image; a changed image needs another test.
+Version 2.0.0 remains an unpublished draft until this acceptance is complete.
+Earlier release tags and embedded build identifiers remain intact for provenance.
 
 Source export and manifest generation are deterministic. The full filesystem
 image is not claimed to be bit-for-bit reproducible because Debian and Raspberry

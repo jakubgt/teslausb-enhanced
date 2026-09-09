@@ -6,6 +6,7 @@ autofs
 python3-pip
 nginx
 fcgiwrap
+ffmpeg
 libnginx-mod-http-fancyindex
 libfuse-dev
 exfatprogs

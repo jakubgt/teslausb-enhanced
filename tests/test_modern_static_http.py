@@ -53,7 +53,7 @@ class ModernStaticHTTPTests(unittest.TestCase):
         cls.web = cls.base / "html"
         cls.web.mkdir()
         cls.modules = {}
-        for name in ("app.mjs", "player.mjs", "model.mjs", "connection.mjs"):
+        for name in ("app.mjs", "player.mjs", "model.mjs", "connection.mjs", "thumbnail-loader.mjs"):
             content = (REPO / "teslausb-www" / "html" / "modern" / name).read_bytes()
             cls.modules[name] = content
             cls.fixture("modern/" + name, content)

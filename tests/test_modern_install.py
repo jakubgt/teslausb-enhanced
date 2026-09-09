@@ -14,6 +14,14 @@ SPEC.loader.exec_module(INSTALLER)
 
 
 class PublicationPermissionsTests(unittest.TestCase):
+    def test_manual_publication_includes_every_bundled_modern_asset(self):
+        modern = Path(__file__).resolve().parents[1] / 'teslausb-www/html/modern'
+        expected = {'/var/www/html/modern/' + path.name: 0o644
+                    for path in modern.iterdir() if path.is_file()}
+        actual = {path: mode for path, mode in INSTALLER.DESTINATIONS.items()
+                  if path.startswith('/var/www/html/modern/')}
+        self.assertEqual(actual, expected)
+
     @unittest.skipUnless(os.name == 'posix', 'POSIX modes and umask are required')
     def test_public_assets_remain_readable_with_private_transaction_umask(self):
         with tempfile.TemporaryDirectory() as directory:

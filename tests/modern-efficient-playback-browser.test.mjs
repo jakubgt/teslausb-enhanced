@@ -114,7 +114,7 @@ async function run(){
   try{
     await page.goto(fixture.url);await page.locator('#library-state').filter({hasText:'recordings available'}).waitFor();await waitMedia();
     assert.equal(await player.locator('[data-mode="single"]').getAttribute('aria-pressed'),'true');
-    assert.equal(await player.locator('[data-quality]').inputValue(),'high');
+    assert.equal(await player.locator('[data-quality]').textContent(),'Original quality');
     assert.equal(fixture.state.requests.some(request=>request.path==='/api/v1/recordings/preview'),false,'First load never probes or starts an expensive Low job');
     const start=fixture.state.requests.length;
     await load.click();await waitBuffered();
@@ -170,7 +170,7 @@ async function run(){
     assert.equal(fixture.state.maxActivePlayableLoads,1,'All-camera files load sequentially');
     assert.equal((await liveURLs()).length,6);
     await mode('single');await waitMedia();await noBuffer();
-    await mode('all');await waitMedia(6);fixture.state.playableChunkDelay=100;fixture.state.playableChunkBytes=16384;
+    await mode('all');await waitMedia(6);fixture.state.playableChunkDelay=100;fixture.state.playableChunkBytes=Math.max(1,Math.ceil(fixture.media.data.length/4));
     await load.click();await until(async()=>(await liveURLs()).length===1,'The first camera completes while later cameras are still loading');
     await cancel.click();await noActiveLoad();await noBuffer();
     fixture.state.playableChunkDelay=0;await mode('single');await waitMedia();
@@ -200,7 +200,7 @@ async function run(){
     for(const label of ['Play recording','Skip back 10 seconds','Skip forward 10 seconds'])assert.equal(await player.getByRole('button',{name:label,exact:true}).isDisabled(),true);
     await player.locator('[data-overview-camera="right_pillar"]').click();await waitMedia();
     assert.equal(await player.locator('[data-mode="single"]').getAttribute('aria-pressed'),'true');
-    assert.equal(await player.locator('[data-quality]').inputValue(),'high');
+    assert.equal(await player.locator('[data-quality]').textContent(),'Original quality');
     assert.equal(await player.locator('[data-camera="right_pillar"]').getAttribute('aria-pressed'),'true');
 
     const currentEvent=fixture.state.events.find(event=>event.event==='SavedClips/2026-09-08_16-20-00');
