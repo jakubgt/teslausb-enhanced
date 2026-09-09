@@ -14,6 +14,8 @@ remain intact.
   recording freshness, download feedback, and Device tools without BLE pairing.
 - Refresh modern UI files together after an update, including browsers that
   retained older scripts and styles. Preserve authenticated cache revalidation.
+- Give the nginx log directory an explicit root owner and mode 0755, so log
+  files remain usable during reloads with kernel file protections enabled.
 - Replace recording-card placeholders with lazy first-frame stills. Keep
   single-camera original playback as the default, add bounded browser loading
   before playback, and use small stills for the six-camera overview.

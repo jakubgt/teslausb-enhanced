@@ -47,6 +47,62 @@ configure_optional_recording_encoder() {
   return 0
 }
 
+configure_nginx_log_storage() {
+  local log_dir=/var/log/nginx
+  local filesystem options parent owner permissions
+
+  if [ -L /var ] || [ -L /var/log ] || [ -L "$log_dir" ] ||
+     { [ -e "$log_dir" ] && ! [ -d "$log_dir" ]; }
+  then
+    echo "nginx log directory is symbolic or not a directory" >&2
+    return 1
+  fi
+  for parent in /var /var/log
+  do
+    [ -d "$parent" ] || return 1
+    read -r owner permissions < <(stat -c '%u %a' -- "$parent") || return 1
+    if [ "$owner" != 0 ] || ! [[ "$permissions" =~ ^[0-7]{3,4}$ ]] ||
+       (( (8#$permissions & 022) != 0 ))
+    then
+      echo "nginx log parent directory has unsafe ownership or permissions" >&2
+      return 1
+    fi
+  done
+  mkdir -p -- "$log_dir" || return 1
+  if ! mountpoint -q -- "$log_dir"
+  then
+    mount -t tmpfs -o nodev,nosuid,mode=0755,uid=0,gid=0 tmpfs "$log_dir" || return 1
+  fi
+  filesystem=$(findmnt --mountpoint "$log_dir" --noheadings --output FSTYPE) || return 1
+  if [ "$filesystem" != tmpfs ]
+  then
+    echo "nginx log directory is not a tmpfs mount" >&2
+    return 1
+  fi
+  options=$(findmnt --mountpoint "$log_dir" --noheadings --output OPTIONS) || return 1
+  for permissions in rw nodev nosuid
+  do
+    case ",$options," in
+      *,$permissions,*) ;;
+      *)
+        echo "nginx log mount is missing a required protection" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  # tmpfs mode/uid/gid options only affect the initial mount. Correct an
+  # existing mount's root directory without changing any log files. A sticky
+  # writable directory blocks root O_CREAT opens of worker-owned logs when
+  # fs.protected_regular is enabled, including nginx -t and configuration reload.
+  chown --no-dereference 0:0 -- "$log_dir" || return 1
+  chmod 0755 -- "$log_dir" || return 1
+  [ "$(stat -c '%u:%g:%a' -- "$log_dir")" = 0:0:755 ] || {
+    echo "nginx log directory ownership or mode was not corrected" >&2
+    return 1
+  }
+}
+
 validate_webui_archive() {
   local archive="$1"
   local listing_file="$2"
@@ -617,12 +673,11 @@ setup_progress "configuring nginx"
 # delete existing nginx fstab entries
 sed -i "/.*\/nginx tmpfs.*/d" /etc/fstab
 # and recreate them
-echo "tmpfs /var/log/nginx tmpfs nodev,nosuid 0 0" >> /etc/fstab
+echo "tmpfs /var/log/nginx tmpfs nodev,nosuid,mode=0755,uid=0,gid=0 0 0" >> /etc/fstab
 echo "tmpfs /var/lib/nginx tmpfs nodev,nosuid 0 0" >> /etc/fstab
 # only needed for initial setup, since systemd will create these automatically after that
-mkdir -p /var/log/nginx
 mkdir -p /var/lib/nginx
-mount /var/log/nginx
+configure_nginx_log_storage
 mount /var/lib/nginx
 
 DEBIAN_FRONTEND=noninteractive apt-get -y install nginx fcgiwrap libnginx-mod-http-fancyindex fuse libfuse-dev g++ net-tools wireless-tools ethtool
