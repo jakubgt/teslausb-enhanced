@@ -55,10 +55,18 @@ server {
     # index remains reachable as /index.html?ui=legacy for a direct fallback.
     location = / {
         try_files /modern/index.html =404;
+        expires -1;
     }
 
     location / {
         try_files $uri $uri/ =404;
+    }
+
+    # Revalidate installed UI assets after updates. expires preserves inherited
+    # security headers, unlike a location-level add_header Cache-Control.
+    location /modern/ {
+        try_files $uri $uri/ =404;
+        expires -1;
     }
 
     # Older Raspberry Pi OS MIME tables do not recognize ES modules. Scope
@@ -67,6 +75,7 @@ server {
     location ~ ^/modern/.*\.mjs$ {
         try_files $uri =404;
         types { application/javascript mjs; }
+        expires -1;
     }
 
     location /cgi-bin/ {

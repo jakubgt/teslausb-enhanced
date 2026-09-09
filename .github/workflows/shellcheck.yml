@@ -102,3 +102,4 @@ jobs:
           node ./tests/modern-polish-browser.test.mjs
           node ./tests/modern-efficient-playback-browser.test.mjs
           node ./tests/modern-card-thumbnails-browser.test.mjs
+          node ./tests/modern-cache-upgrade-browser.test.mjs

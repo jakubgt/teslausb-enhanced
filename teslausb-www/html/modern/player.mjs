@@ -1,5 +1,5 @@
 import {CAMERAS,escapeHTML as esc,timeLabel,stampLabel,bytesLabel,eventMarker,validLocation} from './model.mjs';
-import {queueThumbnailRequest} from './thumbnail-loader.mjs';
+import {queueThumbnailRequest} from './thumbnail-loader.mjs?v=2.0.0';
 
 const BUFFER_FILE_LIMIT=64*1024*1024, BUFFER_TOTAL_LIMIT=256*1024*1024;
 

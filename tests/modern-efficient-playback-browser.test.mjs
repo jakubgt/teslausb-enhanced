@@ -19,7 +19,7 @@ async function thumbnailTransport(media=null){
   const fixture=await createPreviewServer({media}),browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome',headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:1120}}),errors=[];
   page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
-  if(process.env.MODERN_PLAYER_BASELINE)await page.route('**/modern/player.mjs',route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(process.env.MODERN_PLAYER_BASELINE,'utf8')}));
+  if(process.env.MODERN_PLAYER_BASELINE)await page.route(/\/modern\/player\.mjs(?:\?.*)?$/,route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(process.env.MODERN_PLAYER_BASELINE,'utf8')}));
   const selected='SavedClips/2026-09-08_16-20-00',front=`${selected}/2026-09-08_16-19-00-front.mp4`;
   const mode=value=>page.locator(`#player [data-mode="${value}"]`).click();
   const rendered=()=>page.locator('#player .overview-tile img').evaluateAll(images=>images.filter(image=>image.complete&&image.naturalWidth>0).length);

@@ -34,6 +34,18 @@ class StaticConfigurationTests(unittest.TestCase):
         for directive in ("auth_basic", "add_header", "alias", "root", "fastcgi", "proxy_pass"):
             self.assertNotIn(directive, location)
 
+    def test_all_modern_locations_revalidate_without_replacing_security_headers(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        for marker in ("location = / {", "location /modern/ {", MODULE_LOCATION):
+            with self.subTest(location=marker):
+                self.assertEqual(source.count(marker), 1)
+                location = source.split(marker, 1)[1].split("\n    }", 1)[0]
+                self.assertIn("expires -1;", location)
+                self.assertNotIn("add_header", location)
+                self.assertNotIn("auth_basic", location)
+        ordinary = source.split("location / {", 1)[1].split("\n    }", 1)[0]
+        self.assertNotIn("expires", ordinary)
+
 
 @unittest.skipUnless(os.name == "posix" and NGINX, "requires Linux nginx (including fancyindex)")
 class ModernStaticHTTPTests(unittest.TestCase):
@@ -56,6 +68,11 @@ class ModernStaticHTTPTests(unittest.TestCase):
         for name in ("app.mjs", "player.mjs", "model.mjs", "connection.mjs", "thumbnail-loader.mjs"):
             content = (REPO / "teslausb-www" / "html" / "modern" / name).read_bytes()
             cls.modules[name] = content
+            cls.fixture("modern/" + name, content)
+        cls.static = {}
+        for name in ("index.html", "style.css", "device.js"):
+            content = (REPO / "teslausb-www" / "html" / "modern" / name).read_bytes()
+            cls.static[name] = content
             cls.fixture("modern/" + name, content)
         cls.fixture("modern/connection.css", b".connection-banner { display: flex; }\n")
         cls.fixture("outside.mjs", b"export const outside = true;\n")
@@ -128,12 +145,14 @@ class ModernStaticHTTPTests(unittest.TestCase):
                 cls.process.kill()
                 cls.process.wait(timeout=5)
 
-    def request(self, path, *, authorized=True, host="localhost"):
+    def request(self, path, *, authorized=True, host="localhost", extra_headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
             headers = {"Host": host}
             if authorized:
                 headers["Authorization"] = self.authorization
+            if extra_headers:
+                headers.update(extra_headers)
             connection.request("GET", path, headers=headers)
             response = connection.getresponse()
             return response.status, dict((key.lower(), value) for key, value in response.getheaders()), response.read()
@@ -155,6 +174,43 @@ class ModernStaticHTTPTests(unittest.TestCase):
                 self.assertEqual(headers.get("content-type"), "application/javascript")
                 self.assertEqual(content, original)
                 self.assertNotIn("content-disposition", headers)
+                self.assertEqual(headers.get("cache-control"), "no-cache")
+                self.security_headers(headers)
+
+    def test_modern_landing_pages_and_assets_require_revalidation(self):
+        cases = (
+            ("/", "text/html", self.static["index.html"]),
+            ("/?v=fixture", "text/html", self.static["index.html"]),
+            ("/modern/", "text/html", self.static["index.html"]),
+            ("/modern/index.html", "text/html", self.static["index.html"]),
+            ("/modern/app.mjs", "application/javascript", self.modules["app.mjs"]),
+            ("/modern/app.mjs?v=fixture", "application/javascript", self.modules["app.mjs"]),
+            ("/modern/player.mjs", "application/javascript", self.modules["player.mjs"]),
+            ("/modern/style.css", "text/css", self.static["style.css"]),
+            ("/modern/style.css?v=fixture", "text/css", self.static["style.css"]),
+            ("/modern/device.js?v=fixture", "application/javascript", self.static["device.js"]),
+        )
+        for path, mime, expected in cases:
+            with self.subTest(path=path):
+                status, headers, content = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers.get("content-type"), mime)
+                self.assertEqual(headers.get("cache-control"), "no-cache")
+                self.assertIn("expires", headers)
+                self.assertEqual(content, expected)
+                self.assertNotIn("content-disposition", headers)
+                self.security_headers(headers)
+
+    def test_unchanged_asset_revalidates_with_security_headers(self):
+        for path in ("/", "/modern/", "/modern/app.mjs?v=fixture", "/modern/style.css"):
+            with self.subTest(path=path):
+                status, headers, _ = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertIn("etag", headers)
+                status, headers, content = self.request(path, extra_headers={"If-None-Match": headers["etag"]})
+                self.assertEqual(status, 304)
+                self.assertEqual(headers.get("cache-control"), "no-cache")
+                self.assertEqual(content, b"")
                 self.security_headers(headers)
 
     def test_mapping_does_not_change_css_or_unrelated_module_types(self):
@@ -171,16 +227,20 @@ class ModernStaticHTTPTests(unittest.TestCase):
         self.security_headers(headers)
 
     def test_module_inherits_basic_auth(self):
-        status, headers, content = self.request("/modern/connection.mjs", authorized=False)
-        self.assertEqual(status, 401)
-        self.assertIn("Basic", headers.get("www-authenticate", ""))
-        self.assertNotEqual(content, self.modules["connection.mjs"])
-        self.security_headers(headers)
+        for path in ("/", "/modern/", "/modern/index.html", "/modern/connection.mjs", "/modern/style.css", "/modern/device.js"):
+            with self.subTest(path=path):
+                status, headers, content = self.request(path, authorized=False)
+                self.assertEqual(status, 401)
+                self.assertIn("Basic", headers.get("www-authenticate", ""))
+                self.assertNotEqual(content, self.modules["connection.mjs"])
+                self.security_headers(headers)
 
     def test_module_inherits_host_gate_even_with_valid_auth(self):
-        status, headers, _ = self.request("/modern/connection.mjs", host="fd-attacker.example")
-        self.assertEqual(status, 421)
-        self.security_headers(headers)
+        for path in ("/", "/modern/", "/modern/connection.mjs", "/modern/style.css", "/modern/device.js"):
+            with self.subTest(path=path):
+                status, headers, _ = self.request(path, host="fd-attacker.example")
+                self.assertEqual(status, 421)
+                self.security_headers(headers)
 
     def test_uploaded_modules_remain_authenticated_downloads(self):
         for prefix in ("/fs/Music", "/TeslaCam/SavedClips/event"):
