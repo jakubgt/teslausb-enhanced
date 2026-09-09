@@ -130,7 +130,9 @@ appearance and adapts to phone widths without horizontal scrolling.
 ## Setup and validation
 
 Normal web setup installs modern assets, exact API routes, optional ffmpeg/ffprobe,
-private www-data-owned directories (mode 0700), and the hourly Trash timer. The
+private www-data-owned directories on `/backingfiles` (mode 0700), and the hourly
+Trash timer. The small `/mutable` partition is reserved for existing runtime
+state; it is not used for preserved recording copies or Low previews. The
 web server explicitly serves trusted modern JavaScript modules with their script
 content type; uploaded modules remain downloads. Device requests share the API's
 timeout handling so a stalled connection is distinguished from cancellation. The

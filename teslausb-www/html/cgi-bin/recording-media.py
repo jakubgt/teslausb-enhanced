@@ -25,7 +25,7 @@ import zipfile
 
 INDEX_ROOT = "/mutable/TeslaCam"
 SNAPSHOT_ROOT = "/tmp/snapshots"
-CACHE_ROOT = "/mutable/teslausb-previews"
+CACHE_ROOT = "/backingfiles/teslausb-previews"
 FFMPEG = "/usr/bin/ffmpeg"
 FFPROBE = "/usr/bin/ffprobe"
 CAMERAS = frozenset(("front", "back", "left_repeater", "right_repeater",

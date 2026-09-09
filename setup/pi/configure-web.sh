@@ -529,6 +529,47 @@ valid_existing_webui() {
   fi
 }
 
+validate_recording_storage() {
+  local legacy_store=/mutable/teslausb-recording-trash
+  local legacy_entry
+
+  if [ -L /backingfiles ] || ! mountpoint -q /backingfiles
+  then
+    echo "Recording storage requires the real mounted /backingfiles filesystem" >&2
+    return 1
+  fi
+  if [ -L "$legacy_store" ] || { [ -e "$legacy_store" ] && ! [ -d "$legacy_store" ]; }
+  then
+    echo "Legacy recording Trash requires manual migration before web setup" >&2
+    return 1
+  fi
+  if [ -d "$legacy_store" ]
+  then
+    # Empty scaffolding is harmless; manifests, recovery copies, staging files,
+    # and unexpected entries must never be abandoned by a root change.
+    legacy_entry=$(find "$legacy_store" -mindepth 1 -maxdepth 1 \
+      ! -name lock ! -name objects -print -quit) || return 1
+    if [ -n "$legacy_entry" ] || [ -L "$legacy_store/objects" ] ||
+       { [ -e "$legacy_store/objects" ] && ! [ -d "$legacy_store/objects" ]; } ||
+       [ -L "$legacy_store/lock" ] ||
+       { [ -e "$legacy_store/lock" ] && ! [ -f "$legacy_store/lock" ]; }
+    then
+      echo "Legacy recording Trash requires manual migration before web setup" >&2
+      return 1
+    fi
+    if [ -d "$legacy_store/objects" ]
+    then
+      legacy_entry=$(find "$legacy_store/objects" -mindepth 1 -maxdepth 1 -print -quit) || return 1
+      if [ -n "$legacy_entry" ]
+      then
+        echo "Legacy recording Trash contains preserved data; migrate it before web setup" >&2
+        return 1
+      fi
+    fi
+  fi
+}
+
+validate_recording_storage
 prepare_web_auth_config
 validate_web_auth_config
 prepare_allowed_web_hosts
@@ -639,7 +680,7 @@ mkdir -p /mutable/TeslaCam
 
 # Recording recovery copies and disposable previews must never be served as
 # static files. Validate existing paths before changing their ownership.
-for recording_store in /mutable/teslausb-recording-trash /mutable/teslausb-previews
+for recording_store in /backingfiles/teslausb-recording-trash /backingfiles/teslausb-previews
 do
   if [ -L "$recording_store" ] || { [ -e "$recording_store" ] && ! [ -d "$recording_store" ]; }
   then

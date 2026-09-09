@@ -79,7 +79,7 @@ Without `/usr/bin/ffmpeg`, `/usr/bin/ffprobe`, a usable encoder, or safe cache
 storage, the API explicitly reports unavailable. The UI should offer High and
 show preparation/error state rather than display original footage as Low.
 
-Provision `/mutable/teslausb-previews` with owner `www-data:www-data` and mode
+Provision `/backingfiles/teslausb-previews` with owner `www-data:www-data` and mode
 `0700`. Do not expose the cache as an nginx static directory. Files are mode
 `0600`; a nonblocking inherited flock permits one worker. The cache is bounded
 to 256 MiB with 32 MiB reserved per preview and seven-day eviction. Generation
@@ -88,6 +88,13 @@ to 90 CPU seconds, a wall timeout below three minutes, 512 MiB address space,
 32 MiB output, one thread, no external tracks and no network protocols. It is
 launched without a shell, with fixed binaries and inherited approved source and
 output descriptors. Source files and camera disk images are never modified.
+
+The cache uses the large backing-files filesystem because `/mutable` may be only
+a few hundred MiB. The fixed production root must be a real directory, not a
+symlink or an environment override. Setup requires `/backingfiles` to be mounted
+before provisioning it. Cache writes share free space with snapshot storage; old
+preview-cache files in a previous `/mutable` location are not migrated or deleted
+automatically.
 
 The relevant ffmpeg options are documented in the official
 [command documentation](https://ffmpeg.org/ffmpeg.html) and

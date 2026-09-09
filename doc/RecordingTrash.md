@@ -9,13 +9,16 @@ days from the successful copy, using verified UTC time on the Pi.
 `/mutable/TeslaCam` is an index of links into read-only snapshots. Moving those links
 would not preserve a recording when snapshot cleanup releases its backing data.
 Trash therefore copies every supported original camera and metadata file into
-`/mutable/teslausb-recording-trash/objects/<random object>/` before publishing its
+`/backingfiles/teslausb-recording-trash/objects/<random object>/` before publishing its
 tombstone. This private directory must stay outside every nginx static alias.
 
 Moving to Trash does **not** free the original snapshot or car disk allocation. It
 uses additional storage for the preserved copy. Permanent deletion frees only the
 private copy; original snapshots, car recordings and archive copies are unchanged.
 Normal snapshot cleanup controls the lifetime of the original snapshot data.
+The private copy shares the backing-files filesystem's free space with snapshots,
+so retaining copies can reduce the available snapshot history. It is a sibling of
+the snapshots directory, outside normal snapshot cleanup's deletion paths.
 The UI must state these semantics at deletion and in the storage overview.
 
 Restoring exposes the owned copy through authenticated API routes and the modern
@@ -110,8 +113,22 @@ are sequential one-event operations; report per-event successes and failures.
 
 1. Install `recording-trash.py` and its shell wrapper as root-owned application
    files. Keep `maintenance.py` available beside them for the fixed health query.
-2. Provision `/mutable/teslausb-recording-trash` as a real directory owned by the
-   CGI account with mode `0700`. Do not weaken `/mutable` or snapshots permissions.
+2. Provision `/backingfiles/teslausb-recording-trash` as a real directory owned by
+   the CGI account with mode `0700`. Setup requires the real `/backingfiles` mount;
+   it must not create recording storage on an unmounted root filesystem. Do not
+   weaken parent-directory or snapshots permissions. The small `/mutable`
+   partition may not even satisfy the 256 MiB minimum free-space reserve, so it
+   is unsuitable for private recording copies. Production roots are fixed;
+   environment variables, aliases, and symlinks cannot redirect them.
+
+   Older experimental installations may have private Trash under
+   `/mutable/teslausb-recording-trash`. Setup stops before changing the web
+   interface if that store contains a manifest, preserved objects, staging data,
+   or unsafe entries. Empty lock/objects scaffolding is allowed. There is no
+   automatic migration or deletion: preserve the full manifest, tombstones, and
+   objects together during an explicitly reviewed migration before switching
+   helpers. Never discard a manifest merely because it contains only deleted
+   entries. The old disposable preview cache is not reused or removed.
 3. Route exact Trash status/media/mutation routes to `recording-trash.sh`. Route
    `trash/download` to `recording-media.sh` first; it shares camera/ZIP handling.
    Add the mutation routes to the API dispatcher's central POST guard as well.
@@ -134,6 +151,9 @@ are sequential one-event operations; report per-event successes and failures.
    The cleanup process emits a compact JSON journal record and exits nonzero on
    storage/verification errors, so systemd can distinguish failure from safe clock
    deferral. Browser CGI endpoints retain normal HTTP JSON responses.
+   Its mount dependencies include `/mutable` and `/backingfiles`; its explicit
+   writable storage path and directory condition name the fixed private Trash
+   root. Preview generation needs no separate service or timer.
 6. The timer needs the existing tightly scoped sudo permission for
    `maintenance-health`. Do not add broad filesystem, shell or root write access.
 7. After installation, verify the service user can take a shared snapshot directory

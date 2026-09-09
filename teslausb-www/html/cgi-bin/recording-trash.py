@@ -17,7 +17,7 @@ import time
 from urllib.parse import parse_qs, quote
 import uuid
 
-ROOT = Path('/mutable/teslausb-recording-trash')
+ROOT = Path('/backingfiles/teslausb-recording-trash')
 INDEX = Path('/mutable/TeslaCam')
 SNAPSHOTS = Path('/tmp/snapshots')
 SNAPSHOT_LOCK = Path('/backingfiles/snapshots')
