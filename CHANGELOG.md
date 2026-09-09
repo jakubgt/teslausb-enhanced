@@ -12,6 +12,8 @@ remain intact.
 
 - Add the modern six-camera UI, latest-day/hour navigation, event controls,
   recording freshness, download feedback, and Device tools without BLE pairing.
+- Refresh modern UI files together after an update, including browsers that
+  retained older scripts and styles. Preserve authenticated cache revalidation.
 - Replace recording-card placeholders with lazy first-frame stills. Keep
   single-camera original playback as the default, add bounded browser loading
   before playback, and use small stills for the six-camera overview.

@@ -1,10 +1,10 @@
 import {resolveLibrary,validTrash,recordingPage,recordingNeighbors,RECORDINGS_PER_PAGE,escapeHTML as esc,bytesLabel,stampLabel,timeLabel,downloadQuery,CAMERAS} from './model.mjs';
-import {ClipPlayer} from './player.mjs';
+import {ClipPlayer} from './player.mjs?v=2.0.0';
 import {mountDevice,hasPendingPowerAction} from './device.js';
 import {mountFiles,configuredFileDrives} from './files.js';
 import {mountTrash} from './trash.js';
 import {mountConnectionBanner} from './connection.mjs';
-import {mountCardThumbnails} from './thumbnail-loader.mjs';
+import {mountCardThumbnails} from './thumbnail-loader.mjs?v=2.0.0';
 
 const $=s=>document.querySelector(s);
 const state={page:'recordings',events:[],paths:[],category:'all',query:'',selected:new Set(),clipPage:1,hour:'latest',day:'latest',library:null,trash:null,trashAvailable:false,config:{},inFlight:false,speedTest:false,downloadCount:0};
