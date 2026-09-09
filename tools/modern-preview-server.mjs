@@ -110,6 +110,7 @@ export async function createPreviewServer({port = 0, media = null} = {}) {
   media ||= await generateFixtureMedia();
   const state = {events: fixtureEvents(), trash: new Map(), previewState: 'unavailable', thumbnailState: media.thumbnail ? 'ready' : 'unavailable', thumbnailPostState: 'ready', thumbnailDelay: 0, thumbnailOverrides: new Map(), failThumbnail: false, failVideos: false, failTrash: false, failStatus: false, failDownload: false, downloadDelay: 0, mutations: [], requests: [], files: new Map([['fs/Music', new Map([['Road Trip', {directory: true}], ['Evening drive.wav', {data: fixtureWave()}]])], ['fs/LightShow',new Map([['lightshow.fseq',{data:Buffer.from('fixture lightshow')} ]])], ['fs/Boombox',new Map([['LockChime.wav',{data:fixtureWave()}]])]])};
   Object.assign(state,{playableChunkDelay:0,playableChunkBytes:1024,omitPlayableLength:false,activePlayableLoads:0,maxActivePlayableLoads:0,abortedPlayableLoads:0});
+  Object.assign(state,{thumbnailReadLock:false,thumbnailLockDelay:5,thumbnailImageDelay:0,activeThumbnailReads:0,maxActiveThumbnailReads:0,thumbnailReadConflicts:0,thumbnailImageFailures:new Map(),thumbnailImageAttempts:new Map(),thumbnailAbortedImages:0});
   const json = (response, value, status = 200) => {response.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});response.end(JSON.stringify(value));};
   const sendMedia = (request, response, data = media.data, type = media.type, disposition) => {
     const headers = {'Content-Type':type,'Accept-Ranges':'bytes','Cache-Control':'no-store'};if(disposition)headers['Content-Disposition']=`attachment; filename="${disposition}"`;
@@ -143,17 +144,28 @@ export async function createPreviewServer({port = 0, media = null} = {}) {
       if(p==='/api/v1/speed-test'){response.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});let count=0;const timer=setInterval(()=>{if(response.destroyed||++count>30){clearInterval(timer);response.end();}else response.write(Buffer.alloc(16384));},60);response.on('close',()=>clearInterval(timer));return;}
       if(p==='/api/v1/recordings/preview') {const mode=state.previewState;return json(response,{ok:true,state:mode,reason:mode==='unavailable'?'No smaller preview exists in this local sample.':undefined,preview_url:mode==='ready'?'/api/v1/recordings/preview/media?'+new URLSearchParams({path:query.get('path')}):undefined});}
       if(p==='/api/v1/recordings/preview/media'){sendMedia(request,response);return;}
+      if(p==='/api/v1/recordings/thumbnail'||p==='/api/v1/recordings/thumbnail/media') {
+        if(p.endsWith('/media'))state.thumbnailImageAttempts.set(query.get('path'),(state.thumbnailImageAttempts.get(query.get('path'))||0)+1);
+        if(state.thumbnailReadLock&&state.activeThumbnailReads){state.thumbnailReadConflicts++;return json(response,{ok:false,error:'Fixture recording store is busy'},503);}
+        state.activeThumbnailReads++;state.maxActiveThumbnailReads=Math.max(state.maxActiveThumbnailReads,state.activeThumbnailReads);
+        response.once('close',()=>{state.activeThumbnailReads--;if(p.endsWith('/media')&&!response.writableFinished)state.thumbnailAbortedImages++;});
+      }
       if(p==='/api/v1/recordings/thumbnail') {
         const source=query.get('path'),override=state.thumbnailOverrides.get(source)||{};
         const mode=request.method==='POST'&&(override.state||state.thumbnailState)==='not_requested'?state.thumbnailPostState:override.state||state.thumbnailState;
         const result={ok:true,state:mode,reason:override.reason||(mode==='unavailable'?'thumbnail_unavailable_for_segment':undefined),thumbnail_url:mode==='ready'?'/api/v1/recordings/thumbnail/media?'+new URLSearchParams({path:source}):null};
         if(request.method==='POST')state.thumbnailOverrides.set(source,{...override,state:mode});
-        if(override.delay||state.thumbnailDelay)await sleep(override.delay||state.thumbnailDelay);
+        const delay=Math.max(override.delay||state.thumbnailDelay,state.thumbnailReadLock?state.thumbnailLockDelay:0);if(delay)await sleep(delay);
         if(response.destroyed)return;
         if(state.failThumbnail)return json(response,{ok:false,error:'Fixture thumbnail unavailable'},503);
         return json(response,result);
       }
-      if(p==='/api/v1/recordings/thumbnail/media'){if(!media.thumbnail)return json(response,{ok:false,error:'Fixture thumbnail missing'},404);sendMedia(request,response,media.thumbnail,'image/jpeg');return;}
+      if(p==='/api/v1/recordings/thumbnail/media'){
+        if(state.thumbnailImageDelay)await sleep(state.thumbnailImageDelay);if(response.destroyed)return;
+        const failures=state.thumbnailImageFailures.get(query.get('path'))||0;
+        if(failures){if(failures>0)state.thumbnailImageFailures.set(query.get('path'),failures-1);return json(response,{ok:false,error:'Fixture image transfer failed'},503);}
+        if(!media.thumbnail)return json(response,{ok:false,error:'Fixture thumbnail missing'},404);sendMedia(request,response,media.thumbnail,'image/jpeg');return;
+      }
       if(p==='/api/v1/trash')return state.failTrash?json(response,{ok:false,error:'Fixture trash status unavailable'},503):json(response,trashStatus());
       if(p==='/api/v1/trash/move') {const body=JSON.parse(request.body||'{}'),event=state.events.find(item=>item.event===body.event);if(!event||event.event.startsWith('RecentClips/'))return json(response,{ok:false,error:'Fixture event is not eligible'},400);const id=createHash('sha256').update(event.event).digest('hex'),entry={...event,id,state:'trashed',deleted_at:new Date().toISOString(),expires_at:new Date(Date.now()+30*86400000).toISOString(),bytes:event.files.filter(file=>file.camera).length*media.data.length};state.trash.set(id,entry);return json(response,trashStatus());}
       if(p==='/api/v1/trash/restore'||p==='/api/v1/trash/delete') {const body=JSON.parse(request.body||'{}');for(const id of body.ids||[]){const entry=state.trash.get(id);if(entry)entry.state=p.endsWith('restore')?'restored':'deleted';}return json(response,trashStatus());}

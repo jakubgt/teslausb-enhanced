@@ -170,7 +170,7 @@ export class ClipPlayer {
       }
     }finally{clearTimeout(stallTimer);clearTimeout(deadline);}
   }
-  stopPlayback(message){this.playing=false;this.playIntent++;this.videos.forEach(video=>this.pauseVideo(video));this.updateControls();if(message)this.onNotice(message);}
+  stopPlayback(message){this.playing=false;this.playIntent++;this.buffering=false;this.q('.player-error').hidden=true;this.videos.forEach(video=>this.pauseVideo(video));this.updateControls();if(message)this.onNotice(message);}
   async playVideo(video,generation,intent=this.playIntent){
     if(generation!==this.generation||intent!==this.playIntent||!this.playing||this.suspended||document.hidden||(this.buffering&&video!==this.master))return;
     const revision=(this.videoIntent.get(video)||0)+1;this.videoIntent.set(video,revision);
@@ -192,11 +192,26 @@ export class ClipPlayer {
       const name=document.createElement('span');name.className='video-label';name.textContent=label;
       const hint=document.createElement('span');hint.className='overview-open';hint.textContent=file?'Play camera →':'Unavailable';tile.append(placeholder,name,hint);grid.append(tile);
       tile.onclick=()=>{if(!file||generation!==this.generation)return;this.camera=camera;this.mode='single';this.quality='high';this.q('[data-quality]').value='high';this.playing=true;this.loadSegment();this.renderSelection();};
-      if(file&&!this.event.owned)tiles.set(file.path,{tile,placeholder,label,state:'pending'});
+      if(file&&!this.event.owned)tiles.set(file.path,{tile,placeholder,label,state:'pending',deliveryFailures:0});
     }
     this.updateControls();this.renderSelection();
     const started=Date.now();
     const alive=()=>generation===this.generation&&!signal.aborted&&!this.suspended&&!document.hidden&&this.mode==='overview';
+    const deliveryFailed=item=>{
+      item.deliveryFailures++;item.state=item.deliveryFailures<3?'pending':'failed';item.placeholder.hidden=false;
+      item.placeholder.textContent=item.state==='pending'?'Retrying the small still…':'Still could not be loaded. Check again or choose to play video.';
+    };
+    // Status and image requests both read the recording store. Await each image
+    // before checking the next camera so they do not compete for its read lock.
+    const loadImage=(item,url)=>new Promise(resolve=>{
+      const image=document.createElement('img');image.alt=item.label+' still near the start of this minute';image.decoding='async';
+      let settled=false,timer;
+      const finish=loaded=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',abort);image.onload=null;image.onerror=null;if(!loaded){image.removeAttribute('src');image.remove();}resolve(loaded);};
+      const abort=()=>finish(false);
+      image.onload=()=>finish(true);image.onerror=()=>finish(false);signal.addEventListener('abort',abort,{once:true});
+      timer=setTimeout(()=>finish(false),15000);item.tile.prepend(image);image.src=url;
+      if(signal.aborted)abort();
+    });
     const check=async()=>{
       if(!alive())return;
       for(const [path,item] of tiles){
@@ -205,13 +220,11 @@ export class ClipPlayer {
           const route='/api/v1/recordings/thumbnail?'+new URLSearchParams({path});let result=await this.api(route,{signal});if(!alive())return;
           if(result.state==='not_requested'||(retryFailed&&result.state==='failed')){result=await this.api(route,{method:'POST',signal});if(!alive())return;}
           if(result.state==='ready'&&typeof result.thumbnail_url==='string'&&result.thumbnail_url.startsWith('/api/v1/recordings/thumbnail/media?')){
-            const image=document.createElement('img');image.alt=item.label+' still near the start of this minute';image.decoding='async';
-            image.onload=()=>{if(alive())item.placeholder.hidden=true;};
-            image.onerror=()=>{if(alive()){item.placeholder.hidden=false;item.placeholder.textContent='Still could not be loaded. Choose to play video.';item.state='failed';this.q('[data-overview-retry]').hidden=false;}};
-            image.src=result.thumbnail_url;item.tile.prepend(image);item.state='ready';
+            const loaded=await loadImage(item,result.thumbnail_url);if(!alive())return;
+            if(loaded){item.placeholder.hidden=true;item.state='ready';}else deliveryFailed(item);
           }else if(this.previewPending(result)){item.placeholder.textContent='Small still is preparing…';}
           else{item.state='failed';item.placeholder.textContent='Still unavailable. Choose to play video.';}
-        }catch{if(!alive())return;item.state='failed';item.placeholder.textContent='Still could not be checked. Choose to play video.';}
+        }catch{if(!alive())return;deliveryFailed(item);}
       }
       if(!alive())return;
       // An explicit check retries failures once. Polling never restarts failed work.
@@ -258,7 +271,7 @@ export class ClipPlayer {
       if(!this.master || camera===this.camera)this.master=video;
       video.addEventListener('loadedmetadata',()=>{if(generation!==this.generation||this.suspended||document.hidden)return;const offset=this.position-this.segmentIndex*60;try{video.currentTime=Math.min(offset,Number.isFinite(video.duration)?Math.max(0,video.duration-.02):offset);}catch{};placeholder.hidden=true;if(this.playing)this.playVideo(video,generation);});
       video.addEventListener('error',()=>{if(generation!==this.generation)return;placeholder.textContent='This segment could not be loaded. Refresh the library or try another camera.';placeholder.hidden=false;this.autoplayInterrupted=true;if(video===this.master)this.stopPlayback();this.onMediaError();});
-      video.addEventListener('waiting',()=>{if(generation===this.generation&&video===this.master&&this.playing&&!this.suspended&&!document.hidden){this.buffering=true;this.videos.filter(v=>v!==video).forEach(v=>this.pauseVideo(v));this.q('.player-error').textContent=this.clipBuffer?'Waiting for video playback. Try Single camera if this device struggles with all cameras.':'Buffering… Use Load clip first or Single camera on a slower connection.';this.q('.player-error').hidden=false;}});
+      video.addEventListener('waiting',()=>{if(generation===this.generation&&video===this.master&&this.playing&&!this.suspended&&!document.hidden){this.buffering=true;this.videos.filter(v=>v!==video).forEach(v=>this.pauseVideo(v));this.q('.player-error').textContent=this.clipBuffer?(this.mode==='all'?'Waiting for video playback. Try Single camera if this device struggles with all cameras.':'Waiting for this browser to decode the loaded video.'):'Buffering… Use Load clip first or Single camera on a slower connection.';this.q('.player-error').hidden=false;}});
       video.addEventListener('playing',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;this.q('.player-error').hidden=true;if(this.buffering){this.buffering=false;for(const v of this.videos)if(v!==video&&v.readyState>=1){try{v.currentTime=video.currentTime;}catch{}if(this.playing)this.playVideo(v,generation);}}});
       video.addEventListener('timeupdate',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;this.position=this.segmentIndex*60+video.currentTime;for(const v of this.videos)if(v!==video&&v.readyState>=2&&Math.abs(v.currentTime-video.currentTime)>.45){try{v.currentTime=video.currentTime;}catch{}}this.updateControls();});
       video.addEventListener('ended',()=>{if(generation!==this.generation||video!==this.master||this.suspended||document.hidden)return;if(this.segmentIndex+1<event.segments.length){this.position=(this.segmentIndex+1)*60;this.loadSegment();}else{if(this.finalEndGeneration===generation)return;this.finalEndGeneration=generation;if(this.playing&&!this.autoplayInterrupted&&this.q('[data-autoplay-next]').checked&&this.canNavigate(1))void this.navigateClip(1,{autoplay:true});else this.stopPlayback();}});

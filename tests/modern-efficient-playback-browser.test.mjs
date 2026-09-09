@@ -15,6 +15,54 @@ async function until(check,message,timeout=5000){
   assert.fail(message);
 }
 
+async function thumbnailTransport(media=null){
+  const fixture=await createPreviewServer({media}),browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome',headless:true});
+  const page=await browser.newPage({viewport:{width:1440,height:1120}}),errors=[];
+  page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
+  if(process.env.MODERN_PLAYER_BASELINE)await page.route('**/modern/player.mjs',route=>route.fulfill({contentType:'text/javascript',body:fs.readFileSync(process.env.MODERN_PLAYER_BASELINE,'utf8')}));
+  const selected='SavedClips/2026-09-08_16-20-00',front=`${selected}/2026-09-08_16-19-00-front.mp4`;
+  const mode=value=>page.locator(`#player [data-mode="${value}"]`).click();
+  const rendered=()=>page.locator('#player .overview-tile img').evaluateAll(images=>images.filter(image=>image.complete&&image.naturalWidth>0).length);
+  const allSix=()=>until(async()=>(await rendered())===6,'All six JPEGs must render despite the recording-store read lock',8000);
+  try{
+    fixture.state.thumbnailReadLock=true;fixture.state.thumbnailImageDelay=30;
+    await page.goto(fixture.url);await page.locator('#library-state').filter({hasText:'recordings available'}).waitFor();
+    await page.locator(`#clip-grid [data-open="${selected}"]`).first().click();
+    await mode('overview');await allSix();
+    assert.equal(fixture.state.thumbnailReadConflicts,0,'A camera image finishes before the next thumbnail status request starts');
+    assert.equal(fixture.state.maxActiveThumbnailReads,1);
+    console.log('PASS: serialized thumbnail status/image HTTP requests render all six under an exclusive read lock');
+
+    await mode('single');fixture.state.thumbnailImageFailures.set(front,1);fixture.state.thumbnailImageAttempts.clear();
+    const beforeRetry=fixture.state.mutations.length;await mode('overview');await allSix();
+    assert.equal(fixture.state.thumbnailImageAttempts.get(front),2,'An image transfer failure is retried once without a manual Check');
+    assert.equal(fixture.state.mutations.length,beforeRetry,'Retrying an existing JPEG does not start another encoder job');
+    await mode('single');fixture.state.thumbnailImageFailures.set(front,-1);fixture.state.thumbnailImageAttempts.clear();
+    await mode('overview');await page.locator('#player [data-overview-retry]').waitFor({state:'visible'});
+    await until(async()=>(await rendered())===5,'Other cameras still display when one image transfer keeps failing');
+    const attempts=fixture.state.thumbnailImageAttempts.get(front);
+    assert.ok(attempts>=1&&attempts<=3,`Permanent image failures use at most three attempts, observed ${attempts}`);
+    await page.clock.install();await page.clock.fastForward(15000);
+    assert.equal(fixture.state.thumbnailImageAttempts.get(front),attempts,'Exhausted image retries stop until an explicit Check');
+    assert.equal(fixture.state.mutations.length,beforeRetry,'Permanent image failure does not trigger encoding');
+    await page.clock.resume();
+    fixture.state.thumbnailImageFailures.clear();await page.locator('#player [data-overview-retry]').click();await allSix();
+
+    await mode('single');fixture.state.thumbnailImageDelay=500;
+    const beforeAbort=fixture.state.thumbnailAbortedImages,imageAttemptsBefore=fixture.state.thumbnailImageAttempts.get(front)||0;await mode('overview');
+    await until(()=>fixture.state.activeThumbnailReads>0&&fixture.state.thumbnailImageAttempts.get(front)>imageAttemptsBefore,'An overview image transfer has started');
+    await mode('single');
+    await until(()=>fixture.state.activeThumbnailReads===0,'Leaving the overview closes the pending JPEG response');
+    assert.ok(fixture.state.thumbnailAbortedImages>beforeAbort,'Leaving Camera overview aborts the pending image request');
+    await new Promise(resolve=>setTimeout(resolve,550));
+    assert.equal(await page.locator('#player .overview-tile').count(),0,'A late image completion cannot restore the overview');
+    assert.equal(await page.locator('#player video').count(),1);
+    assert.deepEqual(errors,[]);
+    console.log('PASS: transient JPEG recovery, bounded permanent failures, explicit Check and image-request cancellation');
+  }catch(error){console.error('Thumbnail fixture state:',{rendered:await rendered(),conflicts:fixture.state.thumbnailReadConflicts,activeReads:fixture.state.activeThumbnailReads,imageAttempts:Object.fromEntries(fixture.state.thumbnailImageAttempts)});throw error;}
+  finally{await browser.close();await fixture.close();}
+}
+
 async function run(){
   const fixture=await createPreviewServer();
   const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome',headless:true});
@@ -31,9 +79,16 @@ async function run(){
   const player=page.locator('#player'),load=player.locator('[data-buffer]'),cancel=player.locator('[data-buffer-cancel]');
   const output=process.env.MODERN_SCREENSHOT_DIR||path.join(os.tmpdir(),'teslausb-modern-browser');fs.mkdirSync(output,{recursive:true});
   const captureLayouts=async name=>{
-    for(const [size,width,height] of [['desktop',1440,1120],['mobile',390,844]]){
+    for(const [size,width,height] of [['desktop',1440,1120],['compact-desktop',1440,675],['mobile',390,844]]){
       await page.setViewportSize({width,height});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${name} fits a ${width}px viewport without horizontal scrolling`);
+      if(name==='buffer'){
+        const bounds=await player.evaluate(root=>Object.fromEntries(['.video-grid','.video-cell','video'].map(selector=>{const r=root.querySelector(selector).getBoundingClientRect();return[selector,{left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}];})));
+        const grid=bounds['.video-grid'],cell=bounds['.video-cell'],video=bounds.video;
+        assert.ok(Math.abs(cell.width-grid.width)<1,`Single camera fills the grid at ${width}×${height}; cell ${cell.width}, grid ${grid.width}`);
+        assert.ok(Math.abs(video.width-cell.width)<1&&Math.abs(video.height-cell.height)<1,`Video fits the height-limited cell at ${width}×${height} without clipping`);
+        assert.ok(video.left>=cell.left-.5&&video.top>=cell.top-.5&&video.right<=cell.right+.5&&video.bottom<=cell.bottom+.5,'The complete video element stays inside its camera cell');
+      }
       await page.screenshot({path:path.join(output,`efficient-${name}-${size}.png`),fullPage:true});
     }
     await page.setViewportSize({width:1440,height:1120});
@@ -74,7 +129,10 @@ async function run(){
     await captureLayouts('buffer');
     await player.getByRole('button',{name:'Play recording',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#player video').currentTime>.3);
+    await player.locator('video').evaluate(video=>video.dispatchEvent(new Event('waiting')));
+    assert.equal(await player.locator('.player-error').isVisible(),true,'A decoder wait displays playback feedback');
     await player.getByRole('button',{name:'Pause recording',exact:true}).click();
+    assert.equal(await player.locator('.player-error').isHidden(),true,'Pausing clears the old buffering/decoder-wait notice');
     const bufferedURL=(await liveURLs())[0].url;
     await player.getByRole('button',{name:'Skip forward 10 seconds',exact:true}).click();
     await player.getByRole('button',{name:'Skip back 10 seconds',exact:true}).click();
@@ -201,9 +259,10 @@ async function run(){
       assert.equal(fixture.state.requests.slice(busyStart).some(request=>request.path==='/api/v1/recordings/thumbnail'&&request.method==='POST'&&new URLSearchParams(request.query).get('path')===busyPath),false,'Busy worker polling does not enqueue duplicate jobs');
     }finally{await pending.close();fixture.state.thumbnailOverrides.clear();}
     console.log('PASS: stalled transfers release safely and busy thumbnail workers recover without duplicate jobs');
+    await thumbnailTransport(fixture.media);
     assert.deepEqual(errors,[]);
     assert.equal(fixture.state.mutations.some(request=>!request.path.startsWith('/api/v1/recordings/thumbnail')),false,'Only bounded thumbnail preparation may mutate fixture state');
   }catch(error){await page.screenshot({path:path.join(output,'efficient-playback-failure.png'),fullPage:true}).catch(()=>{});console.error('Browser errors:',errors);throw error;}
   finally{await context.close();await browser.close();await fixture.close();}
 }
-run().catch(error=>{console.error(error);process.exitCode=1;});
+(process.env.MODERN_EFFICIENT_FOCUS==='thumbnail-transport'?thumbnailTransport():run()).catch(error=>{console.error(error);process.exitCode=1;});

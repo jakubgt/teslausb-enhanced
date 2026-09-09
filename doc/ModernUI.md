@@ -72,8 +72,10 @@ decoding six original videos still depends on the browser device's capabilities.
 **Camera overview** requests small cached JPEGs only when selected. These are
 stills near the start of the selected recorded minute, not live views or smooth
 Low video. Clicking a tile opens Single camera / High playback. Missing cameras
-and unavailable stills are labelled. Failed work requires explicit Check overview;
-in-progress work is checked for up to two minutes. Leaving the overview stops its
+and unavailable stills are labelled. Status and image requests run sequentially
+to avoid competing for the recording store. Temporary delivery failures retry up
+to three attempts; failed generation requires explicit Check overview.
+In-progress work is checked for up to two minutes. Leaving the overview stops its
 requests. Restored copies currently offer original playback without generated
 stills. The six-camera still generation benchmark on the installed Pi took about
 four seconds total; other footage and concurrent device work may take longer.
