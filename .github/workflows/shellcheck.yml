@@ -100,3 +100,4 @@ jobs:
           node ./tests/modern-browsing-browser.test.mjs
           node ./tests/modern-trash-storage.test.mjs --browser
           node ./tests/modern-polish-browser.test.mjs
+          node ./tests/modern-efficient-playback-browser.test.mjs

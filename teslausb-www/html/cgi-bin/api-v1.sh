@@ -49,6 +49,7 @@ case "$route" in
     "videos": "/api/v1/videos",
     "recording_downloads": "/api/v1/recordings/download",
     "recording_previews": "/api/v1/recordings/preview",
+    "recording_thumbnails": "/api/v1/recordings/thumbnail",
     "trash": "/api/v1/trash",
     "speed_test": "/api/v1/speed-test",
     "ble_status": "/api/v1/ble/status",
@@ -70,7 +71,8 @@ EOF
   /videos)
     exec "$script_dir/videolist.sh"
     ;;
-  /recordings/download|/recordings/preview|/recordings/preview/media|/trash/download)
+  /recordings/download|/recordings/preview|/recordings/preview/media|/trash/download|\
+  /recordings/thumbnail|/recordings/thumbnail/media)
     exec "$script_dir/recording-media.sh"
     ;;
   /trash|/trash/media|/trash/move|/trash/restore|/trash/delete)

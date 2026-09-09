@@ -7,8 +7,9 @@ and Classic files remain installed. No BLE controls are added to the modern UI.
 
 ## Recordings
 
-The first screen opens the newest available recording in **Single camera** mode.
-Use **All cameras** for synchronized angles. This is the latest **completed
+The first screen opens the newest available recording in **Single camera / High**.
+Use **Camera overview** for small stills from all six angles, or **All cameras**
+for synchronized original videos. This is the latest **completed
 snapshot footage**, not a live connection to Tesla cameras. The screen reports
 the newest listed recording, last verified completed snapshot, and last library
 refresh separately; USB connection alone does not prove active recording.
@@ -47,11 +48,35 @@ the filtered selection. Changing filters leaves the current clip intact; if it
 falls outside the selection, navigation is disabled until a matching clip is
 selected. No hidden-tab or paused-player autoplay is triggered.
 
-Playback starts with Low preview checks. Low is an actual smaller H.264 encode,
+Playback starts with the original file and makes no automatic Low encoding requests.
+Low is an optional smaller H.264 encode,
 prepared on demand one segment at a time. Availability, preparation, failure,
 and retry are explicit. **Play original** switches to High; original files are
 never quietly represented as Low. Restored copies currently support High only.
 See [media constraints and APIs](ModernMedia.md) for the encoder's resource limits.
+
+**Load clip first** pauses streaming and loads the current recorded minute, for
+the selected camera or all available cameras in the All cameras layout. It shows
+per-camera byte progress and cancellation, fetches cameras sequentially, and keeps
+the playable copy in this browser only. When ready, press Play. Loading is bounded
+to 64 MiB per camera and 256 MiB total, with a 30-second inactivity timeout and
+ten-minute overall limit. Oversized, failed, or incomplete transfers offer retry
+or normal streaming; they never claim to be ready. The playable URL is used so
+Tesla timestamp compatibility adjustments are retained. Original downloads still
+preserve the exact source bytes. Changing camera, layout, quality, minute, clip,
+or leaving/hiding the viewer cancels transfers and releases loaded copies. Seeking
+within the loaded minute retains its copy. A multi-minute event's next minute
+streams normally unless loaded separately. Preloading addresses network waiting;
+decoding six original videos still depends on the browser device's capabilities.
+
+**Camera overview** requests small cached JPEGs only when selected. These are
+stills near the start of the selected recorded minute, not live views or smooth
+Low video. Clicking a tile opens Single camera / High playback. Missing cameras
+and unavailable stills are labelled. Failed work requires explicit Check overview;
+in-progress work is checked for up to two minutes. Leaving the overview stops its
+requests. Restored copies currently offer original playback without generated
+stills. The six-camera still generation benchmark on the installed Pi took about
+four seconds total; other footage and concurrent device work may take longer.
 
 The viewer supports fullscreen, -10/+10 seconds, playback speed, camera selection,
 an approximate segment timeline, metadata, and a Sentry event marker when its

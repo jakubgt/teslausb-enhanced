@@ -19,12 +19,14 @@ case "${route%/}" in
     cgi_require_method GET
     operation=trash-download
     ;;
-  /api/v1/recordings/preview)
+  /api/v1/recordings/preview|/api/v1/recordings/thumbnail)
+    profile="${route%/}"
+    profile="${profile##*/}"
     case "${REQUEST_METHOD:-GET}" in
-      GET) operation=preview-status ;;
+      GET) operation="$profile-status" ;;
       POST)
         cgi_require_mutation
-        operation=preview-request
+        operation="$profile-request"
         ;;
       *) cgi_error '405 Method Not Allowed' 'This endpoint requires GET or POST.' ;;
     esac
@@ -32,6 +34,10 @@ case "${route%/}" in
   /api/v1/recordings/preview/media)
     cgi_require_method GET
     operation=preview-media
+    ;;
+  /api/v1/recordings/thumbnail/media)
+    cgi_require_method GET
+    operation=thumbnail-media
     ;;
   *) cgi_error '404 Not Found' 'Unknown recording media route.' ;;
 esac

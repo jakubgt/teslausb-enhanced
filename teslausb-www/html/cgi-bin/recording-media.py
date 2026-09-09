@@ -39,10 +39,14 @@ MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024 * 1024
 MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 MAX_CACHE_BYTES = 256 * 1024 * 1024
+MAX_CACHE_ENTRIES = 2048
 MAX_PREVIEW_SECONDS = 65
 JOB_TIMEOUT = 180
 CHUNK_BYTES = 256 * 1024
 PREVIEW_VERSION = "h264-640-12-v1"
+THUMBNAIL_VERSION = "jpeg-first-keyframe-480-v1"
+MAX_THUMBNAIL_BYTES = 1024 * 1024
+THUMBNAIL_TIMEOUT = 20
 
 
 class MediaError(Exception):
@@ -418,8 +422,8 @@ def download(selection, output=None):
     output.flush()
 
 
-def fingerprint(path, info):
-    fields = (PREVIEW_VERSION, path, info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+def fingerprint(path, info, version=PREVIEW_VERSION):
+    fields = (version, path, info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
     return hashlib.sha256(json.dumps(fields).encode("utf-8")).hexdigest()
 
 
@@ -442,33 +446,37 @@ class PreviewCache:
             raise MediaError("503 Service Unavailable", "Preview storage is unavailable.")
         return descriptor
 
-    def state(self, key):
+    def state(self, key, *, thumbnail=False):
+        label = "thumbnail" if thumbnail else "preview"
+        extension = ".jpg" if thumbnail else ".mp4"
+        limit = MAX_THUMBNAIL_BYTES if thumbnail else MAX_PREVIEW_BYTES
+        deadline = THUMBNAIL_TIMEOUT if thumbnail else JOB_TIMEOUT
         try:
             descriptor = self.open_file(key + ".json")
         except FileNotFoundError:
-            return {"state": "not_requested", "reason": "preview_not_requested"}
+            return {"state": "not_requested", "reason": label + "_not_requested"}
         try:
             value = json.loads(os.read(descriptor, 4097))
         except (ValueError, UnicodeError):
-            return {"state": "failed", "reason": "invalid_preview_state"}
+            return {"state": "failed", "reason": "invalid_" + label + "_state"}
         finally:
             os.close(descriptor)
         if (not isinstance(value, dict) or value.get("state") not in ("preparing", "ready", "failed") or
                 not isinstance(value.get("updated_at"), (int, float))):
-            return {"state": "failed", "reason": "invalid_preview_state"}
-        if value["state"] == "preparing" and time.time() - value["updated_at"] > JOB_TIMEOUT + 30:
-            return {"state": "failed", "reason": "preview_timed_out"}
+            return {"state": "failed", "reason": "invalid_" + label + "_state"}
+        if value["state"] == "preparing" and time.time() - value["updated_at"] > deadline + 30:
+            return {"state": "failed", "reason": label + "_timed_out"}
         if value["state"] == "ready":
             try:
-                descriptor = self.open_file(key + ".mp4")
+                descriptor = self.open_file(key + extension)
                 info = os.fstat(descriptor)
                 os.close(descriptor)
-                if not 0 < info.st_size < MAX_PREVIEW_BYTES:
+                if not 0 < info.st_size < limit:
                     raise FileNotFoundError()
             except FileNotFoundError:
-                return {"state": "not_requested", "reason": "preview_expired"}
+                return {"state": "not_requested", "reason": label + "_expired"}
         # Publish only known metadata, never arbitrary cache fields or paths.
-        return {k: value[k] for k in ("state", "reason", "updated_at", "size_bytes", "duration_seconds") if k in value}
+        return {k: value[k] for k in ("state", "reason", "updated_at", "size_bytes", "duration_seconds", "width", "height") if k in value}
 
     def write_state(self, key, state, reason, **metadata):
         name = key + f".{os.getpid()}.json.tmp"
@@ -491,18 +499,24 @@ class PreviewCache:
             for count, entry in enumerate(files):
                 if count > 4096:
                     raise MediaError("503 Service Unavailable", "Preview storage needs cleanup.")
-                if not re.fullmatch(r"[0-9a-f]{64}\.(?:mp4|json|[0-9]+\.(?:mp4|json)\.tmp)", entry.name):
+                if not re.fullmatch(r"[0-9a-f]{64}\.(?:mp4|jpg|json|[0-9]+\.(?:mp4|jpg|json)\.tmp)", entry.name):
                     continue
                 info = entry.stat(follow_symlinks=False)
                 if not private_file(info, os.geteuid()):
                     raise MediaError("503 Service Unavailable", "Preview storage is unavailable.")
                 total += info.st_size
                 entries.append((info.st_mtime, entry.name, info.st_size))
+        remaining = len(entries)
         for modified, name, size in sorted(entries):
-            if total <= MAX_CACHE_BYTES - reserve and time.time() - modified < 7 * 86400:
+            # Small JPEGs can exhaust the bounded directory scan long before
+            # the byte budget. Reserve slots for state/output temporary files
+            # before admitting either encoder, leaving worker.lock untouched.
+            if (total <= MAX_CACHE_BYTES - reserve and remaining <= MAX_CACHE_ENTRIES - 4
+                    and time.time() - modified < 7 * 86400):
                 continue
             os.unlink(name, dir_fd=self.fd)
             total -= size
+            remaining -= 1
         if os.fstatvfs(self.fd).f_bavail * os.fstatvfs(self.fd).f_frsize < reserve + 64 * 1024 * 1024:
             raise MediaError("503 Service Unavailable", "Preview storage is low on space.")
 
@@ -561,6 +575,56 @@ def preview_status(path, info, request=False, source_fd=None):
         cache.close()
 
 
+def thumbnail_payload(path, state):
+    return {"ok": True, **state, "original_url": "/TeslaCam/" + quote(path, safe="/"),
+            "thumbnail_url": ("/api/v1/recordings/thumbnail/media?" + urlencode({"path": path})
+                              if state["state"] == "ready" else None),
+            "max_width": 480, "quality": "thumbnail", "live": False,
+            "description": "First available keyframe of the recorded minute"}
+
+
+def thumbnail_status(path, info, request=False, source_fd=None):
+    key = fingerprint(path, info, THUMBNAIL_VERSION)
+    try:
+        cache = PreviewCache()
+    except (OSError, MediaError):
+        return thumbnail_payload(path, {"state": "unavailable", "reason": "thumbnail_storage_unavailable"})
+    try:
+        state = cache.state(key, thumbnail=True)
+        if state["state"] in ("ready", "preparing"):
+            return thumbnail_payload(path, state)
+        if not os.access(FFMPEG, os.X_OK):
+            return thumbnail_payload(path, {"state": "unavailable", "reason": "ffmpeg_not_installed"})
+        if not request:
+            return thumbnail_payload(path, state)
+        import fcntl
+        lock = cache.open_file("worker.lock", os.O_RDWR | os.O_CREAT)
+        try:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return thumbnail_payload(path, {"state": "unavailable", "reason": "preview_worker_busy", "retry_after_seconds": 5})
+            state = cache.state(key, thumbnail=True)
+            if state["state"] == "ready":
+                return thumbnail_payload(path, state)
+            cache.prune(reserve=MAX_THUMBNAIL_BYTES)
+            cache.write_state(key, "preparing", "thumbnail_preparing")
+            try:
+                subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "thumbnail-worker",
+                                  key, str(source_fd), str(lock)],
+                                 pass_fds=(source_fd, lock), start_new_session=True,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, close_fds=True,
+                                 env={"PATH": "/usr/bin:/bin", "LANG": "C"})
+            except OSError:
+                cache.write_state(key, "failed", "thumbnail_start_failed")
+            return thumbnail_payload(path, cache.state(key, thumbnail=True))
+        finally:
+            os.close(lock)
+    finally:
+        cache.close()
+
+
 def media_range(value, size):
     if not value:
         return 0, size - 1, "200 OK"
@@ -604,6 +668,71 @@ def serve_preview(path, info, output=None):
         cache.close()
 
 
+def thumbnail_dimensions(data):
+    """Bounded JPEG header validation; never decode untrusted image payloads."""
+    if not 0 < len(data) < MAX_THUMBNAIL_BYTES or not data.startswith(b"\xff\xd8") or not data.endswith(b"\xff\xd9"):
+        raise ValueError("invalid_thumbnail")
+    position, dimensions = 2, None
+    for _ in range(256):
+        if position >= len(data) or data[position] != 255:
+            break
+        while position < len(data) and data[position] == 255:
+            position += 1
+        if position >= len(data):
+            break
+        marker = data[position]
+        position += 1
+        if marker in (0, 0xd8, 0xd9) or position + 2 > len(data):
+            break
+        length = int.from_bytes(data[position:position + 2], "big")
+        if length < 2 or position + length > len(data):
+            break
+        if marker in (0xc0, 0xc1, 0xc2):
+            if length < 8 or data[position + 2] != 8:
+                break
+            height = int.from_bytes(data[position + 3:position + 5], "big")
+            width = int.from_bytes(data[position + 5:position + 7], "big")
+            if not 0 < width <= 480 or not 0 < height <= 2160:
+                break
+            dimensions = (width, height)
+        if marker == 0xda:
+            if dimensions is not None and length >= 6:
+                return dimensions
+            break
+        position += length
+    raise ValueError("invalid_thumbnail")
+
+
+def serve_thumbnail(path, info, output=None):
+    output = output or sys.stdout.buffer
+    cache = PreviewCache()
+    try:
+        key = fingerprint(path, info, THUMBNAIL_VERSION)
+        if cache.state(key, thumbnail=True)["state"] != "ready":
+            raise MediaError("404 Not Found", "The recording thumbnail is not ready.")
+        descriptor = cache.open_file(key + ".jpg")
+        try:
+            size = os.fstat(descriptor).st_size
+            try:
+                thumbnail_dimensions(os.pread(descriptor, min(size, MAX_THUMBNAIL_BYTES), 0))
+            except ValueError as error:
+                raise MediaError("404 Not Found", "The recording thumbnail is unavailable.") from error
+            start, end, status = media_range(os.environ.get("HTTP_RANGE", ""), size)
+            extra = {"Content-Length": end - start + 1, "Accept-Ranges": "bytes"}
+            if status.startswith("206"):
+                extra["Content-Range"] = f"bytes {start}-{end}/{size}"
+            os.lseek(descriptor, start, os.SEEK_SET)
+            headers(status, "image/jpeg", extra, output)
+            try:
+                copy_exact(descriptor, output, end - start + 1)
+            except OSError as error:
+                raise TransferFailed() from error
+        finally:
+            os.close(descriptor)
+    finally:
+        cache.close()
+
+
 def child_limits():
     import resource
     resource.setrlimit(resource.RLIMIT_CPU, (90, 95))
@@ -611,6 +740,65 @@ def child_limits():
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_PREVIEW_BYTES, MAX_PREVIEW_BYTES))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     os.nice(15)
+
+
+def thumbnail_limits():
+    import resource
+    resource.setrlimit(resource.RLIMIT_CPU, (15, 15))
+    resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_THUMBNAIL_BYTES, MAX_THUMBNAIL_BYTES))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    os.nice(15)
+
+
+def thumbnail_worker(key, source_fd, lock_fd, *, cache_root=CACHE_ROOT, require_readonly=True):
+    """Decode the first available keyframe; share the Low encoder's worker lock."""
+    cache, output_fd = None, None
+    temporary = key + f".{os.getpid()}.jpg.tmp"
+    try:
+        if not re.fullmatch(r"[0-9a-f]{64}", key) or not private_file(os.fstat(lock_fd), os.geteuid()):
+            return 1
+        source_info = os.fstat(source_fd)
+        if (not stat.S_ISREG(source_info.st_mode) or not 0 < source_info.st_size <= MAX_SOURCE_BYTES or
+                (require_readonly and not (os.fstatvfs(source_fd).f_flag & os.ST_RDONLY))):
+            return 1
+        cache = PreviewCache(cache_root)
+        output_fd = cache.open_file(temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL)
+        result = subprocess.run(
+            [FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+             "-max_alloc", "67108864", "-threads", "1", "-filter_threads", "1",
+             "-skip_frame", "nokey",
+             "-protocol_whitelist", "file,pipe", "-enable_drefs", "0", "-use_absolute_path", "0",
+             "-f", "mov", "-i", f"/proc/self/fd/{source_fd}", "-map", "0:v:0",
+             "-an", "-sn", "-dn", "-frames:v", "1", "-vf", "scale='min(480,iw)':-2",
+             "-c:v", "mjpeg", "-q:v", "5", "-pix_fmt", "yuvj420p", "-threads", "1",
+             "-fs", str(MAX_THUMBNAIL_BYTES), "-f", "image2pipe", f"/proc/self/fd/{output_fd}"],
+            pass_fds=(source_fd, output_fd), stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=THUMBNAIL_TIMEOUT, check=False, preexec_fn=thumbnail_limits,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C"})
+        size = os.fstat(output_fd).st_size
+        if result.returncode or not 0 < size < MAX_THUMBNAIL_BYTES:
+            raise ValueError("thumbnail_encoding_failed")
+        width, height = thumbnail_dimensions(os.pread(output_fd, size, 0))
+        os.replace(temporary, key + ".jpg", src_dir_fd=cache.fd, dst_dir_fd=cache.fd)
+        cache.write_state(key, "ready", "thumbnail_ready", size_bytes=size, width=width, height=height)
+    except subprocess.TimeoutExpired:
+        if cache is not None:
+            cache.write_state(key, "failed", "thumbnail_timed_out")
+    except (OSError, ValueError, MediaError):
+        if cache is not None:
+            cache.write_state(key, "failed", "thumbnail_unavailable_for_segment")
+    finally:
+        if output_fd is not None:
+            os.close(output_fd)
+        if cache is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=cache.fd)
+            cache.close()
+        os.close(source_fd)
+        os.close(lock_fd)
+    return 0
 
 
 def probe_duration(descriptor):
@@ -720,23 +908,29 @@ def main(operation):
                     download(selection)
             finally:
                 selection.close()
-        elif operation in ("preview-status", "preview-request", "preview-media"):
+        elif operation in ("preview-status", "preview-request", "preview-media",
+                           "thumbnail-status", "thumbnail-request", "thumbnail-media"):
+            thumbnail = operation.startswith("thumbnail-")
             fields = query_fields(query, {"path"}, {"path"})
             with metadata_deadline():
                 descriptor, info = reader.open(fields["path"])
             try:
                 if fields["path"] in reader.restored_paths:
-                    if operation == "preview-media":
+                    if operation in ("preview-media", "thumbnail-media"):
                         raise MediaError("404 Not Found", "Use the restored original recording.")
-                    value = preview_payload(fields["path"], {"state": "unavailable", "reason": "restored_original_only"})
+                    payload = thumbnail_payload if thumbnail else preview_payload
+                    value = payload(fields["path"], {"state": "unavailable", "reason": "restored_original_only"})
                     value["original_url"] = reader.restored_paths[fields["path"]]
                     json_response(value)
                 elif operation == "preview-media":
                     # serve_preview validates state and range before sending headers.
                     serve_preview(fields["path"], info)
+                elif operation == "thumbnail-media":
+                    serve_thumbnail(fields["path"], info)
                 else:
-                    value = preview_status(fields["path"], info,
-                                           request=(operation == "preview-request"), source_fd=descriptor)
+                    status_function = thumbnail_status if thumbnail else preview_status
+                    value = status_function(fields["path"], info,
+                                            request=operation.endswith("-request"), source_fd=descriptor)
                     json_response(value, "202 Accepted" if value["state"] == "preparing" else "200 OK")
             finally:
                 os.close(descriptor)
@@ -760,6 +954,8 @@ def main(operation):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 5 and sys.argv[1] == "thumbnail-worker":
+        sys.exit(thumbnail_worker(sys.argv[2], int(sys.argv[3]), int(sys.argv[4])))
     if len(sys.argv) == 5 and sys.argv[1] == "worker":
         sys.exit(preview_worker(sys.argv[2], int(sys.argv[3]), int(sys.argv[4])))
     sys.exit(main(sys.argv[1] if len(sys.argv) == 2 else ""))

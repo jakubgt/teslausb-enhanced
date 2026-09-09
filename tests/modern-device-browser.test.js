@@ -80,6 +80,10 @@ async function run() {
     assert.equal(fs.readFileSync(await download.path(), 'utf8'), 'first line\nERROR useful\nlast line\n', 'Downloads must contain the full capture despite search filtering');
     await page.getByRole('button', {name: 'View full capture'}).click();
     assert.match(await page.locator('dialog pre').textContent(), /first line/);
+    const modalDownloadEvent = page.waitForEvent('download', {timeout: 5000});
+    await page.getByRole('dialog').getByRole('button', {name: 'Download capture', exact: true}).click();
+    const modalDownload = await modalDownloadEvent;
+    assert.equal(fs.readFileSync(await modalDownload.path(), 'utf8'), 'first line\nERROR useful\nlast line\n', 'Downloading from the full-capture dialog saves the whole captured file despite the search filter');
     await page.getByRole('button', {name: 'Close', exact: true}).click();
     await page.locator('[data-log="archiveloop"]').click();
     await page.getByText(/Only the latest 8 MiB/).waitFor();

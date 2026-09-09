@@ -118,6 +118,7 @@ assert_contains 'the capability document requires POST mutations' "$response" '"
 assert_contains 'the capability document advertises manual gadget repair' "$response" '"drives/repair"'
 assert_contains 'the capability document advertises recording Trash' "$response" '"trash": "/api/v1/trash"'
 assert_contains 'the capability document advertises preview requests' "$response" '"recording_previews": "/api/v1/recordings/preview"'
+assert_contains 'the capability document advertises thumbnail requests' "$response" '"recording_thumbnails": "/api/v1/recordings/thumbnail"'
 assert_contains 'the capability document advertises safe shutdown' "$response" '"shutdown"'
 
 # Power-action tests always substitute inert sudo before invoking a CGI. Even
@@ -326,22 +327,29 @@ done
 
 for entrypoint in api-v1.sh recording-media.sh
 do
+  for media_profile in preview thumbnail
+  do
   response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
-    run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
-  assert_contains "$entrypoint requires CSRF header before preview generation" "$response" 'Status: 403 Forbidden'
+    run_recording_fixture "$entrypoint" POST "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint requires CSRF header before $media_profile generation" "$response" 'Status: 403 Forbidden'
   response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=cross-site \
-    run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
-  assert_contains "$entrypoint rejects cross-site preview generation" "$response" 'Status: 403 Forbidden'
+    run_recording_fixture "$entrypoint" POST "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects cross-site $media_profile generation" "$response" 'Status: 403 Forbidden'
   response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin HTTP_ORIGIN=http://teslausb.local:8080 \
-    run_recording_fixture "$entrypoint" POST /api/v1/recordings/preview)"
-  assert_contains "$entrypoint rejects a different origin port for previews" "$response" 'Status: 403 Forbidden'
+    run_recording_fixture "$entrypoint" POST "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects a different origin port for $media_profile" "$response" 'Status: 403 Forbidden'
   response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
-    run_recording_fixture "$entrypoint" DELETE /api/v1/recordings/preview)"
-  assert_contains "$entrypoint rejects unsupported preview mutation methods" "$response" 'Status: 405 Method Not Allowed'
+    run_recording_fixture "$entrypoint" DELETE "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects unsupported $media_profile mutation methods" "$response" 'Status: 405 Method Not Allowed'
+  response="$(HTTP_SEC_FETCH_SITE=cross-site \
+    run_recording_fixture "$entrypoint" GET "/api/v1/recordings/$media_profile")"
+  assert_contains "$entrypoint rejects cross-site $media_profile status reads" "$response" 'Status: 403 Forbidden'
+  done
 done
 
 for recording_route in /api/v1/trash /api/v1/trash/media \
-  /api/v1/trash/download /api/v1/recordings/download /api/v1/recordings/preview/media
+  /api/v1/trash/download /api/v1/recordings/download /api/v1/recordings/preview/media \
+  /api/v1/recordings/thumbnail/media
 do
   response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
     run_recording_fixture api-v1.sh POST "$recording_route")"
@@ -352,7 +360,8 @@ do
 done
 
 for recording_route in /api/v1/trash/cleanup /api/v1/trash/purge /api/v1/trash/media/extra \
-  /api/v1/recordings/preview/worker /api/v1/recordings/preview/request
+  /api/v1/recordings/preview/worker /api/v1/recordings/preview/request \
+  /api/v1/recordings/thumbnail/worker /api/v1/recordings/thumbnail/request
 do
   response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
     run_recording_fixture api-v1.sh POST "$recording_route")"
@@ -385,6 +394,15 @@ assert_contains 'protected preview POST dispatches its generation operation' "$r
 response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
   run_recording_fixture api-v1.sh GET /api/v1/recordings/preview 'path=fixture')"
 assert_contains 'preview GET dispatches status without starting generation' "$response" 'fixture-operation: preview-status'
+response="$(HTTP_X_TESLAUSB_REQUEST=1 HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh POST /api/v1/recordings/thumbnail 'path=fixture')"
+assert_contains 'protected thumbnail POST dispatches only its first-frame generation operation' "$response" 'fixture-operation: thumbnail-request'
+response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/recordings/thumbnail 'path=fixture')"
+assert_contains 'thumbnail GET reads state without starting generation' "$response" 'fixture-operation: thumbnail-status'
+response="$(HTTP_X_TESLAUSB_REQUEST='' HTTP_SEC_FETCH_SITE=same-origin \
+  run_recording_fixture api-v1.sh GET /api/v1/recordings/thumbnail/media 'path=fixture')"
+assert_contains 'thumbnail media GET dispatches only the JPEG response' "$response" 'fixture-operation: thumbnail-media'
 response="$(HTTP_SEC_FETCH_SITE=same-origin \
   run_recording_fixture api-v1.sh GET /api/v1/trash/download 'id=fixture&camera=all')"
 assert_contains 'Trash downloads reach the original media helper' "$response" 'fixture-operation: trash-download'

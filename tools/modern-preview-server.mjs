@@ -74,10 +74,10 @@ export async function generateFixtureMedia() {
       await new Promise(resolve => setTimeout(resolve, mime.startsWith('video/webm')?8400:3400)); recorder.stop(); await done; clearInterval(timer);stream.getTracks().forEach(track => track.stop());
       const blob = new Blob(chunks, {type: mime}), array = new Uint8Array(await blob.arrayBuffer());
       let binary = ''; for (const value of array) binary += String.fromCharCode(value);
-      return {data: btoa(binary), type: mime.split(';')[0]};
+      return {data: btoa(binary), type: mime.split(';')[0], thumbnail: canvas.toDataURL('image/jpeg', .65).split(',')[1]};
     },process.env.MODERN_FIXTURE_WEBM==='1');
     const original = Buffer.from(result.data, 'base64');
-    return {data: result.type === 'video/mp4' ? stretchMp4(original) : stretchWebm(original), type: result.type};
+    return {data: result.type === 'video/mp4' ? stretchMp4(original) : stretchWebm(original), type: result.type, thumbnail: Buffer.from(result.thumbnail, 'base64')};
   } finally { await browser.close(); }
 }
 
@@ -108,20 +108,30 @@ function makeZip(files) {
 
 export async function createPreviewServer({port = 0, media = null} = {}) {
   media ||= await generateFixtureMedia();
-  const state = {events: fixtureEvents(), trash: new Map(), previewState: 'unavailable', failVideos: false, failTrash: false, failStatus: false, failDownload: false, downloadDelay: 0, mutations: [], requests: [], files: new Map([['fs/Music', new Map([['Road Trip', {directory: true}], ['Evening drive.wav', {data: fixtureWave()}]])], ['fs/LightShow',new Map([['lightshow.fseq',{data:Buffer.from('fixture lightshow')} ]])], ['fs/Boombox',new Map([['LockChime.wav',{data:fixtureWave()}]])]])};
+  const state = {events: fixtureEvents(), trash: new Map(), previewState: 'unavailable', thumbnailState: media.thumbnail ? 'ready' : 'unavailable', thumbnailPostState: 'ready', thumbnailDelay: 0, thumbnailOverrides: new Map(), failThumbnail: false, failVideos: false, failTrash: false, failStatus: false, failDownload: false, downloadDelay: 0, mutations: [], requests: [], files: new Map([['fs/Music', new Map([['Road Trip', {directory: true}], ['Evening drive.wav', {data: fixtureWave()}]])], ['fs/LightShow',new Map([['lightshow.fseq',{data:Buffer.from('fixture lightshow')} ]])], ['fs/Boombox',new Map([['LockChime.wav',{data:fixtureWave()}]])]])};
+  Object.assign(state,{playableChunkDelay:0,playableChunkBytes:1024,omitPlayableLength:false,activePlayableLoads:0,maxActivePlayableLoads:0,abortedPlayableLoads:0});
   const json = (response, value, status = 200) => {response.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});response.end(JSON.stringify(value));};
   const sendMedia = (request, response, data = media.data, type = media.type, disposition) => {
     const headers = {'Content-Type':type,'Accept-Ranges':'bytes','Cache-Control':'no-store'};if(disposition)headers['Content-Disposition']=`attachment; filename="${disposition}"`;
     const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range||'');let start=0,end=data.length-1,status=200;
     if(range) {start=Number(range[1]);end=range[2]?Math.min(Number(range[2]),end):end;if(start>end){response.writeHead(416,{'Content-Range':`bytes */${data.length}`});response.end();return;}status=206;headers['Content-Range']=`bytes ${start}-${end}/${data.length}`;}
-    headers['Content-Length']=end-start+1;response.writeHead(status,headers);response.end(request.method==='HEAD'?undefined:data.subarray(start,end+1));
+    const playableFetch=request.method==='GET'&&!request.headers.range&&request.url.startsWith('/TeslaCam/')&&request.url.split('?')[0].endsWith('.mp4');
+    if(!(playableFetch&&state.omitPlayableLength))headers['Content-Length']=end-start+1;response.writeHead(status,headers);
+    if(playableFetch) {
+      state.activePlayableLoads++;state.maxActivePlayableLoads=Math.max(state.maxActivePlayableLoads,state.activePlayableLoads);
+      let complete=false,timer=null,cursor=start;
+      response.on('close',()=>{clearInterval(timer);state.activePlayableLoads--;if(!complete)state.abortedPlayableLoads++;});
+      if(state.playableChunkDelay){const write=()=>{if(response.destroyed)return;const next=Math.min(end+1,cursor+state.playableChunkBytes);response.write(data.subarray(cursor,next));cursor=next;if(cursor>end){complete=true;clearInterval(timer);response.end();}};timer=setInterval(write,state.playableChunkDelay);write();return;}
+      complete=true;
+    }
+    response.end(request.method==='HEAD'?undefined:data.subarray(start,end+1));
   };
   const publicEntry = entry => ({id:entry.id,event:entry.event,category:entry.event.split('/')[0],event_time:entry.event.split('/')[1],deleted_at:entry.deleted_at,expires_at:entry.expires_at,bytes:entry.bytes,files:entry.files.map(file=>({...file,bytes:file.camera?media.data.length:120,media_url:`/api/v1/trash/media?${new URLSearchParams({id:entry.id,file:file.name})}`}))});
   const trashStatus = () => {const entries=[...state.trash.values()];return {ok:true,retention_days:30,clock:{trusted:true},items:entries.filter(entry=>entry.state==='trashed').map(publicEntry),restored:entries.filter(entry=>entry.state==='restored').map(publicEntry),tombstones:entries.map(entry=>entry.event),hidden_media:entries.flatMap(entry=>entry.files.filter(file=>file.camera).map(file=>file.name)),free_bytes:55000000000,reserve_bytes:1000000000,retained_bytes:entries.filter(entry=>entry.state!=='deleted').reduce((sum,entry)=>sum+entry.bytes,0)};};
   const server = http.createServer(async (request,response) => {
     try {
       const url=new URL(request.url,'http://localhost'),p=decodeURIComponent(url.pathname),query=url.searchParams;
-      state.requests.push({path:p,query:url.search,method:request.method});
+      state.requests.push({path:p,query:url.search,method:request.method,range:request.headers.range||null});
       if(state.requests.length>2000)state.requests.shift();
       if(request.method==='POST') {if(request.headers['x-teslausb-request']!=='1')return json(response,{ok:false,error:'Missing request marker'},403);const parts=[];let size=0;for await (const part of request){size+=part.length;if(size>8*1024*1024)return json(response,{ok:false,error:'Fixture request too large'},413);parts.push(part);}request.body=Buffer.concat(parts);state.mutations.push({path:p,method:request.method,headers:request.headers,body:request.body.toString()});}
       if(p==='/api/v1/config')return json(response,{has_cam:'yes',has_music:'yes',has_lightshow:'yes',has_boombox:'yes',fixture_mode:true});
@@ -133,6 +143,17 @@ export async function createPreviewServer({port = 0, media = null} = {}) {
       if(p==='/api/v1/speed-test'){response.writeHead(200,{'Content-Type':'application/octet-stream','Cache-Control':'no-store'});let count=0;const timer=setInterval(()=>{if(response.destroyed||++count>30){clearInterval(timer);response.end();}else response.write(Buffer.alloc(16384));},60);response.on('close',()=>clearInterval(timer));return;}
       if(p==='/api/v1/recordings/preview') {const mode=state.previewState;return json(response,{ok:true,state:mode,reason:mode==='unavailable'?'No smaller preview exists in this local sample.':undefined,preview_url:mode==='ready'?'/api/v1/recordings/preview/media?'+new URLSearchParams({path:query.get('path')}):undefined});}
       if(p==='/api/v1/recordings/preview/media'){sendMedia(request,response);return;}
+      if(p==='/api/v1/recordings/thumbnail') {
+        const source=query.get('path'),override=state.thumbnailOverrides.get(source)||{};
+        const mode=request.method==='POST'&&(override.state||state.thumbnailState)==='not_requested'?state.thumbnailPostState:override.state||state.thumbnailState;
+        const result={ok:true,state:mode,reason:override.reason||(mode==='unavailable'?'thumbnail_unavailable_for_segment':undefined),thumbnail_url:mode==='ready'?'/api/v1/recordings/thumbnail/media?'+new URLSearchParams({path:source}):null};
+        if(request.method==='POST')state.thumbnailOverrides.set(source,{...override,state:mode});
+        if(override.delay||state.thumbnailDelay)await sleep(override.delay||state.thumbnailDelay);
+        if(response.destroyed)return;
+        if(state.failThumbnail)return json(response,{ok:false,error:'Fixture thumbnail unavailable'},503);
+        return json(response,result);
+      }
+      if(p==='/api/v1/recordings/thumbnail/media'){if(!media.thumbnail)return json(response,{ok:false,error:'Fixture thumbnail missing'},404);sendMedia(request,response,media.thumbnail,'image/jpeg');return;}
       if(p==='/api/v1/trash')return state.failTrash?json(response,{ok:false,error:'Fixture trash status unavailable'},503):json(response,trashStatus());
       if(p==='/api/v1/trash/move') {const body=JSON.parse(request.body||'{}'),event=state.events.find(item=>item.event===body.event);if(!event||event.event.startsWith('RecentClips/'))return json(response,{ok:false,error:'Fixture event is not eligible'},400);const id=createHash('sha256').update(event.event).digest('hex'),entry={...event,id,state:'trashed',deleted_at:new Date().toISOString(),expires_at:new Date(Date.now()+30*86400000).toISOString(),bytes:event.files.filter(file=>file.camera).length*media.data.length};state.trash.set(id,entry);return json(response,trashStatus());}
       if(p==='/api/v1/trash/restore'||p==='/api/v1/trash/delete') {const body=JSON.parse(request.body||'{}');for(const id of body.ids||[]){const entry=state.trash.get(id);if(entry)entry.state=p.endsWith('restore')?'restored':'deleted';}return json(response,trashStatus());}

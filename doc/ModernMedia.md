@@ -89,6 +89,44 @@ to 90 CPU seconds, a wall timeout below three minutes, 512 MiB address space,
 launched without a shell, with fixed binaries and inherited approved source and
 output descriptors. Source files and camera disk images are never modified.
 
+## Lightweight camera overview
+
+`GET /api/v1/recordings/thumbnail?path=SentryClips/<event>/<filename>.mp4`
+returns `state`, `reason`, `original_url`, and `thumbnail_url` (only when ready).
+`POST` to the same endpoint with `X-TeslaUSB-Request: 1` requests a cached JPEG;
+GET never starts an encoder. Preparing returns HTTP 202. The same state names as
+Low previews apply: `not_requested`, `preparing`, `ready`, `failed`, `unavailable`.
+The payload labels the image as the first available keyframe of the recorded
+minute, with `max_width:480`, `quality:"thumbnail"`, and `live:false`. It represents
+completed recording footage, not a live camera or a continuously updated view.
+
+`GET /api/v1/recordings/thumbnail/media?path=...` serves a ready `image/jpeg`,
+including single byte ranges. Both endpoints validate the current immutable
+source and Trash tombstones before cache access. Restored owned copies currently
+return `restored_original_only` with their authenticated original URL; they do not
+silently fall through to old snapshot aliases.
+
+Thumbnails use a separate versioned source fingerprint and `.jpg` cache files in
+the existing private `/backingfiles/teslausb-previews` directory. JPEGs, Low MP4s,
+state files, and temporary files share the 256 MiB cache budget and seven-day
+eviction. A 2,048-entry ceiling with admission headroom also prevents many tiny
+JPEGs from exhausting the bounded cache directory scan. Both encoders share the
+same inherited `worker.lock`: a busy request
+returns `preview_worker_busy` and `retry_after_seconds:5`, without adding a queue.
+
+The fixed ffmpeg command selects the first available keyframe, emits exactly one
+JPEG with width at most 480 pixels, and stops decoding. It never transcodes the
+entire minute and does not need ffprobe. Single-thread decoding/filtering/encoding
+runs at nice 15 with limits of 15 CPU seconds, 20 wall seconds, 512 MiB address
+space, and 1 MiB output. External tracks and network protocols remain disabled.
+The helper verifies the bounded JPEG header, dimensions, and end marker before
+publishing it; malformed, oversized, or timed-out output never becomes ready.
+
+Clients should request overview images only when the overview is selected, work
+through cameras sequentially, and stop polling when the view is left or hidden.
+Selecting one camera can open its original-quality video separately. Thumbnails
+do not change the existing Low preview or original-download APIs.
+
 The cache uses the large backing-files filesystem because `/mutable` may be only
 a few hundred MiB. The fixed production root must be a real directory, not a
 symlink or an environment override. Setup requires `/backingfiles` to be mounted
@@ -105,6 +143,11 @@ The relevant ffmpeg options are documented in the official
 Route `/api/v1/recordings/download`, `/api/v1/recordings/preview`, and
 `/api/v1/recordings/preview/media`, plus `/api/v1/trash/download`, to executable
 `cgi-bin/recording-media.sh`.
+The same wrapper handles `/api/v1/recordings/thumbnail` and
+`/api/v1/recordings/thumbnail/media` without another nginx location or privileged
+helper. `test_recording_thumbnails.py` covers first-frame JPEG contracts, shared
+worker/cache limits, source identity, Trash guards, range bytes, encoding failure,
+and a real isolated ffmpeg/ffprobe image fixture on Linux.
 Provision the private preview and Trash roots during normal web setup. Deny
 direct CGI access to Python implementation files in nginx. No new sudo action
 or root service is required for media previews or downloads.
