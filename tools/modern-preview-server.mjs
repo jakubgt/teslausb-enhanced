@@ -110,7 +110,7 @@ export async function createPreviewServer({port = 0, media = null} = {}) {
   media ||= await generateFixtureMedia();
   const state = {events: fixtureEvents(), trash: new Map(), previewState: 'unavailable', thumbnailState: media.thumbnail ? 'ready' : 'unavailable', thumbnailPostState: 'ready', thumbnailDelay: 0, thumbnailOverrides: new Map(), failThumbnail: false, failVideos: false, failTrash: false, failStatus: false, failDownload: false, downloadDelay: 0, mutations: [], requests: [], files: new Map([['fs/Music', new Map([['Road Trip', {directory: true}], ['Evening drive.wav', {data: fixtureWave()}]])], ['fs/LightShow',new Map([['lightshow.fseq',{data:Buffer.from('fixture lightshow')} ]])], ['fs/Boombox',new Map([['LockChime.wav',{data:fixtureWave()}]])]])};
   Object.assign(state,{playableChunkDelay:0,playableChunkBytes:1024,omitPlayableLength:false,activePlayableLoads:0,maxActivePlayableLoads:0,abortedPlayableLoads:0});
-  Object.assign(state,{thumbnailReadLock:false,thumbnailLockDelay:5,thumbnailImageDelay:0,activeThumbnailReads:0,maxActiveThumbnailReads:0,thumbnailReadConflicts:0,thumbnailImageFailures:new Map(),thumbnailImageAttempts:new Map(),thumbnailAbortedImages:0});
+  Object.assign(state,{thumbnailRevision:0,thumbnailReadLock:false,thumbnailLockDelay:5,thumbnailImageDelay:0,activeThumbnailReads:0,maxActiveThumbnailReads:0,thumbnailReadConflicts:0,thumbnailImageFailures:new Map(),thumbnailImageAttempts:new Map(),thumbnailAbortedImages:0});
   const json = (response, value, status = 200) => {response.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});response.end(JSON.stringify(value));};
   const sendMedia = (request, response, data = media.data, type = media.type, disposition) => {
     const headers = {'Content-Type':type,'Accept-Ranges':'bytes','Cache-Control':'no-store'};if(disposition)headers['Content-Disposition']=`attachment; filename="${disposition}"`;
@@ -153,7 +153,7 @@ export async function createPreviewServer({port = 0, media = null} = {}) {
       if(p==='/api/v1/recordings/thumbnail') {
         const source=query.get('path'),override=state.thumbnailOverrides.get(source)||{};
         const mode=request.method==='POST'&&(override.state||state.thumbnailState)==='not_requested'?state.thumbnailPostState:override.state||state.thumbnailState;
-        const result={ok:true,state:mode,reason:override.reason||(mode==='unavailable'?'thumbnail_unavailable_for_segment':undefined),thumbnail_url:mode==='ready'?'/api/v1/recordings/thumbnail/media?'+new URLSearchParams({path:source}):null};
+        const result={ok:true,state:mode,reason:override.reason||(mode==='unavailable'?'thumbnail_unavailable_for_segment':undefined),thumbnail_url:mode==='ready'?'/api/v1/recordings/thumbnail/media?'+new URLSearchParams({path:source,...(state.thumbnailRevision?{fixture_revision:String(state.thumbnailRevision)}:{})}):null};
         if(request.method==='POST')state.thumbnailOverrides.set(source,{...override,state:mode});
         const delay=Math.max(override.delay||state.thumbnailDelay,state.thumbnailReadLock?state.thumbnailLockDelay:0);if(delay)await sleep(delay);
         if(response.destroyed)return;

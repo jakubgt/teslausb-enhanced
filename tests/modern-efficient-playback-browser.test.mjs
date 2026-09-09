@@ -33,11 +33,13 @@ async function thumbnailTransport(media=null){
     assert.equal(fixture.state.maxActiveThumbnailReads,1);
     console.log('PASS: serialized thumbnail status/image HTTP requests render all six under an exclusive read lock');
 
-    await mode('single');fixture.state.thumbnailImageFailures.set(front,1);fixture.state.thumbnailImageAttempts.clear();
+    // Give each fault case a fresh decoded-image identity. The grid can retain
+    // an older front still even after the overview has removed its image.
+    await mode('single');fixture.state.thumbnailRevision=1;fixture.state.thumbnailImageFailures.set(front,1);fixture.state.thumbnailImageAttempts.clear();
     const beforeRetry=fixture.state.mutations.length;await mode('overview');await allSix();
     assert.equal(fixture.state.thumbnailImageAttempts.get(front),2,'An image transfer failure is retried once without a manual Check');
     assert.equal(fixture.state.mutations.length,beforeRetry,'Retrying an existing JPEG does not start another encoder job');
-    await mode('single');fixture.state.thumbnailImageFailures.set(front,-1);fixture.state.thumbnailImageAttempts.clear();
+    await mode('single');fixture.state.thumbnailRevision=2;fixture.state.thumbnailImageFailures.set(front,-1);fixture.state.thumbnailImageAttempts.clear();
     await mode('overview');await page.locator('#player [data-overview-retry]').waitFor({state:'visible'});
     await until(async()=>(await rendered())===5,'Other cameras still display when one image transfer keeps failing');
     const attempts=fixture.state.thumbnailImageAttempts.get(front);
@@ -48,7 +50,7 @@ async function thumbnailTransport(media=null){
     await page.clock.resume();
     fixture.state.thumbnailImageFailures.clear();await page.locator('#player [data-overview-retry]').click();await allSix();
 
-    await mode('single');fixture.state.thumbnailImageDelay=500;
+    await mode('single');fixture.state.thumbnailRevision=3;fixture.state.thumbnailImageDelay=500;
     const beforeAbort=fixture.state.thumbnailAbortedImages,imageAttemptsBefore=fixture.state.thumbnailImageAttempts.get(front)||0;await mode('overview');
     await until(()=>fixture.state.activeThumbnailReads>0&&fixture.state.thumbnailImageAttempts.get(front)>imageAttemptsBefore,'An overview image transfer has started');
     await mode('single');
