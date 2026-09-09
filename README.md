@@ -25,6 +25,19 @@ recovery and upgrade tools.
 > image and its matching checksum for new installations; rc.4 is retained
 > only for provenance.
 
+## Modern interface preview
+
+The modern dashboard is being developed in [pull request #14](https://github.com/jakubgt/teslausb-enhanced/pull/14).
+It brings together date and hour browsing, six-camera navigation, original-quality
+downloads, recording freshness, and recoverable Trash. **Load clip first** helps
+playback on slower connections, while **Camera overview** uses lightweight stills.
+
+![TeslaUSB Enhanced modern interface showing six camera stills, clip navigation, downloads, and the recordings library](doc/images/modern-ui-preview.png)
+
+*Development preview with fictional demonstration footage. The six panels show
+recorded stills, not a live camera feed. This interface is not yet merged or
+included in the current rc.5 image.*
+
 ## Current release
 
 | Item | Status |
