@@ -126,7 +126,7 @@ export function recordingPage(events,{category='all',query='',hour='latest',page
   const search=query.toLowerCase().trim();
   const matches=events.filter(event=>(category==='all'||event.group===category)
     &&(category!=='RecentClips'||selectedHour==='all'||event.start.slice(11,13)===selectedHour)
-    &&(!search||`${event.category} ${event.sequence} ${event.start}`.toLowerCase().includes(search)));
+    &&(!search||`${event.category} ${event.sequence} ${event.start} ${stampLabel(event.start)}`.toLowerCase().includes(search)));
   const pages=Math.max(1,Math.ceil(matches.length/RECORDINGS_PER_PAGE));
   const selectedPage=Math.max(1,Math.min(pages,Number.isFinite(page)?Math.floor(page):1));
   const offset=(selectedPage-1)*RECORDINGS_PER_PAGE;

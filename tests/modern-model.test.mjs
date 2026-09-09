@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import {buildEvents,parseVideoPath,eventMarker,validLocation,resolveLibrary,validTrash,downloadQuery,recordingPage,recordingNeighbors} from '../teslausb-www/html/modern/model.mjs';
 
 const emptyTrash=()=>({items:[],restored:[],tombstones:[],hidden_media:[]});
+test('recording search accepts displayed times and original filename timestamps',()=>{
+  const events=[{id:'match',category:'Recent',group:'RecentClips',start:'2026-09-08_09-15-37'},
+    {id:'other',category:'Recent',group:'RecentClips',start:'2026-09-08_09-16-37'}];
+  for(const query of ['09:15','09:15:37','09-15','2026-09-08_09-15']){
+    assert.deepEqual(recordingPage(events,{category:'RecentClips',hour:'09',query}).items.map(event=>event.id),['match']);
+  }
+  assert.equal(recordingPage(events,{category:'RecentClips',hour:'09',query:'10:15'}).total,0);
+});
 test('viewer neighbors follow time across grid pages without crossing filters or wrapping',()=>{
   const events=Array.from({length:60},(_,n)=>({id:String(n),start:`2026-09-08_12-${String(n).padStart(2,'0')}-00`,group:'RecentClips'})).reverse();
   events.push({id:'outside',start:'2026-09-08_11-59-00',group:'RecentClips'});
