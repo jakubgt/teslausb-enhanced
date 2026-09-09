@@ -53,6 +53,21 @@ async function run() {
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.getByText(/Status refreshed/).waitFor();
     assert.equal(await page.getByText('Undervoltage occurred since restart', {exact: true}).count(), 1);
+    const completedStatusRefresh = () => page.waitForFunction(() => !document.querySelector('[data-device="refresh"]').disabled);
+    const countStatusRequests = () => requests.filter(request => request.path === '/api/v1/status').length;
+    for (const [idlePanel, statusPanel] of [['Tools', 'Overview'], ['Diagnostics & logs', 'Archive']]) {
+      await page.getByRole('tab', {name: idlePanel, exact: true}).click();
+      const beforeIdle = countStatusRequests();
+      await page.clock.fastForward(35000);
+      assert.equal(countStatusRequests(), beforeIdle, `${idlePanel} leaves status polling idle`);
+      await page.getByRole('tab', {name: statusPanel, exact: true}).click();
+      await completedStatusRefresh();
+      assert.equal(countStatusRequests(), beforeIdle + 1, `${statusPanel} fetches fresh status after the previous polling timer expired`);
+      await page.clock.fastForward(35000);
+      await completedStatusRefresh();
+      assert.equal(countStatusRequests(), beforeIdle + 2, `${statusPanel} continues polling after returning from ${idlePanel}`);
+    }
+    console.log('Status refresh resumes after spending more than 30 seconds in Tools or Logs.');
     await page.getByRole('tab', {name: 'Archive', exact: true}).click();
     assert.equal(await page.getByText('Transferring 2 of 5 files').count(), 1);
     assert.equal(await page.getByRole('button', {name: 'Sync now'}).isDisabled(), true);

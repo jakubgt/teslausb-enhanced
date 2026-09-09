@@ -253,6 +253,9 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     root.querySelectorAll('[data-panel]').forEach(button => { const selected = button.dataset.panel === id; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; });
     root.querySelectorAll('[data-section]').forEach(section => { section.hidden = section.dataset.section !== id; });
     if (id === 'logs') void loadLog(selectedLog);
+    // The polling timer can expire while Tools or Logs is open. Returning to a
+    // status panel fetches current data and starts its polling again.
+    if ((id === 'overview' || id === 'archive') && !powerPending) void refresh();
   }
   function renderLog() {
     const info = DEVICE_LOGS.find(log => log.id === selectedLog), capture = logCache.get(selectedLog);

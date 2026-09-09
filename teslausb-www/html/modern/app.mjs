@@ -82,7 +82,7 @@ function renderGrid(){
   const jump=$('#page-jump');if(jump.options.length!==view.pages){jump.replaceChildren();for(let n=1;n<=view.pages;n++)jump.add(new Option(String(n),String(n)));}jump.value=String(view.page);
   if(focused)document.querySelector(`[data-select="${CSS.escape(focused)}"]`)?.focus();
 }
-$('#clip-grid').onclick=e=>{const b=e.target.closest('[data-open]');if(!b||state.inFlight||state.speedTest)return;const event=state.events.find(x=>x.id===b.dataset.open);if(event){player.setEvent(event);renderGrid();$('#player').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}};
+$('#clip-grid').onclick=e=>{const b=e.target.closest('[data-open]');if(!b||state.inFlight||state.speedTest)return;const event=state.events.find(x=>x.id===b.dataset.open);if(event){player.setEvent(event,{...player.snapshot(),position:0});renderGrid();$('#player').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});}};
 $('#clip-grid').onchange=e=>{if(!e.target.dataset.select)return;if(e.target.checked)state.selected.add(e.target.dataset.select);else state.selected.delete(e.target.dataset.select);renderGrid();};
 document.querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>{state.category=b.dataset.category;state.clipPage=1;state.selected.clear();document.querySelectorAll('[data-category]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderGrid();});
 $('#recording-search').oninput=e=>{state.query=e.target.value;state.clipPage=1;state.selected.clear();renderGrid();};

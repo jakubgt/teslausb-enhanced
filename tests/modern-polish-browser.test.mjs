@@ -32,6 +32,16 @@ async function run(){
     const requests=fixture.state.requests.filter(item=>item.path==='/api/v1/videos').length;
     await page.locator('#page-jump').selectOption('2');await openClip(`${NEWEST_DAY}_20-39-00`);
     await page.locator('#player [data-camera="right_pillar"]').click();await page.locator('#player [data-quality]').selectOption('high');await page.locator('#player [data-rate]').selectOption('2');await waitMedia();
+    await page.getByRole('button',{name:'Skip forward 10 seconds',exact:true}).click();
+    const previewRequests=fixture.state.requests.filter(item=>item.path.startsWith('/api/v1/recordings/preview')).length;
+    await openClip(`${NEWEST_DAY}_20-38-00`);
+    assert.equal(await page.locator('#player [data-quality]').inputValue(),'high','Clicking another card retains the selected quality');
+    assert.equal(await page.locator('#player [data-camera="right_pillar"]').getAttribute('aria-pressed'),'true');
+    assert.equal(await page.locator('#player [data-rate]').inputValue(),'2');
+    assert.ok(Number(await page.locator('#player [data-position]').inputValue())<1,'A selected clip starts from its own beginning');
+    assert.equal(fixture.state.requests.filter(item=>item.path.startsWith('/api/v1/recordings/preview')).length,previewRequests,'High card navigation never requests a Low preview');
+    assert.equal(await page.locator('#player video').evaluate(video=>video.paused),true,'Paused playback stays paused');
+    await openClip(`${NEWEST_DAY}_20-39-00`);
     await next().click();await waitClip('20:40:00');await waitMedia();
     assert.equal(await page.locator('#page-jump').inputValue(),'1','Next clip crosses the page boundary');
     assert.equal(await page.locator('#player [data-camera="right_pillar"]').getAttribute('aria-pressed'),'true');
