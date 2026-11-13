@@ -15,7 +15,7 @@ base_mountinfo=$'20 1 8:1 / / rw,relatime - ext4 /dev/fixture-root rw\n21 20 8:2
 mountinfo="$base_mountinfo"
 # Called by the production function loaded with eval above, before this fixture
 # is replaced by the fault-injection implementation below.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 findmnt() {
   command findmnt "$@" --tab-file <(printf '%s\n' "$mountinfo")
 }
