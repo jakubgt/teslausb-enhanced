@@ -14,11 +14,6 @@ recovery and upgrade tools.
 · [all releases](https://github.com/jakubgt/teslausb-enhanced/releases)
 · [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
-> [!IMPORTANT]
-> **Version 2.0.0 is being prepared for release.** Its new image stays an
-> unpublished draft until the exact build passes testing on a spare card.
-> Back up configuration, keys, and recordings before flashing any image.
-
 ## Version 2.0.0: the modern interface
 
 The modern dashboard brings together date and hour browsing, front-camera
@@ -35,28 +30,26 @@ These are recorded frames, not a live camera feed. The screenshot preserves the
 original capture; version 2.0 uses original quality without the older quality
 selector shown here.*
 
-## Version and image status
+## Current release
 
 | Item | Status |
 | --- | --- |
 | Source version | **2.0.0** |
-| New image | Draft build and spare-card acceptance; publication pending |
+| Image release | [**v2.0.0 — official release**](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0) |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
-| Version 2 image filename | `teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz` |
+| Image download | [`teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.0.0/teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz) |
 | Image integrity | Use the matching `.img.xz.sha256`, `.image-metadata.json`, and `.packages.tsv` assets from the same release |
-| Available public downloads | [Published releases](https://github.com/jakubgt/teslausb-enhanced/releases) |
+| Image SHA-256 | `8ffe7c02764bed3bb0cc4a50a79ce135d454c187279c4742550538b1270ca4e4` |
+| Image source | [`0faa237`](https://github.com/jakubgt/teslausb-enhanced/commit/0faa237524f61053023de7172d6bbf69855d4fa6) |
 
-Both automatic and manual image builds stay **drafts**. The workflow checks the
-source, image, and uploaded checksums, then records the exact image SHA-256 for
-a spare-card test. Publication follows successful setup, car recording, Sentry,
-archiving, downloads, and recovery checks of that same image. Rebuilding it
-requires testing the new build again.
+The v2.0.0 image and matching verification assets are publicly downloadable
+from the [official release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0).
+The published image retains its original build, source commit, and checksums.
+Future image builds are created as drafts for review before publication.
 
-Draft assets require an authorized signed-in account. Published GitHub release
-assets are publicly downloadable. For a private mirror, download through an
-authorized account first; Raspberry Pi Imager cannot authenticate to a private
-release URL itself.
+For a private mirror, download through an authorized account first; Raspberry
+Pi Imager cannot authenticate to a private release URL itself.
 
 <details>
 <summary>Earlier images and retained build identifiers</summary>
@@ -147,10 +140,9 @@ success. Do not reformat a populated card to resolve a checker-memory error.
 
 ### Flash and configure
 
-1. Download the image and matching checksum from the same
-   [release](https://github.com/jakubgt/teslausb-enhanced/releases). Version 2.0.0
-   testers use the authenticated draft until hardware acceptance is complete;
-   public users should use a published image.
+1. Download the [v2.0.0 image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.0.0/teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz)
+   and its [matching checksum](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.0.0/teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz.sha256)
+   from the [official release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0).
 2. Verify the image digest before flashing. It must exactly match the digest in
    that image's `.img.xz.sha256` file. For the version 2.0.0 image, use Windows
    PowerShell:
@@ -317,9 +309,9 @@ Before publication, the release pipeline checks:
 
 Each release's matching assets include `.image-metadata.json` build provenance
 and a `.packages.tsv` installed-package manifest. The build also verifies the
-bundled FFmpeg tools and JPEG encoder used by recording thumbnails. Automated
-checks do not replace spare-card testing; the image remains a draft until the
-exact downloaded build passes hardware acceptance.
+bundled FFmpeg tools and JPEG encoder used by recording thumbnails. Build
+provenance and hardware acceptance are separate: image contents, package
+versions, and asset digests are recorded for the exact published build.
 
 Debian and Raspberry Pi package repositories are not snapshot-pinned, so the
 recorded build is
