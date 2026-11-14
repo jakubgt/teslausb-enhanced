@@ -40,6 +40,7 @@ export PATH="$TEST_TMP/bin:$PATH"
 export ARCHIVE_RCLONE_BIN="$TEST_TMP/bin/rclone"
 export ARCHIVE_TIMEOUT_BIN="$TEST_TMP/bin/timeout"
 probe="$REPO_ROOT/run/rclone_archive/archive-is-reachable.sh"
+# shellcheck disable=SC2016 # Deliberately literal shell text tests safe arguments.
 remote='configured remote:directory with spaces/$(touch never-run)'
 captured=$(bash "$probe" "$remote" --header 'X-Token: test-secret' 2>&1)
 [ -z "$captured" ] || fail 'provider stdout/stderr escaped the probe'
@@ -48,8 +49,10 @@ mapfile -d '' -t args < "$PROBE_ARGUMENTS"
 [ "${args[0]}" = --config ] || fail 'probe lost the fixed configuration path'
 [ "${args[1]}" = /root/.config/rclone/rclone.conf ] || fail 'unexpected configuration path'
 [ "${args[2]}" = lsf ] || fail 'probe is not a read-only backend listing'
-[ "${args[3]}" = --header ] && [ "${args[4]}" = 'X-Token: test-secret' ] \
-  || fail 'trusted backend flags were split or changed'
+if [ "${args[3]}" != --header ] || [ "${args[4]}" != 'X-Token: test-secret' ]
+then
+  fail 'trusted backend flags were split or changed'
+fi
 [ "${args[${#args[@]}-2]}" = -- ] || fail 'remote is not separated from options'
 [ "${args[${#args[@]}-1]}" = "$remote" ] || fail 'configured destination was split or replaced'
 for required in --dirs-only --recursive=false --max-depth=1 --fast-list=false \
@@ -124,17 +127,23 @@ ARCHIVE_SYSTEM=rclone
 RCLONE_DRIVE='configured remote'
 RCLONE_PATH='a folder with spaces'
 RCLONE_FLAGS=(--header 'X-Token: literal value')
+# shellcheck disable=SC2218 # The production function was loaded by eval above.
 archive_is_reachable
 mapfile -d '' -t args < "$PROBE_ARGUMENTS"
-[ "${#args[@]}" -eq 3 ] && [ "${args[0]}" = 'configured remote:a folder with spaces' ] \
-  && [ "${args[1]}" = --header ] && [ "${args[2]}" = 'X-Token: literal value' ] \
-  || fail 'rclone configuration did not reach the probe literally'
+if [ "${#args[@]}" -ne 3 ] || [ "${args[0]}" != "$RCLONE_DRIVE:$RCLONE_PATH" ] ||
+   [ "${args[1]}" != "${RCLONE_FLAGS[0]}" ] || [ "${args[2]}" != "${RCLONE_FLAGS[1]}" ]
+then
+  fail 'rclone configuration did not reach the probe literally'
+fi
 ARCHIVE_SYSTEM=rsync
 ARCHIVE_SERVER=archive.example.invalid
+# shellcheck disable=SC2218 # The production function was loaded by eval above.
 archive_is_reachable
 mapfile -d '' -t args < "$PROBE_ARGUMENTS"
-[ "${#args[@]}" -eq 1 ] && [ "${args[0]}" = archive.example.invalid ] \
-  || fail 'non-rclone backend dispatch changed'
+if [ "${#args[@]}" -ne 1 ] || [ "${args[0]}" != "$ARCHIVE_SERVER" ]
+then
+  fail 'non-rclone backend dispatch changed'
+fi
 
 # Exercise the actual wait functions, with only the probe, sleep and fixed
 # simulation-marker paths replaced. No real cloud, mounts or /tmp trigger files
