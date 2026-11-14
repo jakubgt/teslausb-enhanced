@@ -264,14 +264,14 @@ class SharedDescriptorTests(unittest.TestCase):
         (self.root / "tmp").mkdir(mode=0o1777)
         (self.root / "tmp").chmod(0o1777)
         self.path = self.root / "tmp/diagnostics.txt"
-        self.path.write_bytes(b"PASSWORD=private\nCPU: 49 C\n")
+        self.path.write_bytes(b"PASSWORD=descriptor-only-secret-value\nCPU: 49 C\n")
         self.path.chmod(0o600)
         self.reader = maintenance.LogReader(self.root, root_uid=os.geteuid())
 
     def test_full_report_not_rewritten_and_smaller_limit_applies(self):
         before = self.path.read_bytes()
         _, result = response_data(maintenance.handle("diagnostics-shared", self.reader))
-        self.assertNotIn("private", result["text"])
+        self.assertNotIn("descriptor-only-secret-value", result["text"])
         self.assertEqual(self.path.read_bytes(), before)
         prefix = b"SECRET='private continuation\n" + b"x" * maintenance.MAX_SHARED_INPUT_BYTES
         self.path.write_bytes(prefix + b"\n====== network ======\nCPU: 49 C\n")
