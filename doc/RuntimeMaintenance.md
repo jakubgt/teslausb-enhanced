@@ -15,6 +15,15 @@ deletes the oldest eligible snapshots as necessary. Shared blocks mean deleting
 one snapshot may free little space. Encrypted or uninspectable snapshots remain
 protected, so their retention can prevent the normal reserve from being met.
 
+Rotation protects the newest valid completed snapshot instead of counting all
+image files equally. Eligible incomplete snapshots are considered first, after
+the same encryption and readability checks; empty or malformed finalization
+markers are retained without replacing the newest nonempty completed snapshot.
+A busy snapshot, a failed mount-table/loop-device inspection, or a
+remaining mount prevents deletion. Failed, malformed, or unrepresentable
+filesystem-space metadata also prevents rotation. This avoids preserving a failed snapshot
+while deleting the last completed recording copy.
+
 The health panel reports actual backing-filesystem space separately from the
 uninspected live camera image. A completed-release marker is evidence of one
 release, not proof of recovered reserve or an end-to-end near-full-card rollover.

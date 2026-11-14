@@ -259,22 +259,61 @@ class HealthReaderTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux release log guard")
 class ReleaseMarkerTests(unittest.TestCase):
-    def test_marker_requires_unmount_or_exact_not_mounted_status(self):
-        source = (CGI_DIR.parents[2] / "run/release_snapshot.sh").read_text(encoding="utf-8")
-        marker = source[source.index("# A pre-deletion"):]
-        self.assertGreater(source.index("# A pre-deletion"), source.index('rm -rf -- "$SNAPSHOTS_ROOT/$NAME"'))
-        functions = ('log() { printf "%s\\n" "$*"; }; '
-                     'findmnt_test() { return "$TEST_FINDMNT_STATUS"; };\n')
-        for unmount, findmnt, wanted in ((0, 2, True), (32, 1, True), (32, 0, False),
-                                        (32, 2, False), (32, 127, False)):
-            with self.subTest(unmount=unmount, findmnt=findmnt):
-                query = subprocess.run(["bash", "-eu", "-c", functions + marker],
-                    capture_output=True, text=True, timeout=3,
-                    env={"PATH": "/usr/bin:/bin", "NAME": "snap-000123", "IMAGE": "/not-opened",
-                         "unmount_status": str(unmount), "SNAPSHOT_FINDMNT_COMMAND": "findmnt_test",
-                         "TEST_FINDMNT_STATUS": str(findmnt)})
-                self.assertEqual(query.returncode, 0, query.stderr)
-                self.assertEqual("released snapshot snap-000123 at " in query.stdout, wanted)
+    def test_marker_requires_verified_absence_and_successful_removal(self):
+        release = CGI_DIR.parents[2] / "run/release_snapshot.sh"
+        cases = ((0, 0, False, 0, False, True),
+                 (32, 0, False, 0, False, True),
+                 (0, 2, False, 0, False, False),
+                 (32, 1, False, 0, False, False),
+                 (32, 0, True, 0, False, False),
+                 (0, 0, False, 2, False, False),
+                 (0, 0, False, 0, True, False))
+        for unmount, findmnt, mounted, loop_status, associated, wanted in cases:
+            with self.subTest(unmount=unmount, findmnt=findmnt, mounted=mounted,
+                              loop_status=loop_status, associated=associated):
+                with tempfile.TemporaryDirectory(prefix="teslausb-release-marker-") as temporary:
+                    root = Path(temporary)
+                    snapshot = root / "snapshots/snap-000123"
+                    snapshot.mkdir(parents=True)
+                    image = snapshot / "snap.bin"
+                    image.write_bytes(b"fixture image")
+                    mount_root = root / "mounts"
+                    binary_root = root / "bin"
+                    binary_root.mkdir()
+                    helpers = {
+                        "policy": "exit 1\n",
+                        "umount": 'exit "$TEST_UNMOUNT_STATUS"\n',
+                        "findmnt": ('printf "/\\n"\n'
+                                    '[ "$TEST_MOUNTED" = 0 ] || printf "%s\\n" '
+                                    '"$SNAPSHOT_MOUNT_ROOT/snap-000123"\n'
+                                    'exit "$TEST_FINDMNT_STATUS"\n'),
+                        "losetup": ('[ "$TEST_ASSOCIATED" = 0 ] || printf "/dev/loop-fixture\\n"\n'
+                                    'exit "$TEST_LOOP_STATUS"\n'),
+                    }
+                    for name, body in helpers.items():
+                        helper = binary_root / name
+                        helper.write_text("#!/bin/bash\n" + body, encoding="utf-8")
+                        helper.chmod(0o700)
+                    query = subprocess.run(
+                        ["bash", "-eu", "-c",
+                         'log() { printf "%s\\n" "$*"; }; export -f log; exec bash "$1" snap-000123',
+                         "release-marker-test", str(release)],
+                        capture_output=True, text=True, timeout=3,
+                        env={"PATH": f"{binary_root}:/usr/bin:/bin",
+                             "SNAPSHOTS_ROOT": str(snapshot.parent),
+                             "SNAPSHOT_MOUNT_ROOT": str(mount_root),
+                             "MUTABLE_TESLACAM": str(root / "mutable/TeslaCam"),
+                             "SNAPSHOT_POLICY_HELPER": str(binary_root / "policy"),
+                             "SNAPSHOT_FINDMNT_COMMAND": str(binary_root / "findmnt"),
+                             "SNAPSHOT_LOSETUP_COMMAND": str(binary_root / "losetup"),
+                             "TEST_UNMOUNT_STATUS": str(unmount),
+                             "TEST_FINDMNT_STATUS": str(findmnt),
+                             "TEST_MOUNTED": str(int(mounted)),
+                             "TEST_LOOP_STATUS": str(loop_status),
+                             "TEST_ASSOCIATED": str(int(associated))})
+                    self.assertEqual(query.returncode, 0 if wanted else 75, query.stderr)
+                    self.assertEqual("released snapshot snap-000123 at " in query.stdout, wanted)
+                    self.assertEqual(image.exists(), not wanted)
 
 
 class SSHStatusTests(unittest.TestCase):
