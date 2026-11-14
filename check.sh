@@ -63,6 +63,8 @@ shellcheck --exclude=SC1091 \
            ./run/enable_gadget.sh \
            ./run/force_sync.sh \
            ./run/make_snapshot.sh \
+           ./run/manage_free_space.sh \
+           ./run/release_snapshot.sh \
            ./run/snapshot_lock.sh \
            ./run/mountimage \
            ./run/mountoptsforimage \
@@ -118,6 +120,7 @@ shellcheck --exclude=SC1091 \
            ./tests/gadget-status-test.sh \
            ./tests/enable-gadget-safety-test.sh \
            ./tests/snapshot-concurrency-test.sh \
+           ./tests/snapshot-retention-test.sh \
            ./tests/make-snapshot-failure-test.sh \
            ./tests/mount-helpers-test.sh \
            ./tests/prepare-image-test.sh \

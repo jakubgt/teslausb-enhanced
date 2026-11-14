@@ -410,7 +410,9 @@ touch "$snapshot_root/snap-000001/snap.bin" \
   "$snapshot_root/snap-000004/snap.bin" \
   "$snapshot_root/snap-000006/snap.bin"
 policy_findmnt="$TEST_TMP/policy-findmnt"
-printf '%s\n' '#!/bin/sh' 'exit 0' > "$policy_findmnt"
+printf '%s\n' '#!/bin/sh' \
+  'case "$1" in --mountpoint) exit 0 ;; --kernel) printf "/\\n" ;; *) exit 2 ;; esac' \
+  > "$policy_findmnt"
 chmod +x "$policy_findmnt"
 
 policy_status=0
@@ -453,7 +455,8 @@ grep -Fx 'fixture-ready' "$TESLAUSB_TEST_RELEASE_LOG" > /dev/null
 policy_bin="$TEST_TMP/policy-bin"
 mkdir -p "$policy_bin"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$policy_bin/umount"
-chmod +x "$policy_bin/umount"
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$policy_bin/losetup"
+chmod +x "$policy_bin/umount" "$policy_bin/losetup"
 release_script="$REPO_ROOT/run/release_snapshot.sh"
 release_status=0
 PATH="$policy_bin:$PATH" BACKINGFILES_ROOT="$TEST_TMP/backingfiles-unused" \

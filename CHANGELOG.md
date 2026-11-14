@@ -6,6 +6,9 @@ upstream TeslaUSB history and MIT license.
 
 ## [Unreleased]
 
+- Preserve the newest completed snapshot during low-space rotation, prefer
+  eligible incomplete snapshots, and refuse snapshot deletion until mount and
+  loop-device checks positively establish that it is no longer in use.
 - Check the configured rclone archive destination with bounded requests and
   retry backoff instead of using a one-second Internet ping as an archive gate.
 - Add an explicit diagnostics-sharing flow with bounded redaction, an editable

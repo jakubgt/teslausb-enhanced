@@ -4,10 +4,11 @@ BACKINGFILES_ROOT="${BACKINGFILES_ROOT:-/backingfiles}"
 SNAPSHOTS_ROOT="${SNAPSHOTS_ROOT:-$BACKINGFILES_ROOT/snapshots}"
 SNAPSHOT_MOUNT_ROOT="${SNAPSHOT_MOUNT_ROOT:-/tmp/snapshots}"
 SNAPSHOT_FINDMNT_COMMAND="${SNAPSHOT_FINDMNT_COMMAND:-findmnt}"
+SNAPSHOT_LOSETUP_COMMAND="${SNAPSHOT_LOSETUP_COMMAND:-losetup}"
 MUTABLE_TESLACAM="${MUTABLE_TESLACAM:-/mutable/TeslaCam}"
 SNAPSHOT_POLICY_HELPER="${SNAPSHOT_POLICY_HELPER:-/root/bin/snapshot_contains_encrypted_clips.sh}"
 readonly BACKINGFILES_ROOT SNAPSHOTS_ROOT SNAPSHOT_MOUNT_ROOT
-readonly SNAPSHOT_FINDMNT_COMMAND MUTABLE_TESLACAM
+readonly SNAPSHOT_FINDMNT_COMMAND SNAPSHOT_LOSETUP_COMMAND MUTABLE_TESLACAM
 readonly SNAPSHOT_POLICY_HELPER
 
 NAME=$(basename -- "$1")
@@ -78,14 +79,63 @@ then
     -type l -printf '%p\0%l\0')
 fi
 
-log "releasing snapshot $SNAPSHOTS_ROOT/$NAME"
 IMAGE="$SNAPSHOTS_ROOT/$NAME/snap.bin"
 unmount_status=0
 umount "$IMAGE" || unmount_status=$?
 
+# A filtered findmnt failure is ambiguous: exit 1 means both "no match" and
+# an inspection error. Require a successful complete kernel mount table, then
+# compare text without statting the autofs key and triggering a new mount.
+mount_targets=
+if ! mount_targets=$("$SNAPSHOT_FINDMNT_COMMAND" --kernel --raw --noheadings --output TARGET)
+then
+  log "refusing to release $NAME because mount inspection failed (unmount=$unmount_status)"
+  exit 75
+fi
+root_seen=false
+while IFS= read -r target
+do
+  case "$target" in
+    /*) ;;
+    *)
+      log "refusing to release $NAME because mount inspection is incomplete"
+      exit 75
+      ;;
+  esac
+  target=$(printf '%b' "$target")
+  [ "$target" != / ] || root_seen=true
+  case "$target" in
+    "$SNAPSHOT_MOUNT_ROOT/$NAME" | "$SNAPSHOT_MOUNT_ROOT/$NAME/"* | \
+    "$SNAPSHOTS_ROOT/$NAME" | "$SNAPSHOTS_ROOT/$NAME/"*)
+      log "refusing to release $NAME because its view remains mounted (unmount=$unmount_status)"
+      exit 75
+      ;;
+  esac
+done <<< "$mount_targets"
+if [ "$root_seen" != true ]
+then
+  log "refusing to release $NAME because mount inspection is incomplete"
+  exit 75
+fi
+# Also refuse a backing-image loop association, including a mount at an
+# unexpected alias. Successful empty output establishes absence; errors do not.
+loop_devices=
+if ! loop_devices=$("$SNAPSHOT_LOSETUP_COMMAND" --list --associated "$IMAGE" \
+    --noheadings --output NAME)
+then
+  log "refusing to release $NAME because loop inspection failed"
+  exit 75
+fi
+if [ -n "$loop_devices" ]
+then
+  log "refusing to release $NAME because its image still has a loop association"
+  exit 75
+fi
+
+log "releasing snapshot $SNAPSHOTS_ROOT/$NAME"
 # Delete the snapshot folders, then unlink obsolete view entries in bounded
 # batches. Keep the directory lock through both operations.
-rm -rf -- "$SNAPSHOTS_ROOT/$NAME"
+rm -rf -- "${SNAPSHOTS_ROOT:?}/${NAME:?}"
 for ((link_index=0; link_index<${#obsolete_links[@]}; link_index+=256))
 do
   rm -f -- "${obsolete_links[@]:link_index:256}"
@@ -100,17 +150,7 @@ then
     -type d -empty -delete || true
 fi
 
-# A pre-deletion "releasing" log line is only an attempt. Publish completion
-# only after required removals and confirmed absence of an image mount. Keep
-# logging best-effort; unavailable metadata must not change cleanup behavior.
-mount_status=0
-if [ "$unmount_status" -ne 0 ]
-then
-  "$SNAPSHOT_FINDMNT_COMMAND" --noheadings --source "$IMAGE" --output TARGET \
-    > /dev/null 2>&1 || mount_status=$?
-fi
-if [ "$unmount_status" -eq 0 ] || [ "$mount_status" -eq 1 ]
-then
-  released_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || released_at=
-  log "released snapshot $NAME${released_at:+ at $released_at}" || true
-fi
+# Publish completion only after required removals. Inspection above must have
+# succeeded before any snapshot/view removal; logging itself is best effort.
+released_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || released_at=
+log "released snapshot $NAME${released_at:+ at $released_at}" || true

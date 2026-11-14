@@ -42,6 +42,11 @@ cat > "$TEST_TMP/bin/findmnt" <<'HELPER'
 #!/bin/bash -eu
 [ -f "$TEST_TMP/live-mounted" ]
 HELPER
+cat > "$TEST_TMP/bin/snapshot-findmnt" <<'HELPER'
+#!/bin/bash -eu
+[ "$*" = '--kernel --raw --noheadings --output TARGET' ] || exit 2
+printf '/\n'
+HELPER
 cat > "$TEST_TMP/bin/clear-policy" <<'HELPER'
 #!/bin/bash -eu
 exit 1
@@ -65,6 +70,7 @@ export TESLAUSB_MOUNT_COMMAND="$TEST_TMP/bin/mount"
 export TESLAUSB_UMOUNT_COMMAND="$TEST_TMP/bin/unmount"
 export TESLAUSB_FINDMNT_COMMAND="$TEST_TMP/bin/findmnt"
 export SNAPSHOT_POLICY_HELPER="$TEST_TMP/bin/clear-policy"
+export SNAPSHOT_FINDMNT_COMMAND="$TEST_TMP/bin/snapshot-findmnt"
 export TESLAUSB_GADGET_LOCK_TIMEOUT=0
 
 function log { printf '%s\n' "$*" >> "$LOG_FILE"; }
