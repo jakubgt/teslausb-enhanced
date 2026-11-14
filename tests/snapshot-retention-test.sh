@@ -24,12 +24,18 @@ cat > "$TEST_TMP/bin/stat" <<'EOF'
 #!/bin/bash -eu
 if [ "${1:-}" = --file-system ]
 then
+  [ "${SPACE_STAT_STATUS:-0}" = 0 ] || exit "$SPACE_STAT_STATUS"
+  if [ "${SPACE_STAT_METADATA-auto}" != auto ]
+  then
+    printf '%s\n' "$SPACE_STAT_METADATA"
+    exit 0
+  fi
   remaining=$(find "$SNAPSHOTS_ROOT" -mindepth 2 -maxdepth 2 -type f -name snap.bin | wc -l)
   if [ "$remaining" -le "$FREE_WHEN_REMAINING" ]
   then
-    printf 'echo 100\n'
+    printf '100:1\n'
   else
-    printf 'echo 0\n'
+    printf '0:1\n'
   fi
 elif [ "${BAD_MARKER_OWNER:-0}" = 1 ] && [[ "${@: -1}" == */snap.bin.toc ]]
 then
@@ -105,6 +111,7 @@ new_case() {
   export FREE_WHEN_REMAINING=-1 BAD_MARKER_OWNER=0 MARKER_STAT_ERROR=0 MARKER_FIND_ERROR=0
   export UNMOUNT_STATUS=0 FINDMNT_STATUS=0 LOSETUP_STATUS=0 LOOP_ASSOCIATED=0
   export MOUNT_TABLE_MODE=clear
+  export SPACE_STAT_STATUS=0 SPACE_STAT_METADATA=auto
   mkdir -p "$SNAPSHOTS_ROOT" "$SNAPSHOT_MOUNT_ROOT" "$MUTABLE_TESLACAM"
   touch "$BACKINGFILES_ROOT/cam_disk.bin" "$LOG_FILE" "$CALLS"
 }
@@ -127,6 +134,29 @@ snapshot snap-000001 complete
 expect_status 1 bash "$manager" 1
 [ -f "$SNAPSHOTS_ROOT/snap-000001/snap.bin" ] || fail 'sole completed snapshot removed'
 [ ! -s "$CALLS" ] || fail 'sole completed snapshot reached release'
+
+for space in failed empty malformed zero-block-size negative oversized overflow
+do
+  new_case "space-$space"
+  snapshot snap-000001 complete
+  snapshot snap-000002 complete
+  snapshot snap-000003
+  case "$space" in
+    failed) SPACE_STAT_STATUS=2 ;;
+    empty) SPACE_STAT_METADATA= ;;
+    malformed) SPACE_STAT_METADATA=unknown ;;
+    zero-block-size) SPACE_STAT_METADATA=1:0 ;;
+    negative) SPACE_STAT_METADATA=-1:4096 ;;
+    oversized) SPACE_STAT_METADATA=9999999999999999999:4096 ;;
+    overflow) SPACE_STAT_METADATA=999999999999999999:999999999999999999 ;;
+  esac
+  expect_status 1 bash "$manager" 1
+  for name in snap-000001 snap-000002 snap-000003
+  do
+    [ -f "$SNAPSHOTS_ROOT/$name/snap.bin" ] || fail 'unknown free space triggered rotation'
+  done
+  [ ! -s "$CALLS" ] || fail 'unknown free space reached release'
+done
 
 new_case sole-incomplete
 snapshot snap-000001

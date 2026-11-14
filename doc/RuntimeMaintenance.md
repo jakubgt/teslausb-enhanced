@@ -20,7 +20,8 @@ image files equally. Eligible incomplete snapshots are considered first, after
 the same encryption and readability checks; empty or malformed finalization
 markers are retained without replacing the newest nonempty completed snapshot.
 A busy snapshot, a failed mount-table/loop-device inspection, or a
-remaining mount prevents deletion. This avoids preserving a failed snapshot
+remaining mount prevents deletion. Failed, malformed, or unrepresentable
+filesystem-space metadata also prevents rotation. This avoids preserving a failed snapshot
 while deleting the last completed recording copy.
 
 The health panel reports actual backing-filesystem space separately from the

@@ -64,8 +64,27 @@ function manage_free_space {
   local reserve="$1"
   while true
   do
-    local freespace
-    freespace=$(eval "$(stat --file-system --format="echo \$((%f*%S))" "$BACKINGFILES_ROOT/cam_disk.bin")")
+    local freespace space_metadata free_blocks block_size
+    if ! space_metadata=$(stat --file-system --format='%f:%S' "$BACKINGFILES_ROOT/cam_disk.bin")
+    then
+      log "Warning: unable to inspect backing-filesystem space; stopping low-space rotation."
+      exit 1
+    fi
+    # Keep arithmetic within Bash's signed 64-bit range. Unknown, malformed,
+    # or unrepresentable metadata must never be treated as proof of low space.
+    if [[ ! "$space_metadata" =~ ^([0-9]{1,18}):([0-9]{1,18})$ ]]
+    then
+      log "Warning: invalid backing-filesystem space metadata; stopping low-space rotation."
+      exit 1
+    fi
+    free_blocks=$((10#${BASH_REMATCH[1]}))
+    block_size=$((10#${BASH_REMATCH[2]}))
+    if (( block_size == 0 || free_blocks > 9223372036854775807 / block_size ))
+    then
+      log "Warning: unrepresentable backing-filesystem space; stopping low-space rotation."
+      exit 1
+    fi
+    freespace=$((free_blocks * block_size))
     if [ "$freespace" -gt "$reserve" ]
     then
       exit 0
