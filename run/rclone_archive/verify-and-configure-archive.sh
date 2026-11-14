@@ -17,9 +17,9 @@ function verify_configuration () {
         exit 1
     fi
 
-    if ! rclone lsd "$RCLONE_DRIVE:$RCLONE_PATH" > /dev/null
+    if ! /root/bin/archive-is-reachable.sh "$RCLONE_DRIVE:$RCLONE_PATH" "${RCLONE_FLAGS[@]}"
     then
-        log_progress "STOP: Could not find the $RCLONE_DRIVE:$RCLONE_PATH"
+        log_progress "STOP: rclone destination check failed. Check network access, the configured remote/path, and credentials."
         exit 1
     fi
 }

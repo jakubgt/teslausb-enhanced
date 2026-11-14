@@ -27,6 +27,33 @@ The easiest way to to configure teslausb for rclone is:
 
 Below are the old instructions in case you want to do things the hard way.
 
+## Destination checks and retry behavior
+
+Runtime connectivity checks use a shallow, read-only listing of the configured
+`RCLONE_DRIVE:RCLONE_PATH` with its rclone credentials and backend flags. They
+do not ping Google DNS or require the destination to answer ICMP. An empty
+directory is valid. The archive directory must already exist on backends with
+real directories, as required during setup; object-storage backends can treat
+an empty or new prefix as a valid destination.
+
+Each check has a 5-second connect timeout, a 10-second idle timeout, one rclone
+attempt, and a 15-second overall deadline with forced termination after another
+2 seconds. A failed check delays the next attempt by 5, 10, 20, then at most
+30 seconds. After archiving, checks run every 30 seconds and two consecutive
+failures indicate that the destination is no longer reachable. Other archive
+backends retain their existing polling behavior.
+
+Provider error text and object listings are not added to the archive log because
+they may contain private URLs, account information, or credentials. A failed
+check asks you to check network access, the configured remote/path, and rclone
+credentials. Setup uses the same bounded check.
+
+A successful listing confirms access to the destination at that time. It does
+not establish write permissions, free space, or successful recording transfer.
+The copy and destination-verification steps still decide whether source
+recordings can be released. Write-only credentials that cannot list the target
+are not supported by this check or the existing setup verification.
+
 # Legacy instructions
 
 > **Note** it is recommended you follow the "Easy rclone setup" instructions listed above instead

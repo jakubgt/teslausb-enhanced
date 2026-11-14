@@ -7,6 +7,29 @@ export const DEVICE_LOGS = Object.freeze([
   {id: 'maintenance', label: 'Maintenance', filename: 'teslausb-runtime-maintenance.log', description: 'Runtime maintenance and recovery activity.'}
 ]);
 const LOG_LIMIT = 8 * 1024 * 1024;
+const SHARED_LOG_LIMIT = 1024 * 1024;
+const SHARED_LOG_FILENAME = 'teslausb-diagnostics-shared.txt';
+
+export function sharedDiagnosticsPreview(value) {
+  const fail = () => { throw new Error('Unexpected sharing preview. Refresh the dashboard and try again.'); };
+  if (!value || value.ok !== true || typeof value.text !== 'string' || value.text.length > SHARED_LOG_LIMIT ||
+      value.filename !== SHARED_LOG_FILENAME || typeof value.truncated !== 'boolean' ||
+      !Number.isInteger(value.source_bytes_limit) || value.source_bytes_limit < 1 || value.source_bytes_limit > 512 * 1024 ||
+      !value.redactions || typeof value.redactions !== 'object' || Array.isArray(value.redactions)) fail();
+  const counts = Object.values(value.redactions);
+  if (counts.some(count => !Number.isInteger(count) || count < 0 || count > SHARED_LOG_LIMIT)) fail();
+  if (new Blob([value.text]).size > SHARED_LOG_LIMIT) fail();
+  return {text: value.text, filename: SHARED_LOG_FILENAME, truncated: value.truncated,
+    sourceBytesLimit: value.source_bytes_limit, outputTruncated: value.output_truncated === true,
+    redactions: counts.reduce((total, count) => total + count, 0)};
+}
+
+export function sharedDiagnosticsDownload(text) {
+  if (typeof text !== 'string' || !text.trim()) throw new Error('Keep some diagnostic text in the preview before downloading.');
+  const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+  if (blob.size > SHARED_LOG_LIMIT) throw new Error('The edited preview exceeds the 1 MiB sharing limit. Remove some text before downloading.');
+  return {blob, filename: SHARED_LOG_FILENAME};
+}
 
 export function formatDeviceBytes(value) {
   if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) return 'Not reported';
@@ -122,6 +145,7 @@ export function hasPendingPowerAction() { return pendingPowerAction !== null; }
 export function mountDevice(container, {api, onNotice = () => {}}) {
   let destroyed = false, busy = false, powerPending = hasPendingPowerAction(), statusGeneration = 0, status = null, maintenance = null, poll = null, refreshing = null, logGeneration = 0;
   let selectedLog = 'diagnostics', selectedPanel = 'overview', speedController = null, speedTimer = null;
+  let sharingDialog = null, sharingController = null, sharingGeneration = 0;
   const controllers = new Set(), logCache = new Map();
   const root = element('div', 'device-root');
   root.innerHTML = `
@@ -131,9 +155,9 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     <section id="device-panel-overview" role="tabpanel" aria-labelledby="device-tab-overview" data-section="overview"><div class="device-alerts" data-device="alerts"></div><div class="device-metrics" data-device="metrics"></div><div class="device-card"><h2>Storage & snapshot health</h2><div data-device="health">Waiting for maintenance status…</div></div></section>
     <section id="device-panel-archive" role="tabpanel" aria-labelledby="device-tab-archive" data-section="archive" hidden><div class="device-card"><div class="device-card-heading"><h2>Archive transfers</h2><button type="button" data-action="sync">Sync now</button></div><div data-device="archive"></div><p data-device="sync-status" role="status"></p></div></section>
     <section id="device-panel-logs" role="tabpanel" aria-labelledby="device-tab-logs" data-section="logs" hidden>
-      <div class="device-card-heading"><div><h2>Diagnostics & logs</h2><p>Inspect a captured file, then download exactly what you viewed.</p></div><button type="button" data-device="bundle">Download support bundle</button></div>
+      <div class="device-card-heading"><div><h2>Diagnostics & logs</h2><p>Inspect a captured file, then download exactly what you viewed.</p><p>Capture and support bundle downloads keep the original details. Use Prepare for sharing to review a redacted diagnostic copy.</p></div><button type="button" data-device="bundle">Download support bundle</button></div>
       <div class="device-log-layout"><div class="device-log-list" aria-label="Log sections">${DEVICE_LOGS.map(log => `<button type="button" data-log="${log.id}" aria-pressed="${log.id === selectedLog}"><strong>${log.label}</strong><span data-log-info="${log.id}">Availability not checked</span></button>`).join('')}</div><div class="device-card device-log-card">
-        <div class="device-card-heading"><div><h3 data-device="log-title">Diagnostics</h3><p data-device="log-description"></p></div><button type="button" data-device="generate">Generate fresh diagnostics</button></div>
+        <div class="device-card-heading"><div><h3 data-device="log-title">Diagnostics</h3><p data-device="log-description"></p></div><div class="device-actions"><button type="button" data-device="share">Prepare for sharing</button><button type="button" data-device="generate">Generate fresh diagnostics</button></div></div>
         <div class="device-log-toolbar"><label>Search this capture<input type="search" data-device="search" placeholder="Find text in log"></label><label class="device-checkbox"><input type="checkbox" data-device="wrap" checked> Wrap lines</label><button type="button" data-device="log-refresh">Refresh saved file</button><button type="button" data-device="log-full">View full capture</button><button type="button" data-device="log-download">Download capture</button></div>
         <p class="device-status" data-device="log-status" role="status" aria-live="polite">Select a log to load its saved file.</p><pre tabindex="0" class="device-log-text device-wrap" data-device="log-text" aria-label="Captured log"></pre>
       </div></div><p class="device-status" data-device="bundle-status" role="status"></p>
@@ -248,6 +272,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     return refreshing;
   }
   function selectPanel(id) {
+    if (id !== 'logs') closeSharingPreview();
     selectedPanel = id;
     if (id !== 'tools') stopSpeed('Speed test stopped.');
     root.querySelectorAll('[data-panel]').forEach(button => { const selected = button.dataset.panel === id; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; });
@@ -261,6 +286,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     const info = DEVICE_LOGS.find(log => log.id === selectedLog), capture = logCache.get(selectedLog);
     say('log-title', info.label); say('log-description', info.description);
     find('generate').hidden = selectedLog !== 'diagnostics';
+    find('share').hidden = selectedLog !== 'diagnostics';
     root.querySelectorAll('[data-log]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.log === selectedLog)));
     find('log-full').disabled = !capture; find('log-download').disabled = !capture;
     const search = find('search').value.toLocaleLowerCase();
@@ -277,6 +303,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     finally { clearTimeout(timer); controllers.delete(controller); }
   }
   async function loadLog(id, force = false) {
+    if (id !== selectedLog || force) closeSharingPreview();
     selectedLog = id; const generation = ++logGeneration;
     if (force) logCache.delete(id);
     renderLog();
@@ -291,6 +318,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
   }
   async function generateDiagnostics() {
     if (busy || powerPending) return;
+    closeSharingPreview();
     busy = true; updateBusy();
     say('log-status', 'Generating fresh diagnostics. This can take up to two minutes…');
     try {
@@ -315,6 +343,62 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     close.addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => dialog.remove());
     root.append(dialog); dialog.showModal();
+  }
+  function closeSharingPreview() {
+    sharingGeneration++;
+    sharingController?.abort(); sharingController = null;
+    const dialog = sharingDialog; sharingDialog = null;
+    if (dialog) {
+      const preview = dialog.querySelector('textarea');
+      if (preview) preview.value = '';
+      if (dialog.open) dialog.close();
+      dialog.remove();
+    }
+    if (!destroyed) find('share').disabled = busy || powerPending;
+  }
+  async function prepareSharingPreview() {
+    if (destroyed || busy || powerPending || selectedLog !== 'diagnostics') return;
+    closeSharingPreview();
+    const generation = sharingGeneration, controller = new AbortController();
+    sharingController = controller; controllers.add(controller);
+    const dialog = element('dialog', 'device-log-dialog device-share-dialog'); sharingDialog = dialog;
+    dialog.setAttribute('aria-labelledby', 'device-share-title');
+    const heading = element('div', 'device-card-heading'), title = element('h2', '', 'Prepare diagnostics for sharing'); title.id = 'device-share-title';
+    const close = element('button', '', 'Cancel'); close.type = 'button'; heading.append(title, close);
+    const warning = element('p', 'device-alert', 'Automatic redaction is best effort. Review this preview for credentials, names, locations, and other private details before sharing.');
+    const progress = element('p', 'device-status', 'Preparing the last saved diagnostic report…'); progress.setAttribute('role', 'status'); progress.setAttribute('aria-live', 'polite');
+    const label = element('label', 'device-share-label', 'Review and edit the sharing preview'); label.hidden = true;
+    const preview = element('textarea', 'device-log-text device-wrap'); preview.setAttribute('aria-label', 'Sharing preview (editable)'); preview.spellcheck = false; preview.autocomplete = 'off'; preview.maxLength = SHARED_LOG_LIMIT; label.append(preview);
+    const actions = element('div', 'device-actions'), download = element('button', '', 'Download reviewed preview'); download.type = 'button'; download.disabled = true; actions.append(download);
+    dialog.append(heading, warning, element('p', 'device-muted', 'This prepares a copy of the saved report. The full local report is kept. Nothing is uploaded, and closing this preview discards its contents.'), progress, label, actions);
+    close.addEventListener('click', () => closeSharingPreview());
+    dialog.addEventListener('cancel', event => { event.preventDefault(); closeSharingPreview(); });
+    dialog.addEventListener('close', () => { if (sharingDialog === dialog) closeSharingPreview(); });
+    const updateDownload = () => { download.disabled = !preview.value.trim(); };
+    preview.addEventListener('input', updateDownload);
+    download.addEventListener('click', () => {
+      try {
+        const result = sharedDiagnosticsDownload(preview.value); saveBlob(result.blob, result.filename);
+        progress.textContent = 'Downloaded exactly the text shown in this preview. Review the file again before posting it.'; progress.classList.remove('device-error');
+      } catch (error) { progress.textContent = error.message; progress.classList.add('device-error'); }
+    });
+    root.append(dialog); dialog.showModal(); find('share').disabled = true;
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      const result = sharedDiagnosticsPreview(await api('/api/v1/maintenance/logs/diagnostics/shared', {method: 'GET', signal: controller.signal, timeout: 30000}));
+      if (destroyed || controller.signal.aborted || generation !== sharingGeneration || sharingDialog !== dialog) return;
+      preview.value = result.text; label.hidden = false; close.textContent = 'Close preview'; updateDownload();
+      progress.textContent = `${result.truncated ? `Only the latest ${formatDeviceBytes(result.sourceBytesLimit)} of the saved report was checked; earlier content is omitted. ` : 'The saved report was checked. '}${result.outputTruncated ? 'The sharing output was shortened to fit the download limit. ' : ''}${result.redactions} automatic redactions. Review and remove any remaining private details below.`;
+      preview.focus();
+    } catch (error) {
+      if (!destroyed && generation === sharingGeneration && sharingDialog === dialog) {
+        progress.textContent = controller.signal.aborted ? 'Preparation timed out. Close this preview and try again.' : `Could not prepare a sharing preview: ${error.message}`;
+        progress.classList.add('device-error'); close.textContent = 'Close preview';
+      }
+    } finally {
+      clearTimeout(timer); controllers.delete(controller);
+      if (sharingController === controller) sharingController = null;
+    }
   }
   async function downloadBundle() {
     find('bundle').disabled = true; say('bundle-status', 'Preparing saved logs and current status…');
@@ -368,6 +452,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
   function updateBusy() {
     root.querySelectorAll('[data-action]').forEach(button => { button.disabled = busy || powerPending; });
     find('generate').disabled = busy || powerPending;
+    find('share').disabled = busy || powerPending || sharingDialog !== null;
     find('speed').disabled = busy || powerPending;
     find('refresh').disabled = busy || !!refreshing;
     showStatus();
@@ -385,7 +470,7 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
     if (!settings || id === 'toggle' && !['yes', 'no'].includes(status?.drives_active)) return;
     if (settings.confirm && !window.confirm(settings.confirm)) return;
     busy = true;
-    if (isPower) { powerPending = true; pendingPowerAction = {message: 'A power action was requested. Use Refresh status to check the connection before continuing.', error: false}; window.dispatchEvent(new CustomEvent('teslausb:power-state')); statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
+    if (isPower) { closeSharingPreview(); powerPending = true; pendingPowerAction = {message: 'A power action was requested. Use Refresh status to check the connection before continuing.', error: false}; window.dispatchEvent(new CustomEvent('teslausb:power-state')); statusGeneration++; clearTimeout(poll); controllers.forEach(controller => controller.abort()); }
     updateBusy(); stopSpeed('Speed test stopped for device action.');
     if (id !== 'sync') window.dispatchEvent(new CustomEvent('teslausb:pause-media'));
     const key = isPower ? 'power-status' : id === 'sync' ? 'sync-status' : 'action-status'; say(key, 'Request in progress…');
@@ -427,9 +512,10 @@ export function mountDevice(container, {api, onNotice = () => {}}) {
   find('log-refresh').addEventListener('click', () => void loadLog(selectedLog, true));
   find('search').addEventListener('input', renderLog); find('wrap').addEventListener('change', renderLog);
   find('generate').addEventListener('click', () => void generateDiagnostics()); find('log-full').addEventListener('click', fullLog);
+  find('share').addEventListener('click', () => void prepareSharingPreview());
   find('log-download').addEventListener('click', () => { const capture = logCache.get(selectedLog), info = DEVICE_LOGS.find(log => log.id === selectedLog); if (capture) saveBlob(capture.blob, `${capture.truncated ? 'latest-tail-' : ''}${info.filename}`); });
   find('bundle').addEventListener('click', () => void downloadBundle()); find('speed').addEventListener('click', () => void speedTest());
   if (powerPending) { updateBusy(); showMaintenance(); say('power-status', pendingPowerAction.message, pendingPowerAction.error); say('status', 'A power action was requested. Current device status is unknown until manually refreshed.'); }
   else void refresh();
-  return {refresh, destroy() { destroyed = true; clearTimeout(poll); stopSpeed(''); controllers.forEach(controller => controller.abort()); controllers.clear(); root.querySelectorAll('dialog').forEach(dialog => dialog.close()); logCache.clear(); root.remove(); }};
+  return {refresh, destroy() { destroyed = true; closeSharingPreview(); clearTimeout(poll); stopSpeed(''); controllers.forEach(controller => controller.abort()); controllers.clear(); root.querySelectorAll('dialog').forEach(dialog => dialog.close()); logCache.clear(); root.remove(); }};
 }

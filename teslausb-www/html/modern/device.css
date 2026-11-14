@@ -47,6 +47,9 @@
 .device-log-dialog,.files-audio-dialog{box-sizing:border-box;background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:15px;padding:24px;width:min(1100px,94vw);max-height:92vh}
 .device-log-dialog::backdrop,.files-audio-dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
 .device-log-dialog .device-log-text{max-height:68vh}
+.device-share-label{margin:16px 0}
+.device-share-dialog textarea{display:block;width:100%;min-height:260px;max-height:48vh;resize:vertical}
+.device-share-dialog .device-actions{margin-top:16px}
 .device-tools-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .device-tools-grid .device-card{margin-bottom:0}
 .device-tools-grid .device-card p{font-size:13px}

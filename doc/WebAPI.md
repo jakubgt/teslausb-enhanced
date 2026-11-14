@@ -33,6 +33,7 @@ curl -X POST \
 | `GET` | `/api/v1/status` | Hardware, network, storage, archive health, and encrypted-clip detection |
 | `GET` | `/api/v1/maintenance` | Read-only SSH, storage/clock/snapshot/recovery evidence, and maintenance-log availability |
 | `GET` | `/api/v1/maintenance/logs/{diagnostics,archiveloop,setup,maintenance}` | Download one fixed maintenance report/log; no arbitrary path arguments |
+| `GET` | `/api/v1/maintenance/logs/diagnostics/shared` | Prepare a bounded, redacted JSON preview of the saved diagnostic report |
 | `GET` | `/api/v1/config` | Discover configured virtual drives and BLE |
 | `GET` | `/api/v1/videos` | Legacy complete list, or day-scoped linked recordings with `day=latest` / `day=YYYY-MM-DD` |
 | `GET` | `/api/v1/speed-test?SECONDS` | Stream bounded test data; `SECONDS` is 1–30 (the bundled UI requests 15) |
@@ -83,6 +84,22 @@ Log downloads use fixed server-side paths and attachment responses; missing or
 unreadable files produce errors. Only the latest 8 MiB is returned for a larger
 log, with an explicit truncation header. These endpoints do not generate fresh
 diagnostics; use the existing protected POST action when a fresh report is needed.
+
+The separate diagnostics-sharing route reads at most the latest 512 KiB from
+the same protected, fixed report file. It returns JSON with `ok`, `text`, the
+fixed `filename` `teslausb-diagnostics-shared.txt`, `source_bytes_limit`,
+`original_size_bytes`, `truncated`, `output_truncated`, `redactions` counts, and
+a review `warning`. `truncated` describes omitted source bytes;
+`output_truncated` independently reports the 1 MiB redacted-output limit.
+Ambiguous context at a truncated tail or overlong line is omitted conservatively.
+The route accepts no query parameters, runs no diagnostic-generation command,
+reads no private configuration, and does not overwrite the saved report.
+
+Automatic redaction is best effort. Clients must show the preview and review
+warning before offering a sharing download. The bundled modern UI allows edits
+and downloads exactly that reviewed text, with a maximum of 1 MiB. Ordinary log
+downloads and support captures retain their original details; they are not
+automatically sanitized by this route.
 
 ## Recording-list scope and freshness
 

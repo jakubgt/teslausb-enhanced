@@ -4,11 +4,19 @@ All notable changes to this TeslaUSB distribution are documented here.
 The project uses semantic versioning for its own releases while retaining the
 upstream TeslaUSB history and MIT license.
 
-## [2.0.0] - Unreleased
+## [Unreleased]
 
-The version-2 image is prepared as an unpublished draft until the exact build
-passes its spare-card hardware test. Historical release tags and asset hashes
-remain intact.
+- Check the configured rclone archive destination with bounded requests and
+  retry backoff instead of using a one-second Internet ping as an archive gate.
+- Add an explicit diagnostics-sharing flow with bounded redaction, an editable
+  preview, and a download of the reviewed text. Keep the full local report.
+- Allow formatting of modern UI source while retaining the legacy web-asset
+  exclusion, and add a stable `tools/modern-install.py` compatibility entry point.
+
+## [2.0.0] - 2026-11-13
+
+Published the original verified version-2 image with its recorded source and
+checksums. Historical release tags and asset hashes remain intact.
 
 - Add the modern six-camera UI, latest-day/hour navigation, event controls,
   recording freshness, download feedback, and Device tools without BLE pairing.
@@ -28,7 +36,7 @@ remain intact.
   diagnostics and log downloads, and explicit power/USB confirmations.
 - Make both automatic and manual release-image builds draft-only, require
   validated main-dev source, and verify tag identity and uploaded digests.
-  Publication is a separate deliberate step after exact-image hardware testing.
+  Publication is a separate deliberate step.
 
 ## [1.2.0-rc.5] - 2026-08-18
 

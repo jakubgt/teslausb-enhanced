@@ -85,6 +85,15 @@ downloads. Downloads are bounded to the latest 8 MiB, and a truncated download
 is identified. Review reports for network names, paths, and other personal data
 before sharing them. No private SSH files are exposed by these endpoints.
 
+In the modern interface, **Device → Diagnostics → Prepare for sharing** creates
+a separate, bounded, redacted preview of the last saved diagnostic report.
+Review and edit the preview before choosing **Download reviewed preview**.
+Preparation checks at most the latest 512 KiB and identifies omitted content;
+the reviewed download is limited to 1 MiB. Closing the preview discards it.
+Automatic redaction does not guarantee anonymity or catch every custom secret.
+The original saved report and ordinary support captures retain their full local
+details. See the [sharing API contract](WebAPI.md#routes).
+
 The alternative, separately distributed interface under `/new/` is not changed;
 use the bundled interface (`/?ui=legacy`) to access this panel.
 

@@ -19,6 +19,7 @@ route="${PATH_INFO:-${REQUEST_URI%%\?*}}"
 case "${route%/}" in
   /api/v1/maintenance|/cgi-bin/maintenance.sh|'') operation=status ;;
   /api/v1/maintenance/logs/diagnostics) operation=diagnostics ;;
+  /api/v1/maintenance/logs/diagnostics/shared) operation=diagnostics-shared ;;
   /api/v1/maintenance/logs/archiveloop) operation=archiveloop ;;
   /api/v1/maintenance/logs/setup) operation=setup ;;
   /api/v1/maintenance/logs/maintenance) operation=maintenance ;;
