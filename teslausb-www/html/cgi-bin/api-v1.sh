@@ -45,6 +45,7 @@ case "$route" in
     "status": "/api/v1/status",
     "maintenance": "/api/v1/maintenance",
     "maintenance_logs": ["diagnostics", "archiveloop", "setup", "maintenance"],
+    "diagnostics_sharing": "/api/v1/maintenance/logs/diagnostics/shared",
     "config": "/api/v1/config",
     "videos": "/api/v1/videos",
     "recording_downloads": "/api/v1/recordings/download",
@@ -62,7 +63,7 @@ EOF
   /status|/health)
     exec "$script_dir/status.sh"
     ;;
-  /maintenance|/maintenance/logs/diagnostics|/maintenance/logs/archiveloop|/maintenance/logs/setup|/maintenance/logs/maintenance)
+  /maintenance|/maintenance/logs/diagnostics|/maintenance/logs/diagnostics/shared|/maintenance/logs/archiveloop|/maintenance/logs/setup|/maintenance/logs/maintenance)
     exec "$script_dir/maintenance.sh"
     ;;
   /config)

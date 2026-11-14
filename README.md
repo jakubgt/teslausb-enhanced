@@ -362,6 +362,9 @@ security and fail-closed boundaries, and include relevant tests or exact
 reproduction steps. Never commit real TeslaUSB configuration files, passwords,
 tokens, private keys, VINs, or archive credentials.
 
+See [development and formatting](doc/Development.md) for the validation workflow,
+modern UI formatting scope, and stable manual installer entry point.
+
 Public issues and attachments can also expose Wi-Fi names, private IPs, personal
 paths, locations, and account details. Review and redact reports locally; share
 only the necessary sanitized excerpt, never a raw card image or real setup

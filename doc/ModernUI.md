@@ -160,6 +160,23 @@ search, line wrapping, full captured text, and download. Bounded log tails clear
 report truncation; the interface never calls a captured tail the complete original
 log. A combined text bundle is available. Fresh diagnostic generation is explicit.
 
+For a report you intend to share, select **Diagnostics → Prepare for sharing**.
+This reads the existing saved report and prepares a separate, automatically
+redacted copy; it does not regenerate diagnostics or upload anything. Preparation
+checks at most the latest 512 KiB, and the preview explicitly identifies omitted
+earlier content or shortened output. The original local report is kept.
+
+Review the editable preview for any remaining credentials, names, locations, or
+other private details. Automatic redaction is best effort and does not guarantee
+an anonymous report. **Download reviewed preview** saves exactly the text shown,
+including your edits, as `teslausb-diagnostics-shared.txt` (at most 1 MiB). The
+ordinary capture and support-bundle downloads keep their original details.
+
+Closing or cancelling the preview discards its text and cancels preparation.
+Refreshing the saved report, generating fresh diagnostics, leaving the log panel,
+or leaving Device also clears that copy. Routine health refreshes preserve your
+edits while the preview is open. The preview is never kept in browser storage.
+
 Files appears only when Music, LightShow, or Boombox is configured. It reuses the
 existing file browser for upload, folders, rename, playback, and downloads, with
 media cleanup when navigating away. The modern UI has light, dark, and automatic

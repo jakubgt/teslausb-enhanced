@@ -8,7 +8,7 @@ async function run() {
   const filesSource = fs.readFileSync(path.join(__dirname, '../teslausb-www/html/modern/files.js'), 'utf8');
   const device = await import('data:text/javascript;base64,' + Buffer.from(moduleSource).toString('base64'));
   const files = await import('data:text/javascript;base64,' + Buffer.from(filesSource).toString('base64'));
-  const {archiveDeviceView, buildDeviceSshCommand, devicePowerAlerts, formatDeviceBytes, readDeviceLog} = device;
+  const {archiveDeviceView, buildDeviceSshCommand, devicePowerAlerts, formatDeviceBytes, readDeviceLog, sharedDiagnosticsPreview, sharedDiagnosticsDownload} = device;
 
   assert.equal(archiveDeviceView({}).available, false);
   assert.equal(archiveDeviceView({archive_status: {available: false}}).available, false);
@@ -47,6 +47,15 @@ async function run() {
   await assert.rejects(readDeviceLog('setup', {fetchImpl: async () => response('<html>Login</html>', {'Content-Type': 'text/html'})}), /Unexpected log response/);
   await assert.rejects(readDeviceLog('setup', {fetchImpl: async () => response('log', {'X-TeslaUSB-Truncated': 'maybe'})}), /Unexpected log response/);
   await assert.rejects(readDeviceLog('setup', {fetchImpl: async () => response(new Uint8Array(8 * 1024 * 1024 + 1))}), /8 MiB download limit/);
+  const share = {ok: true, text: 'Status: healthy\nHost: [REDACTED]\n', filename: 'teslausb-diagnostics-shared.txt', truncated: true, source_bytes_limit: 524288, redactions: {identifiers: 2, credentials: 1}};
+  const preview = sharedDiagnosticsPreview(share);
+  assert.equal(preview.redactions, 3); assert.equal(preview.truncated, true); assert.equal(preview.text, share.text);
+  const edited = share.text + 'My reviewed note\n', sharedDownload = sharedDiagnosticsDownload(edited);
+  assert.equal(await sharedDownload.blob.text(), edited, 'The download contains exactly the reviewed text, including user edits');
+  assert.equal(sharedDownload.filename, share.filename);
+  for (const invalid of [null, {}, {...share, ok: false}, {...share, filename: '../private.txt'}, {...share, truncated: 'true'}, {...share, redactions: [1]}, {...share, redactions: {bad: -1}}, {...share, redactions: {bad: Infinity}}, {...share, source_bytes_limit: 8 * 1024 * 1024}, {...share, text: '\u00e9'.repeat(524289)}]) assert.throws(() => sharedDiagnosticsPreview(invalid), /Unexpected sharing preview/);
+  assert.throws(() => sharedDiagnosticsDownload('  \n'), /Keep some diagnostic text/);
+  assert.throws(() => sharedDiagnosticsDownload('\u00e9'.repeat(524289)), /1 MiB sharing limit/);
   console.log('Modern Device/Files behavior tests passed.');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

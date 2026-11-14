@@ -71,7 +71,9 @@ then
       export ARCHIVE_SERVER="$RSYNC_SERVER"
       ;;
     rclone)
-      export ARCHIVE_SERVER="8.8.8.8"
+      # This is an archive identity only. Reachability uses the configured
+      # rclone backend and credentials, never an unrelated Internet host.
+      export ARCHIVE_SERVER="$RCLONE_DRIVE:$RCLONE_PATH"
       ;;
     none)
       export ARCHIVE_SERVER=localhost
@@ -126,16 +128,12 @@ function fix_errors_in_image () {
 }
 
 function archive_is_reachable () {
-  local reachable=true
-
-  /root/bin/archive-is-reachable.sh "$ARCHIVE_SERVER" || reachable=false
-
-  if [ "$reachable" = false ]
+  if [ "${ARCHIVE_SYSTEM:-none}" = rclone ]
   then
-    false
-    return
+    /root/bin/archive-is-reachable.sh "$RCLONE_DRIVE:$RCLONE_PATH" "${RCLONE_FLAGS[@]}"
+  else
+    /root/bin/archive-is-reachable.sh "$ARCHIVE_SERVER"
   fi
-  true
 }
 
 function connect_usb_drives_to_host() {
@@ -146,6 +144,7 @@ function connect_usb_drives_to_host() {
 }
 
 function wait_for_archive_to_be_reachable () {
+  local retry_delay=5
   log "Waiting for archive to be reachable..."
   while true
   do
@@ -160,7 +159,15 @@ function wait_for_archive_to_be_reachable () {
       rm /tmp/archive_is_reachable
       break
     fi
-    sleep 1
+    if [ "${ARCHIVE_SYSTEM:-none}" = rclone ]
+    then
+      log "Rclone destination check failed; check network, remote path and credentials. Retrying in ${retry_delay}s."
+      sleep "$retry_delay"
+      retry_delay=$((retry_delay * 2))
+      [ "$retry_delay" -le 30 ] || retry_delay=30
+    else
+      sleep 1
+    fi
   done
 }
 
@@ -323,10 +330,26 @@ function unmount_music_file () {
 }
 
 function wait_for_archive_to_be_unreachable () {
+  local failed_checks=0
   log "Waiting for archive to be unreachable..."
   while true
     do
-      if ! retry archive_is_reachable
+      if [ "${ARCHIVE_SYSTEM:-none}" = rclone ]
+      then
+        # Do not make an authenticated cloud request every second. Require two
+        # failed checks so one transient provider error does not imply departure.
+        if archive_is_reachable
+        then
+          failed_checks=0
+        else
+          failed_checks=$((failed_checks + 1))
+          if [ "$failed_checks" -ge 2 ]
+          then
+            log "Rclone destination is no longer reachable."
+            break
+          fi
+        fi
+      elif ! retry archive_is_reachable
       then
         log "Archive is unreachable."
         break
@@ -337,7 +360,12 @@ function wait_for_archive_to_be_unreachable () {
         rm /tmp/archive_is_unreachable
         break
       fi
-      sleep 1
+      if [ "${ARCHIVE_SYSTEM:-none}" = rclone ]
+      then
+        sleep 30
+      else
+        sleep 1
+      fi
   done
 }
 

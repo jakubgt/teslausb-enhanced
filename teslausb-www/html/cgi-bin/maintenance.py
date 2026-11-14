@@ -8,6 +8,7 @@ No password, key, sshd configuration, arbitrary path, or shell-command API exist
 import errno
 import contextlib
 import datetime
+import ipaddress
 import json
 import os
 from pathlib import PurePosixPath
@@ -20,6 +21,13 @@ import time
 
 
 MAX_LOG_BYTES = 8 * 1024 * 1024
+MAX_SHARED_INPUT_BYTES = 512 * 1024
+MAX_SHARED_OUTPUT_BYTES = 1024 * 1024
+MAX_SHARED_LINE_CHARS = 8192
+SHARED_WARNING = (
+    "Automatic redaction is best effort. Review this preview for credentials, "
+    "names, locations, and other private details before sharing."
+)
 HEALTH_LOG_BYTES = 256 * 1024
 MAX_HEALTH_BYTES = 65536
 MAX_HEALTH_ENTRIES = 4096
@@ -179,14 +187,17 @@ class LogReader:
         return {"available": True, "reason": "available", "size_bytes": size,
                 "truncated": size > MAX_LOG_BYTES}
 
-    def read(self, log_id):
+    def read(self, log_id, *, limit=MAX_LOG_BYTES):
+        # Only fixed internal callers choose a limit; CGI never supplies one.
+        if type(limit) is not int or not 0 < limit <= MAX_LOG_BYTES:
+            raise ValueError("Invalid internal log limit")
         fd, size = self.open(log_id)
         try:
-            os.lseek(fd, max(0, size - MAX_LOG_BYTES), os.SEEK_SET)
+            os.lseek(fd, max(0, size - limit), os.SEEK_SET)
             # Bound both growth while reading and memory; a rotation keeps
             # this pinned inode. Concurrent truncation may return fewer bytes.
             chunks = []
-            remaining = min(size, MAX_LOG_BYTES)
+            remaining = min(size, limit)
             while remaining:
                 chunk = os.read(fd, min(remaining, 65536))
                 if not chunk:
@@ -198,6 +209,271 @@ class LogReader:
             raise LogUnavailable() from None
         finally:
             os.close(fd)
+
+
+_ASSIGNMENT = re.compile(
+    r'''(?P<key>"[^"\n]{1,128}"|'[^'\n]{1,128}'|[A-Za-z_][A-Za-z0-9_.-]{0,127})\s*[:=]'''
+)
+_SENSITIVE_LABEL = re.compile(
+    r"\b(?:password|passwd|passphrase|secret|token|credentials?|SSID)\b[^:=\n]{0,48}[:=]",
+    re.IGNORECASE,
+)
+_COMMAND_FLAG = re.compile(r"(?<!\w)--?([A-Za-z_][A-Za-z0-9_-]{0,100})(?=[=\s]|$)")
+_PRIVATE_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)[A-Z0-9 ]*-----")
+_PRIVATE_END = re.compile(r"-----END [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)[A-Z0-9 ]*-----")
+_KEY_MATERIAL = re.compile(r"(?:[A-Za-z0-9+/]{32,}={0,3}|ssh-(?:rsa|ed25519)\s+\S+(?:\s+.*)?|ecdsa-sha2-\S+\s+\S+(?:\s+.*)?)")
+_TOKEN = re.compile(
+    r"\b(?:Bearer\s+\S+|Basic\s+\S+|gh[pousr]_[A-Za-z0-9_]{16,}|"
+    r"github_pat_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16}|"
+    r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)", re.IGNORECASE,
+)
+_URL = re.compile(r'''\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\s<>"']+''')
+_NETWORK_PATH = re.compile(r'''(?<![\w/])(?:\\\\|//)[^\s<>"']+''')
+_NETWORK_SOURCE = re.compile(
+    r'''(?<![\w/])(?:[A-Za-z0-9_.%+:~-]{1,128}@)?'''
+    r'''(?:\[[0-9A-Za-z:.%_-]{2,128}\]|[A-Za-z0-9_][A-Za-z0-9_.-]{1,252})'''
+    r''':/[^\s<>"']*'''
+)
+_HOME_PATH = re.compile(r'''(?:[A-Za-z]:[\\/]Users[\\/]|/(?:home|Users)/)[^\s<>"']+''', re.IGNORECASE)
+_EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}\b")
+_IPV4 = re.compile(r"(?<![\w.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![\w.])")
+_IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Za-z:.%_-]*(?![\w:])")
+_MAC = re.compile(r"(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])")
+_UUID = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}(?![0-9A-Fa-f])")
+_VIN = re.compile(r"(?<![A-Za-z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Za-z0-9])")
+_DOMAIN = re.compile(r"(?<![\w.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\w.-])")
+_FILE_SUFFIXES = frozenset((
+    "sh", "py", "js", "mjs", "json", "log", "txt", "bin", "img", "xz", "service",
+    "conf", "cfg", "ico", "md", "tsv", "css", "html", "so", "tar", "gz", "zip",
+    "c", "cpp", "h", "sample", "mount", "timer", "target", "socket", "rules",
+    "device", "wants", "list", "db", "pem", "pub", "crt", "key", "mp4", "jpg", "png",
+))
+_PROCESS_ROW = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_.-]{0,31}|[0-9]+)\s+[0-9]+\s+[0-9]+\s+")
+_JOURNAL_HOST = re.compile(r"^(\w{3}\s+[0-9]{1,2}\s+[0-9:]{8}\s+)\S+(\s+)")
+_UPTIME_HOST = re.compile(r"^\S+(?= has been (?:up |[0-9]))")
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
+_DIAGNOSTIC_SECTIONS = frozenset((
+    "summary", "disk / images", "network", "fstab", "mounts", "initial setup boot log",
+    "rc.local log", "setup log", "archiveloop log", "system log", "dmesg",
+    "process list and uptime", "end of diagnostics",
+))
+
+
+def sensitive_field(name):
+    """Recognize common credentials/identifiers without loading private config."""
+    key = re.sub(r"[^a-z0-9]", "", name.lower())
+    return (any(part in key for part in (
+        "password", "passwd", "passphrase", "secret", "token", "apikey", "clientid",
+        "authorization", "cookie", "credential", "ssid", "username", "hostname",
+        "archiveserver", "archivehost", "email", "serial", "privatekey", "publickey",
+        "accesskey", "sshkey", "encryptionkey", "accountid", "vehicleid",
+    )) or key in ("pass", "psk", "user", "login", "host", "server", "domain", "vin")
+        or key.endswith(("pass", "psk", "user", "key", "uuid")))
+
+
+def unclosed_quote(text, quote=None):
+    escaped = False
+    for character in text:
+        if escaped:
+            escaped = False
+        elif character == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if character == quote:
+                quote = None
+        elif character in ("'", '"'):
+            quote = character
+    return quote
+
+
+def secret_structure(text, stack=None, quote=None):
+    """Track a sensitive JSON-like object/array without parsing its values."""
+    stack = list(stack or ())
+    escaped = False
+    for character in text:
+        if escaped:
+            escaped = False
+        elif character == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if character == quote:
+                quote = None
+        elif character in ("'", '"'):
+            quote = character
+        elif character in "{[":
+            stack.append("}" if character == "{" else "]")
+        elif character in "}]":
+            if not stack or stack[-1] != character:
+                # Malformed sensitive structures remain hidden to the end.
+                return ["invalid"], None
+            stack.pop()
+    return stack, quote
+
+
+def redact_diagnostics(data, *, truncated=False):
+    """Produce a bounded, best-effort preview; never modify the full report.
+
+    Redact whole sensitive lines, not just an assumed whitespace-delimited
+    value. This protects quoted values, inline JSON, shell args and multiline
+    secrets without attempting to parse or execute configuration. A truncated
+    tail starts at a complete known diagnostics section, avoiding an orphaned
+    continuation whose secret's label was outside the input window.
+    """
+    if not isinstance(data, bytes) or len(data) > MAX_SHARED_INPUT_BYTES:
+        raise ValueError("Shared diagnostics input exceeds the fixed bound")
+    text = data.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
+    counts = {name: 0 for name in (
+        "credentials", "private_keys", "tokens", "network", "identifiers", "paths",
+        "processes", "control_characters", "overlong_lines", "truncated_context",
+    )}
+    lines = text.splitlines()
+    if truncated:
+        # Drop any partial first line, then require a fresh diagnostics section
+        # to establish context before exposing text from a captured tail.
+        boundary = next((index for index, line in enumerate(lines[1:], 1)
+                         if line.startswith("====== ") and line.endswith(" ======")
+                         and line[7:-7] in _DIAGNOSTIC_SECTIONS), None)
+        counts["truncated_context"] = 1
+        lines = lines[boundary:] if boundary is not None else [
+            "[Report tail omitted: no complete diagnostic section was available. "
+            "Generate a fresh report or review the full report locally.]"
+        ]
+    output = ["TeslaUSB diagnostics prepared for sharing\n", SHARED_WARNING + "\n\n"]
+    remaining = MAX_SHARED_OUTPUT_BYTES - len("".join(output).encode("utf-8"))
+    output_truncated = False
+    private_block = False
+    continued_quote = None
+    continued_shell = False
+    pending_value = False
+    block_indent = None
+    discard_until_section = False
+    secret_stack = []
+    structure_quote = None
+
+    def replace(pattern, value, category):
+        nonlocal line
+        line, number = pattern.subn(value, line)
+        counts[category] += number
+
+    for line in lines:
+        section = (line.startswith("====== ") and line.endswith(" ======")
+                   and line[7:-7] in _DIAGNOSTIC_SECTIONS)
+        if discard_until_section and not section:
+            line = "[REDACTED AMBIGUOUS CONTINUATION]"
+            counts["overlong_lines"] += 1
+        elif len(line) > MAX_SHARED_LINE_CHARS:
+            # An overlong line may begin a multiline secret whose quotation
+            # cannot be safely inferred from a shortened line. Drop subsequent
+            # context until the next complete diagnostics section as well.
+            discard_until_section = True
+            line = "[REDACTED OVERLONG LINE]"
+            counts["overlong_lines"] += 1
+        else:
+            discard_until_section = False
+            replace(_ANSI, "", "control_characters")
+            replace(_CONTROL, "", "control_characters")
+            if private_block or _PRIVATE_BEGIN.search(line):
+                private_block = not bool(_PRIVATE_END.search(line))
+                line = "[REDACTED KEY MATERIAL]"
+                counts["private_keys"] += 1
+            elif _PRIVATE_END.search(line) or _KEY_MATERIAL.fullmatch(line.strip()):
+                line = "[REDACTED KEY MATERIAL]"
+                counts["private_keys"] += 1
+            elif secret_stack:
+                secret_stack, structure_quote = secret_structure(line, secret_stack, structure_quote)
+                line = "[REDACTED SENSITIVE STRUCTURE]"
+                counts["credentials"] += 1
+            elif pending_value or continued_quote or continued_shell:
+                if pending_value and line.lstrip().startswith(("{", "[")):
+                    secret_stack, structure_quote = secret_structure(line)
+                pending_value = not line.strip()
+                continued_quote = None if secret_stack else unclosed_quote(line, continued_quote)
+                continued_shell = line.rstrip().endswith("\\")
+                line = "[REDACTED SENSITIVE CONTINUATION]"
+                counts["credentials"] += 1
+            elif block_indent is not None and (not line.strip() or
+                                                len(line) - len(line.lstrip()) > block_indent):
+                line = "[REDACTED SENSITIVE BLOCK]"
+                counts["credentials"] += 1
+            else:
+                block_indent = None
+                assignment = next((match for match in _ASSIGNMENT.finditer(line)
+                                   if sensitive_field(match["key"])), None)
+                label = _SENSITIVE_LABEL.search(line)
+                flag = any(sensitive_field(match[1]) for match in _COMMAND_FLAG.finditer(line))
+                # Short password flags are otherwise ambiguous; recognize only
+                # commands where they can carry authentication material.
+                short_flag = (re.search(r"\b(?:curl|wget|sshpass|smbclient)\b", line) and
+                              re.search(r"(?:^|\s)-(?:u|U|p)(?:\s|=)", line))
+                if assignment or label or flag or short_flag:
+                    match = assignment or label
+                    value = line[match.end():] if match else line
+                    if value.lstrip().startswith(("{", "[")):
+                        secret_stack, structure_quote = secret_structure(value)
+                    continued_quote = None if secret_stack else unclosed_quote(value)
+                    continued_shell = line.rstrip().endswith("\\")
+                    pending_value = not value.strip()
+                    if value.strip() in ("", "|", "|-", "|+", ">", ">-", ">+", "{", "["):
+                        block_indent = len(line) - len(line.lstrip())
+                    line = "[REDACTED SENSITIVE LINE]"
+                    counts["credentials"] += 1
+                elif _TOKEN.search(line):
+                    line = "[REDACTED TOKEN LINE]"
+                    counts["tokens"] += 1
+                elif _PROCESS_ROW.match(line):
+                    line = "[REDACTED PROCESS ARGUMENTS]"
+                    counts["processes"] += 1
+                else:
+                    replace(_URL, "[REDACTED URL]", "network")
+                    replace(_NETWORK_PATH, "[REDACTED NETWORK PATH]", "network")
+                    replace(_NETWORK_SOURCE, "[REDACTED NETWORK SOURCE]", "network")
+                    replace(_HOME_PATH, "[REDACTED HOME PATH]", "paths")
+                    replace(_EMAIL, "[REDACTED EMAIL]", "identifiers")
+                    def ip(match):
+                        candidate = match[0]
+                        try:
+                            ipaddress.ip_address(candidate.split("%", 1)[0])
+                        except ValueError:
+                            return candidate
+                        counts["network"] += 1
+                        return "[REDACTED IP]"
+                    line = _IPV6.sub(ip, line)
+                    line = _IPV4.sub(ip, line)
+                    replace(_MAC, "[REDACTED MAC]", "network")
+                    replace(_UUID, "[REDACTED UUID]", "identifiers")
+                    replace(_VIN, "[REDACTED VIN]", "identifiers")
+                    def domain(match):
+                        if (match[0] in ("rc.local", "fuse.sshfs", "fuse.rclone") or
+                                match[0].rsplit(".", 1)[-1].lower() in _FILE_SUFFIXES):
+                            return match[0]
+                        counts["network"] += 1
+                        return "[REDACTED HOST]"
+                    line = _DOMAIN.sub(domain, line)
+                    replace(_JOURNAL_HOST, r"\1[REDACTED HOST]\2", "identifiers")
+                    replace(_UPTIME_HOST, "[REDACTED HOST]", "identifiers")
+        encoded = (line + "\n").encode("utf-8")
+        if len(encoded) > remaining:
+            output_truncated = True
+            break
+        output.append(line + "\n")
+        remaining -= len(encoded)
+    if output_truncated:
+        notice = "[Redacted preview stopped at its output limit.]\n"
+        if len(notice.encode("utf-8")) <= remaining:
+            output.append(notice)
+    return {"text": "".join(output), "redactions": counts,
+            "output_truncated": output_truncated}
+
+
+def shared_diagnostics(reader):
+    body, size = reader.read("diagnostics", limit=MAX_SHARED_INPUT_BYTES)
+    source_truncated = size > MAX_SHARED_INPUT_BYTES
+    prepared = redact_diagnostics(body, truncated=source_truncated)
+    return {"ok": True, **prepared, "filename": "teslausb-diagnostics-shared.txt",
+            "truncated": source_truncated,
+            "source_bytes_limit": MAX_SHARED_INPUT_BYTES,
+            "original_size_bytes": size, "warning": SHARED_WARNING}
 
 
 def health_defaults():
@@ -571,9 +847,11 @@ def handle(operation, reader=None):
             "health": privileged_health(),
             "logs": {name: reader.metadata(name) for name in LOGS},
         })
-    if operation not in LOGS:
+    if operation not in LOGS and operation != "diagnostics-shared":
         return json_response("404 Not Found", {"ok": False, "error": "Unknown maintenance route."})
     try:
+        if operation == "diagnostics-shared":
+            return json_response("200 OK", shared_diagnostics(reader))
         body, size = reader.read(operation)
     except LogUnavailable as error:
         missing = error.reason == "missing"

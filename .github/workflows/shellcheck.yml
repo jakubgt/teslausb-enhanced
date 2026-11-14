@@ -61,6 +61,7 @@ jobs:
           bash ./tests/copy-music-test.sh
           bash ./tests/cgi-security-test.sh
           bash ./tests/archive-common-test.sh
+          bash ./tests/rclone-connectivity-test.sh
           bash ./tests/ble-artifact-test.sh
           bash ./tests/runtime-qol-test.sh
           bash ./tests/dependency-strategy-test.sh

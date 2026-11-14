@@ -73,6 +73,8 @@ shellcheck --exclude=SC1091 \
            ./run/send-push-message \
            ./run/nfs_archive/archive-clips.sh \
            ./run/rclone_archive/archive-clips.sh \
+           ./run/rclone_archive/archive-is-reachable.sh \
+           ./run/rclone_archive/verify-and-configure-archive.sh \
            ./run/rsync_archive/archive-clips.sh \
            ./run/temperature_monitor \
            ./run/waitforidle \
@@ -106,6 +108,7 @@ shellcheck --exclude=SC1091 \
            ./teslausb-www/html/cgi-bin/videolist.sh \
            ./tests/cgi-security-test.sh \
            ./tests/archive-common-test.sh \
+           ./tests/rclone-connectivity-test.sh \
            ./tests/ble-artifact-test.sh \
            ./tests/copy-music-test.sh \
            ./tests/declarative-config-test.sh \

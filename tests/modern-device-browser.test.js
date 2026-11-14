@@ -24,7 +24,8 @@ async function run() {
     browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true});
     const page = await browser.newPage({viewport: {width: 1440, height: 1080}, acceptDownloads: true});
     const errors = [], mutations = [], requests = [];
-    let failStatus = false, powerResponse = 'accepted';
+    let failStatus = false, powerResponse = 'accepted', sharingMode = 'ready', finishSharingRequest = null, startSharingRequest = null, sharingRequests = 0;
+    const sharingText = 'Storage: healthy\nHost: [REDACTED]\n<img src=x onerror="window.sharingInjected=true">\n';
     await page.clock.install();
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/api/v1/**', async route => {
@@ -35,6 +36,16 @@ async function run() {
         return route.fulfill({json: {uptime: '90061', total_space: 100000000000, free_space: 20000000000, cpu_temp: '53000', fan_speed: '1200', camera_drive_state: 'connected', drives_active: 'yes', wifi_ssid: 'Garage', wifi_ip: '192.0.2.42', throttled: '0x10000', archive_status: {schema_version: 1, last_result: 'running', pending_files: 3, pending_bytes: 3000, transferred_files: 2, transferred_bytes: 2000}}});
       }
       if (pathname === '/api/v1/maintenance') return route.fulfill({json: {schema_version: 1, ssh: {service_state: 'active', enabled_state: 'enabled'}, health: {schema_version: 1, snapshots: {available: true, scan_complete: true, completed_count: 8, last_completed: {completed_at_utc: '2026-09-08T15:00:00Z'}}, storage: {}, read_only: {root: true, boot: true}}, logs: {diagnostics: {available: true, size_bytes: 24}, archiveloop: {available: true, truncated: true, size_bytes: 10000000}}}});
+      if (pathname === '/api/v1/maintenance/logs/diagnostics/shared') {
+        sharingRequests++;
+        const wasHeld = sharingMode === 'held';
+        if (wasHeld) await new Promise(resolve => { finishSharingRequest = resolve; startSharingRequest?.(); });
+        try {
+          if (sharingMode === 'missing') return await route.fulfill({status: 404, json: {ok: false, error: 'No saved diagnostic report is available.'}});
+          return await route.fulfill({json: {ok: true, text: sharingText, filename: sharingMode === 'invalid' ? '../wrong.txt' : 'teslausb-diagnostics-shared.txt', truncated: true, source_bytes_limit: 524288, redactions: {identifiers: 2, credentials: 1}}});
+        } catch (error) { if (!wasHeld) throw error; }
+        return;
+      }
       if (pathname.startsWith('/api/v1/maintenance/logs/')) return route.fulfill({status: 200, contentType: 'text/plain;charset=utf-8', headers: {'X-TeslaUSB-Truncated': pathname.endsWith('archiveloop') ? 'true' : 'false', 'X-TeslaUSB-Original-Size': pathname.endsWith('archiveloop') ? '10000000' : '24'}, body: 'first line\nERROR useful\nlast line\n'});
       if (pathname.startsWith('/api/v1/actions/')) {
         mutations.push({path: pathname, method: request.method(), csrf: request.headers()['x-teslausb-request']});
@@ -85,7 +96,70 @@ async function run() {
     const modalDownload = await modalDownloadEvent;
     assert.equal(fs.readFileSync(await modalDownload.path(), 'utf8'), 'first line\nERROR useful\nlast line\n', 'Downloading from the full-capture dialog saves the whole captured file despite the search filter');
     await page.getByRole('button', {name: 'Close', exact: true}).click();
+    let sharingDownloads = 0;
+    page.on('download', () => { sharingDownloads++; });
+    const prepareSharing = () => page.getByRole('button', {name: 'Prepare for sharing', exact: true}).click();
+    const sharingDialog = () => page.getByRole('dialog', {name: 'Prepare diagnostics for sharing'});
+    const sharingPreview = () => page.getByRole('textbox', {name: 'Sharing preview (editable)'});
+    await prepareSharing();
+    await sharingPreview().waitFor();
+    assert.equal(await sharingPreview().inputValue(), sharingText);
+    assert.match(await sharingDialog().textContent(), /best effort.*Review this preview/s);
+    assert.match(await sharingDialog().textContent(), /latest 512.0 KiB.*earlier content is omitted/s);
+    assert.match(await sharingDialog().textContent(), /3 automatic redactions/);
+    assert.equal(await sharingDialog().locator('img').count(), 0, 'Diagnostic text is never interpreted as HTML');
+    assert.equal(await page.evaluate(() => window.sharingInjected), undefined);
+    assert.equal(sharingDownloads, 0, 'Preparing a preview never downloads or uploads it');
+    assert.equal(mutations.length, 0, 'Preparing a sharing copy does not regenerate diagnostics');
+    assert.deepEqual(requests.filter(request => request.path.endsWith('/diagnostics/shared')).map(request => request.method), ['GET']);
+    const reviewedText = 'Storage: healthy\nHost: [REDACTED]\nReviewed note: remaining details removed.\n';
+    await sharingPreview().fill(reviewedText);
+    await page.evaluate(() => window.active.refresh());
+    assert.equal(await sharingPreview().inputValue(), reviewedText, 'A routine health refresh preserves the editable sharing preview');
+    await sharingDialog().screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-diagnostics-sharing-desktop.png')});
+    const sharingDownloadEvent = page.waitForEvent('download');
+    await page.getByRole('button', {name: 'Download reviewed preview', exact: true}).click();
+    const sharingDownload = await sharingDownloadEvent;
+    assert.equal(sharingDownload.suggestedFilename(), 'teslausb-diagnostics-shared.txt');
+    assert.equal(fs.readFileSync(await sharingDownload.path(), 'utf8'), reviewedText, 'The shared download contains exactly the edited preview');
+    const closedPreview = await sharingPreview().elementHandle();
+    await page.getByRole('button', {name: 'Close preview', exact: true}).click();
+    assert.equal(await closedPreview.evaluate(node => node.value), '', 'Closing wipes the editable copy before removing the dialog');
+    assert.equal(await sharingDialog().count(), 0);
+    const beforePrepareAgain = sharingRequests;
+    await prepareSharing(); await sharingPreview().waitFor();
+    assert.equal(sharingRequests, beforePrepareAgain + 1, 'A new preparation fetches current data instead of reusing a previous private preview');
+    await page.evaluate(() => document.querySelector('[data-device="log-refresh"]').click());
+    assert.equal(await sharingDialog().count(), 0, 'Refreshing the source invalidates the sharing preview');
+    sharingMode = 'missing'; await prepareSharing();
+    await sharingDialog().getByText(/Could not prepare a sharing preview/).waitFor();
+    assert.equal(await sharingDialog().getByRole('button', {name: 'Download reviewed preview'}).isDisabled(), true);
+    await page.getByRole('button', {name: 'Close preview', exact: true}).click();
+    sharingMode = 'invalid'; await prepareSharing();
+    await sharingDialog().getByText(/Unexpected sharing preview/).waitFor();
+    assert.equal(await sharingDialog().getByRole('button', {name: 'Download reviewed preview'}).isDisabled(), true);
+    await page.getByRole('button', {name: 'Close preview', exact: true}).click();
+    sharingMode = 'held'; const heldSharingStarted = new Promise(resolve => { startSharingRequest = resolve; });
+    await prepareSharing(); await heldSharingStarted;
+    assert.equal(await sharingDialog().getByRole('button', {name: 'Download reviewed preview'}).isDisabled(), true);
+    await page.getByRole('button', {name: 'Cancel', exact: true}).click();
+    sharingMode = 'ready'; finishSharingRequest();
+    await page.waitForFunction(() => !document.querySelector('dialog'));
+    assert.equal(sharingDownloads, 1, 'Cancelling never triggers a download');
+    sharingMode = 'held'; const timedSharingStarted = new Promise(resolve => { startSharingRequest = resolve; });
+    await prepareSharing(); await timedSharingStarted; await page.clock.fastForward(30001);
+    await sharingDialog().getByText(/Preparation timed out/).waitFor();
+    assert.equal(await sharingDialog().getByRole('button', {name: 'Download reviewed preview'}).isDisabled(), true);
+    await page.getByRole('button', {name: 'Close preview', exact: true}).click();
+    sharingMode = 'ready'; finishSharingRequest();
+    await prepareSharing(); await sharingPreview().waitFor();
+    await page.evaluate(() => document.querySelector('[data-device="generate"]').click());
+    assert.equal(await sharingDialog().count(), 0, 'Generating a new source report invalidates the sharing preview');
+    await page.waitForFunction(() => !document.querySelector('[data-device="generate"]').disabled);
+    mutations.length = 0;
+    console.log('Sharing diagnostics passed: explicit GET, editable non-HTML preview, truncation notice, exact download, error validation, cancel, wiping and source invalidation.');
     await page.locator('[data-log="archiveloop"]').click();
+    assert.equal(await page.getByRole('button', {name: 'Prepare for sharing', exact: true}).isVisible(), false, 'Sharing is offered only for the saved diagnostic report');
     await page.getByText(/Only the latest 8 MiB/).waitFor();
     await page.getByRole('tab', {name: 'Tools', exact: true}).click();
     await page.evaluate(() => { window.pauses = 0; window.addEventListener('teslausb:pause-media', () => window.pauses++); });
@@ -197,7 +271,14 @@ async function run() {
     await page.getByRole('tab', {name: 'Tools', exact: true}).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Tools must fit a phone viewport');
     await page.locator('.device-card').filter({has: page.getByRole('heading', {name: /^Power/})}).screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-modern-device-power-mobile.png')});
+    await page.getByRole('tab', {name: 'Diagnostics & logs', exact: true}).click();
+    await prepareSharing(); await sharingPreview().waitFor();
+    await sharingPreview().fill(reviewedText);
+    assert.equal(await sharingDialog().evaluate(node => node.scrollWidth <= node.clientWidth), true, 'The sharing preview fits a phone viewport');
+    await sharingDialog().screenshot({path: path.join(require('node:os').tmpdir(), 'teslausb-diagnostics-sharing-mobile.png')});
+    const destroyedPreview = await sharingPreview().elementHandle();
     await page.evaluate(() => window.active.destroy());
+    assert.equal(await destroyedPreview.evaluate(node => node.value), '', 'Leaving Device wipes the prepared private copy');
     assert.deepEqual(errors, []);
     console.log('Modern Device/Files browser integration passed (desktop and 390px mobile).');
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }

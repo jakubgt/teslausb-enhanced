@@ -1,1 +1,3 @@
-teslausb-www/html
+# Preserve upstream/legacy web assets. Modern UI source remains format-able.
+teslausb-www/html/*
+!teslausb-www/html/modern/
