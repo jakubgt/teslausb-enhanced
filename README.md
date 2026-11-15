@@ -39,16 +39,16 @@ for diagnostic downloads. See the [changelog](CHANGELOG.md) for the release scop
 | Item | Status |
 | --- | --- |
 | Source version | **2.1.0** |
-| Image release | [**v2.0.0 — official release**](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0) |
+| Image release | [**v2.1.0 — official release**](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.1.0) |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
-| Image download | [`teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.0.0/teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz) |
+| Image download | [`teslausb-enhanced-v2.1.0-pi-zero-2w-arm64-trixie.img.xz`](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.1.0/teslausb-enhanced-v2.1.0-pi-zero-2w-arm64-trixie.img.xz) |
 | Image integrity | Use the matching `.img.xz.sha256`, `.image-metadata.json`, and `.packages.tsv` assets from the same release |
-| Image SHA-256 | `8ffe7c02764bed3bb0cc4a50a79ce135d454c187279c4742550538b1270ca4e4` |
-| Image source | [`0faa237`](https://github.com/jakubgt/teslausb-enhanced/commit/0faa237524f61053023de7172d6bbf69855d4fa6) |
+| Image SHA-256 | [Matching v2.1.0 checksum file](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.1.0/teslausb-enhanced-v2.1.0-pi-zero-2w-arm64-trixie.img.xz.sha256) |
+| Image source | [`12127a8`](https://github.com/jakubgt/teslausb-enhanced/commit/12127a8ed75a3ca9e0712ee6b04a51d61faf05e0) |
 
-The v2.0.0 image and matching verification assets are publicly downloadable
-from the [official release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0).
+The v2.1.0 image and matching verification assets are publicly downloadable
+from the [official release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.1.0).
 The published image retains its original build, source commit, and checksums.
 Future image builds are created as drafts for review before publication.
 
@@ -57,6 +57,13 @@ Pi Imager cannot authenticate to a private release URL itself.
 
 <details>
 <summary>Earlier images and retained build identifiers</summary>
+
+The earlier [v2.0.0 image](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0)
+keeps its original source commit
+[`0faa237`](https://github.com/jakubgt/teslausb-enhanced/commit/0faa237524f61053023de7172d6bbf69855d4fa6)
+and compressed-image SHA-256
+`8ffe7c02764bed3bb0cc4a50a79ce135d454c187279c4742550538b1270ca4e4`.
+Its original image and matching verification assets remain available on that release.
 
 The earlier [`v1.2.0-rc.5` image](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v1.2.0-rc.5)
 was promoted to a full release without changing its tag, filenames, embedded
@@ -144,15 +151,15 @@ success. Do not reformat a populated card to resolve a checker-memory error.
 
 ### Flash and configure
 
-1. Download the [v2.0.0 image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.0.0/teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz)
-   and its [matching checksum](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.0.0/teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz.sha256)
-   from the [official release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0).
+1. Download the [v2.1.0 image](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.1.0/teslausb-enhanced-v2.1.0-pi-zero-2w-arm64-trixie.img.xz)
+   and its [matching checksum](https://github.com/jakubgt/teslausb-enhanced/releases/download/v2.1.0/teslausb-enhanced-v2.1.0-pi-zero-2w-arm64-trixie.img.xz.sha256)
+   from the [official release](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.1.0).
 2. Verify the image digest before flashing. It must exactly match the digest in
-   that image's `.img.xz.sha256` file. For the version 2.0.0 image, use Windows
+   that image's `.img.xz.sha256` file. For the version 2.1.0 image, use Windows
    PowerShell:
 
    ```powershell
-   Get-FileHash .\teslausb-enhanced-v2.0.0-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
+   Get-FileHash .\teslausb-enhanced-v2.1.0-pi-zero-2w-arm64-trixie.img.xz -Algorithm SHA256
    ```
 
    When testing another release, use its exact downloaded filename and checksum.

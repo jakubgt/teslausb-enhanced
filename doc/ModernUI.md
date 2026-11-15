@@ -1,4 +1,4 @@
-# Modern TeslaUSB interface — version 2.0.0
+# Modern TeslaUSB interface
 
 The normal `/` landing page now opens the built-in modern interface. The same
 interface is available at `/modern/`. **Classic UI** links remain available on

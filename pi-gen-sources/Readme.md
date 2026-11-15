@@ -1,4 +1,4 @@
-### Downloading a verified TeslaUSB image — version 2.0.0
+### Downloading a verified TeslaUSB image — version 2.1.0
 
 Image releases include an arm64 Raspberry Pi OS Lite (Debian Trixie) `.img.xz`
 for Raspberry Pi Zero 2 W, its SHA-256 file, a machine-readable provenance
@@ -13,7 +13,7 @@ read-only FAT/ext4 mounts, confirms Trixie/arm64/Zero 2 W boot artifacts, checks
 the locked image account and absence of active configuration or generated
 device identity, validates the embedded source manifest, tests the compressed
 stream, and uploads only checked assets to the matching unpublished draft.
-FFmpeg is bundled in version 2.0.0, and its installed tools and JPEG encoder are
+Release images bundle FFmpeg, and its installed tools and JPEG encoder are
 verified for first-frame recording cards and the lightweight six-camera overview.
 
 Both a `VERSION` push and a manual tag build leave the release in draft state.
