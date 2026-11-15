@@ -27,7 +27,8 @@ vehicle USB recognition, new daily and Sentry recordings, completed snapshots,
 archiving, downloads, and recovery results against that exact image. Only then
 publish it deliberately, after rechecking the tag/source and all asset digests.
 Do not rebuild or replace the accepted image; a changed image needs another test.
-Version 2.0.0 remains an unpublished draft until this acceptance is complete.
+The published v2.0.0 image keeps its original source and asset digests. Its
+release notes record the checks performed and the limits of hardware coverage.
 Earlier release tags and embedded build identifiers remain intact for provenance.
 
 Source export and manifest generation are deterministic. The full filesystem

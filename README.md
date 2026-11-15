@@ -14,7 +14,7 @@ recovery and upgrade tools.
 · [all releases](https://github.com/jakubgt/teslausb-enhanced/releases)
 · [changelog](CHANGELOG.md) · [setup guide](doc/OneStepSetup.md)
 
-## Version 2.0.0: the modern interface
+## Version 2: the modern interface
 
 The modern dashboard brings together date and hour browsing, front-camera
 thumbnails, six-camera navigation, original-quality downloads, recording
@@ -30,11 +30,15 @@ These are recorded frames, not a live camera feed. The screenshot preserves the
 original capture; version 2.0 uses original quality without the older quality
 selector shown here.*
 
+Version **2.1.0** adds safer low-space snapshot retention, bounded checks of the
+configured rclone destination, and an editable **Prepare for sharing** preview
+for diagnostic downloads. See the [changelog](CHANGELOG.md) for the release scope.
+
 ## Current release
 
 | Item | Status |
 | --- | --- |
-| Source version | **2.0.0** |
+| Source version | **2.1.0** |
 | Image release | [**v2.0.0 — official release**](https://github.com/jakubgt/teslausb-enhanced/releases/tag/v2.0.0) |
 | Primary hardware | Raspberry Pi Zero 2 W |
 | Operating system | 64-bit Raspberry Pi OS Lite, Debian Trixie, arm64 |
