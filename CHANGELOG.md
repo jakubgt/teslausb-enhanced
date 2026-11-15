@@ -6,6 +6,8 @@ upstream TeslaUSB history and MIT license.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-14
+
 - Preserve the newest completed snapshot during low-space rotation, prefer
   eligible incomplete snapshots, and refuse snapshot deletion until mount and
   loop-device checks positively establish that it is no longer in use. Unknown
@@ -16,6 +18,12 @@ upstream TeslaUSB history and MIT license.
   preview, and a download of the reviewed text. Keep the full local report.
 - Allow formatting of modern UI source while retaining the legacy web-asset
   exclusion, and add a stable `tools/modern-install.py` compatibility entry point.
+
+The runtime changes passed automated validation and were exercised on an
+existing Raspberry Pi Zero 2 W installation, including new six-camera footage,
+completed snapshots, restored USB recording, and a diagnostic-sharing download
+that matched the reviewed preview. Fresh-card testing of a rebuilt image is
+separate from these installed-runtime checks.
 
 ## [2.0.0] - 2026-11-13
 
